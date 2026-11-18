@@ -303,3 +303,30 @@ function migrate_templates(): array {
     $log[] = 'Invoice and commercial templates ready (next invoice number: ' . (one('SELECT inv_next n FROM fin_settings WHERE id=1')['n'] ?? '?') . ').';
     return $log;
 }
+
+// Courses (Learn): content, question banks, graded tests, who can see everyone's grades. Safe to run repeatedly.
+function migrate_courses(): array {
+    foreach ([
+    "CREATE TABLE IF NOT EXISTS courses (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, title VARCHAR(200) NOT NULL, description TEXT NULL, image_url VARCHAR(500) NULL, category VARCHAR(80) NULL,
+        status ENUM('draft','published') NOT NULL DEFAULT 'draft', pass_mark TINYINT UNSIGNED NOT NULL DEFAULT 70, questions_per_test SMALLINT UNSIGNED NOT NULL DEFAULT 50,
+        shuffle_questions TINYINT(1) NOT NULL DEFAULT 1, shuffle_answers TINYINT(1) NOT NULL DEFAULT 0, time_limit_min SMALLINT UNSIGNED NOT NULL DEFAULT 0, max_attempts SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+        show_answers TINYINT(1) NOT NULL DEFAULT 1, heads_see_grades TINYINT(1) NOT NULL DEFAULT 1, created_by INT UNSIGNED NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    "CREATE TABLE IF NOT EXISTS course_departments (course_id INT UNSIGNED NOT NULL, department_id INT UNSIGNED NOT NULL, PRIMARY KEY (course_id,department_id),
+        FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE, FOREIGN KEY (department_id) REFERENCES departments(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    "CREATE TABLE IF NOT EXISTS course_viewers (course_id INT UNSIGNED NOT NULL, user_id INT UNSIGNED NOT NULL, PRIMARY KEY (course_id,user_id),
+        FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    "CREATE TABLE IF NOT EXISTS course_items (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, course_id INT UNSIGNED NOT NULL, position INT NOT NULL DEFAULT 0, kind ENUM('text','video','link','slides') NOT NULL,
+        title VARCHAR(200) NOT NULL, body MEDIUMTEXT NULL, url VARCHAR(500) NULL, KEY (course_id,position), FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    "CREATE TABLE IF NOT EXISTS course_questions (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, course_id INT UNSIGNED NOT NULL, position INT NOT NULL DEFAULT 0, question TEXT NOT NULL, image_url VARCHAR(500) NULL,
+        opt_a VARCHAR(500) NULL, opt_b VARCHAR(500) NULL, opt_c VARCHAR(500) NULL, opt_d VARCHAR(500) NULL, opt_e VARCHAR(500) NULL, correct CHAR(1) NOT NULL, hint VARCHAR(500) NULL,
+        KEY (course_id,position), FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    "CREATE TABLE IF NOT EXISTS course_attempts (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, course_id INT UNSIGNED NOT NULL, user_id INT UNSIGNED NOT NULL, attempt_no SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+        started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, ends_at DATETIME NULL, submitted_at DATETIME NULL, score DECIMAL(5,2) NULL, correct_count SMALLINT UNSIGNED NULL, total SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+        passed TINYINT(1) NULL, questions MEDIUMTEXT NOT NULL, answers MEDIUMTEXT NULL, KEY (course_id,user_id), KEY (user_id),
+        FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    "CREATE TABLE IF NOT EXISTS course_grants (course_id INT UNSIGNED NOT NULL, user_id INT UNSIGNED NOT NULL, extra SMALLINT UNSIGNED NOT NULL DEFAULT 0, PRIMARY KEY (course_id,user_id),
+        FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    ] as $s) db()->exec($s);
+    return ['Courses, question banks, tests and grades ready.'];
+}

@@ -71,6 +71,8 @@ function xlsx_read(string $path): array {
     xlsx_need_zip();
     $z = new ZipArchive(); if ($z->open($path) !== true) throw new RuntimeException('That does not look like an Excel (.xlsx) file.');
     $shared = [];
+    $big = function (string $n) use ($z): bool { $st = $z->statName($n); return $st && $st['size'] > 40 * 1024 * 1024; }; // refuse a spreadsheet that would unpack to something huge
+    if ($big('xl/sharedStrings.xml')) { $z->close(); throw new RuntimeException('That spreadsheet is too large.'); }
     if (($ss = $z->getFromName('xl/sharedStrings.xml')) !== false) {
         $x = @simplexml_load_string($ss); if ($x) foreach ($x->si as $si) { $t = ''; if (isset($si->t)) $t = (string)$si->t; else foreach ($si->r as $r) $t .= (string)$r->t; $shared[] = $t; }
     }
@@ -78,6 +80,7 @@ function xlsx_read(string $path): array {
     $wb = $z->getFromName('xl/workbook.xml'); $rels = $z->getFromName('xl/_rels/workbook.xml.rels');
     if ($wb !== false && $rels !== false && preg_match('/<sheet\b[^>]*r:id="([^"]+)"/', $wb, $m) && preg_match('/<Relationship\b[^>]*Id="' . preg_quote($m[1], '/') . '"[^>]*>/', $rels, $rm) && preg_match('/Target="([^"]+)"/', $rm[0], $tm))
         $target = 'xl/' . ltrim(preg_replace('#^/?(xl/)?#', '', $tm[1]), '/');
+    if ($big($target)) { $z->close(); throw new RuntimeException('That spreadsheet is too large.'); }
     $xml = $z->getFromName($target); if ($xml === false) { $xml = $z->getFromName('xl/worksheets/sheet1.xml'); }
     $z->close(); if ($xml === false) throw new RuntimeException('The spreadsheet has no data.');
     $sx = @simplexml_load_string($xml); if (!$sx) throw new RuntimeException('The spreadsheet could not be read.');

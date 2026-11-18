@@ -489,6 +489,10 @@ case 'learn':
     require __DIR__ . '/lib/learn.php';
     break;
 
+case 'courses':
+    require __DIR__ . '/lib/courses.php';
+    break;
+
 case 'campaigns':
     require __DIR__ . '/lib/campaigns.php';
     break;

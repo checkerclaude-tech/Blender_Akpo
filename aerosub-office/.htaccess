@@ -33,7 +33,7 @@ RedirectMatch 403 ^/install/
   # Content Security Policy, REPORT-ONLY for now: the browser logs anything it would block (to /api/csp-report) but blocks nothing.
   # After a few days of real use with no unexpected reports, change "Content-Security-Policy-Report-Only" to "Content-Security-Policy" to enforce it.
   # Keep it in step with docs/security/open-items.md. Inline event attributes (onclick=) are not allowed: use the data- attributes in assets/js/handlers.js.
-  Header always set Content-Security-Policy-Report-Only "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self'; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'; manifest-src 'self'; worker-src 'self'; report-uri /api/csp-report"
+  Header always set Content-Security-Policy-Report-Only "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self'; frame-src 'self' https://www.youtube-nocookie.com https://player.vimeo.com; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'; manifest-src 'self'; worker-src 'self'; report-uri /api/csp-report"
   <FilesMatch "(sw\.js|index\.html)$">
     Header set Cache-Control "no-cache"
   </FilesMatch>
