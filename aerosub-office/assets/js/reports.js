@@ -44,7 +44,7 @@
   const prevMore = X.more;
   X.more = items => {
     if (prevMore) prevMore(items);
-    items.unshift(['reports', 'Reports', null]);
+    if (!(S.user.tabs && S.user.tabs.reports === false)) items.unshift(['reports', 'Reports', null]);
     if (isAdmin()) items.push(['departments', 'Departments & heads', null]);
   };
 
@@ -64,7 +64,7 @@
     const people = D.people || [];
     v.innerHTML =
       '<div class="top"><div><h1>Reports</h1><div class="muted">' + esc(scopeTxt) + '</div></div><span class="right row">' +
-      (ro ? '' : '<button class="btn" id="rpnew">+ Daily report</button>') + '<a class="btn ghost" href="#/reports/weekly">Weekly report</a>' + (D.review ? '<a class="btn ghost" href="#/reports/performance">Team performance</a>' : '') + '<button class="btn ghost" id="rpprint">Print</button></span></div>' +
+      (ro ? '' : '<button class="btn" id="rpnew">+ Daily report</button>') + '<a class="btn ghost" href="#/reports/weekly">Weekly report</a>' + (D.perf ? '<a class="btn ghost" href="#/reports/performance">Team performance</a>' : '') + '<button class="btn ghost" id="rpprint">Print</button></span></div>' +
       '<div class="rp-filters"><div class="row"><button class="btn ghost sm" id="rpprev" aria-label="Previous day">‹</button><input type="date" id="rpdate" value="' + esc(D.date) + '" max="' + esc(D.today) + '" aria-label="Report date">' +
       '<button class="btn ghost sm" id="rpnext" aria-label="Next day"' + (isToday ? ' disabled' : '') + '>›</button>' + (isToday ? '' : '<button class="btn ghost sm" id="rptoday">Today</button>') + '</div>' +
       (D.review && D.departments.length > 1 ? '<select id="rpdept" aria-label="Department">' + opt('', 'All departments', RP.dept) + D.departments.map(d => opt(d.id, d.name, RP.dept)).join('') + '</select>' : '') +

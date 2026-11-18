@@ -1,11 +1,17 @@
 {
+  "id": "./",
   "name": "Aerosub Office",
   "short_name": "Aerosub",
   "description": "Aerosub team tasks, schedules and alerts",
   "start_url": "./#/home",
   "scope": "./",
   "display": "standalone",
-  "orientation": "portrait-primary",
+  "orientation": "any",
+  "categories": ["business", "productivity"],
+  "shortcuts": [
+    { "name": "My tasks", "url": "./#/tasks", "icons": [{ "src": "assets/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Alerts", "url": "./#/alerts", "icons": [{ "src": "assets/icon-192.png", "sizes": "192x192" }] }
+  ],
   "background_color": "#0C1F61",
   "theme_color": "#0C1F61",
   "icons": [

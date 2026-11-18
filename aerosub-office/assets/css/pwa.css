@@ -1,0 +1,9 @@
+.pwa-bar{position:fixed;left:12px;right:12px;bottom:calc(76px + env(safe-area-inset-bottom));z-index:60;max-width:520px;margin:0 auto;background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:14px;box-shadow:0 10px 30px rgba(8,16,60,.25);padding:12px 14px;display:flex;gap:12px;align-items:flex-start}
+@media(min-width:900px){.pwa-bar{left:auto;right:20px;bottom:20px;margin:0}}
+.pwa-bar img{width:44px;height:44px;border-radius:10px;flex:none}
+.pwa-bar .t{flex:1;min-width:0;font-size:13.5px;line-height:1.4}.pwa-bar .t>b:first-child{display:block;font-size:14.5px;margin-bottom:2px}
+.pwa-bar .a{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.pwa-bar .x{background:none;border:0;color:var(--muted);font-size:20px;line-height:1;cursor:pointer;padding:0 2px}
+.pwa-steps{margin:6px 0 0;padding-left:18px}.pwa-steps li{margin:3px 0}
+.pwa-ico{display:inline-block;border:1px solid var(--line);border-radius:5px;padding:0 5px;font-weight:600}
+.pwa-card{margin:10px 0 14px;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--mist)}

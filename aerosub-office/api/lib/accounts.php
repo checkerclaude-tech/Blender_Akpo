@@ -32,6 +32,8 @@ function purge_archived_users(): int {
         $keep = one("SELECT id FROM users WHERE role='super_admin' AND active=1 AND archived_at IS NULL AND id<>? ORDER BY (id=?) DESC, id LIMIT 1", [$uid, (int)$r['archived_by']]);
         if (!$keep) continue; // never remove the work if there is nobody to hand it to
         try {
+            $vd = (string)(cfg('storage_dir') ?: dirname(__DIR__) . '/storage') . '/vault'; // their personal documents are deleted with the account
+            try { foreach (all('SELECT path FROM vault_items WHERE user_id=? AND path IS NOT NULL', [$uid]) as $f) { $fp = $vd . '/' . preg_replace('/[^a-f0-9]/', '', (string)$f['path']); if (is_file($fp)) @unlink($fp); } } catch (Throwable $e) {}
             q('UPDATE tasks SET creator_id=? WHERE creator_id=?', [$keep['id'], $uid]);
             q('UPDATE events SET creator_id=? WHERE creator_id=?', [$keep['id'], $uid]);
             q('DELETE FROM users WHERE id=? AND archived_at IS NOT NULL', [$uid]);

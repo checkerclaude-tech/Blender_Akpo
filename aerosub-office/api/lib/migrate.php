@@ -364,3 +364,30 @@ function migrate_games(): array {
     db()->exec('INSERT IGNORE INTO game_settings (id) VALUES (1)');
     return ['Games ready (hidden from staff until the Super Admin turns them on in Games → Settings).'];
 }
+
+
+// Root Admin, per-person tab privileges, personal documents. Safe to run repeatedly.
+function migrate_privileges(): array {
+    $log = [];
+    if (!col_exists('users', 'is_root')) { db()->exec('ALTER TABLE users ADD COLUMN is_root TINYINT(1) NOT NULL DEFAULT 0'); $log[] = 'Users: Root Admin flag added.'; }
+    foreach ([
+    "CREATE TABLE IF NOT EXISTS user_access (user_id INT UNSIGNED NOT NULL, tab VARCHAR(30) NOT NULL, allowed TINYINT(1) NOT NULL, set_by INT UNSIGNED NULL, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_id,tab), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    "CREATE TABLE IF NOT EXISTS vault_items (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, user_id INT UNSIGNED NOT NULL, kind ENUM('file','note','link') NOT NULL, title VARCHAR(200) NOT NULL, folder VARCHAR(80) NULL,
+        name VARCHAR(190) NULL, mime VARCHAR(100) NULL, size INT UNSIGNED NOT NULL DEFAULT 0, path VARCHAR(64) NULL, body TEXT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, KEY (user_id,folder), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    "CREATE TABLE IF NOT EXISTS push_config (id TINYINT UNSIGNED PRIMARY KEY, public_key VARCHAR(120) NOT NULL, private_pem TEXT NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    "CREATE TABLE IF NOT EXISTS push_subs (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, user_id INT UNSIGNED NOT NULL, endpoint_hash CHAR(64) NOT NULL, endpoint TEXT NOT NULL, p256dh VARCHAR(120) NOT NULL, auth VARCHAR(60) NOT NULL, ua VARCHAR(200) NULL,
+        fails TINYINT UNSIGNED NOT NULL DEFAULT 0, last_ok DATETIME NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE KEY (endpoint_hash), KEY (user_id), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    ] as $q) db()->exec($q);
+    // who is the Root Admin: the account named in api/config.php ('root_admin_email'), otherwise a Super Admin whose address starts "dev.aerosub" or "dev.aaerosub"
+    if (!one('SELECT id FROM users WHERE is_root=1 LIMIT 1')) {
+        $want = strtolower(trim((string)cfg('root_admin_email'))); $row = null;
+        if ($want !== '') $row = one("SELECT id,email FROM users WHERE LOWER(email)=? AND role='super_admin' AND archived_at IS NULL", [$want]);
+        if (!$row) $row = one("SELECT id,email FROM users WHERE role='super_admin' AND archived_at IS NULL AND (LOWER(SUBSTRING_INDEX(email,'@',1)) IN ('dev.aerosub','dev.aaerosub','dev_aerosub','devaerosub')) ORDER BY id LIMIT 1");
+        if ($row) { q('UPDATE users SET is_root=1 WHERE id=?', [$row['id']]); $log[] = 'Root Admin account: ' . $row['email']; }
+        else $log[] = 'NO Root Admin yet: add  \'root_admin_email\' => \'the.root@address\'  to api/config.php (the account must be a Super Admin) and run this page again.';
+    } else $log[] = 'Root Admin: ' . one('SELECT email FROM users WHERE is_root=1 LIMIT 1')['email'];
+    $log[] = 'Privileges and personal documents ready.';
+    return $log;
+}

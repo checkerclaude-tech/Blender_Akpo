@@ -104,13 +104,56 @@ function games_window_text(array $s): string {
 function games_access(array $u): array {
     $s = games_settings(); $open = games_window_open($s); $text = games_window_text($s); $enabled = array_values(array_filter(explode(',', (string)$s['games'])));
     if ($u['role'] === 'super_admin') return ['visible' => true, 'open' => true, 'window_open' => $open, 'text' => $text, 'games' => $enabled, 'visibility' => $s['visibility']];
-    $vis = false;
-    if ($s['visibility'] === 'all') $vis = true;
+    $vis = false; $ov = tab_override($u, 'games'); if ($ov === false) return ['visible' => false, 'open' => false, 'window_open' => $open, 'text' => $text, 'games' => $enabled, 'visibility' => $s['visibility']];
+    if ($s['visibility'] === 'all' || $ov === true) $vis = true;
     elseif ($s['visibility'] === 'selected') { try { $vis = (bool)one('SELECT 1 FROM game_users WHERE user_id=?', [$u['id']]); } catch (Throwable $e) { $vis = false; } }
     return ['visible' => $vis, 'open' => $vis && $open, 'window_open' => $open, 'text' => $text, 'games' => $enabled, 'visibility' => $s['visibility']];
 }
-function can_campaigns(array $u): bool { return $u['role'] === 'super_admin' || in_dept($u, 'Marketing'); }
-function can_finance(array $u): bool { return $u['role'] === 'super_admin' || in_dept($u, 'Finance'); }
+/* ---- Tab privileges: the Root Admin decides who may open which tab ---- */
+// key => [label, can the Root Admin switch it per person, where the server enforces it]
+const TAB_DEFS = [
+    'reports' => ['Reports', 1], 'performance' => ['Team performance', 1], 'pipeline' => ['Pipeline', 1], 'documents' => ['Documents (document checks)', 1], 'mail' => ['Mail', 1], 'schedule' => ['Schedule', 1],
+    'games' => ['Games', 1], 'campaigns' => ['Campaigns', 1], 'team' => ['Team / Snapshot', 1], 'finance' => ['Finance', 1], 'learn' => ['Learn', 1], 'competition' => ['Competition', 1], 'events' => ['Events', 1],
+    'research' => ['Research', 1], 'projects' => ['Projects', 1], 'products' => ['Products & services', 1], 'news' => ['News', 1], 'myfiles' => ['My Documents', 1],
+    'admin' => ['Admin (users)', 0], 'departments' => ['Departments', 0], 'logs' => ['Logs', 0], 'access' => ['Access control', 0],
+];
+function tab_overrides(array $u): array {
+    static $cache = []; $id = (int)($u['id'] ?? 0); if (isset($cache[$id])) return $cache[$id];
+    $m = []; try { foreach (all('SELECT tab,allowed FROM user_access WHERE user_id=?', [$id]) as $r) $m[$r['tab']] = (bool)(int)$r['allowed']; } catch (Throwable $e) {}
+    return $cache[$id] = $m;
+}
+function tab_override(array $u, string $tab): ?bool { $m = tab_overrides($u); return array_key_exists($tab, $m) ? $m[$tab] : null; }
+/** What a person gets when the Root Admin has not said anything about a tab. */
+function tab_default(array $u, string $tab): bool {
+    $role = $u['role'] ?? '';
+    return match ($tab) {
+        'performance' => false,                                        // only people the Root Admin picks
+        'documents' => $role === 'super_admin',
+        'myfiles' => $role !== 'super_admin',                          // personal files: never for administrators
+        'team' => in_array($role, ['super_admin', 'founder', 'manager'], true),
+        'finance' => $role === 'super_admin' || $role === 'founder' || in_dept($u, 'Finance'),
+        'campaigns' => $role === 'super_admin' || in_dept($u, 'Marketing'),
+        'admin', 'departments' => $role === 'super_admin',
+        'logs', 'access' => false,
+        default => true,
+    };
+}
+function tab_access(array $u, string $tab): bool {
+    if (!empty($u['is_root'])) return $tab !== 'myfiles';                // the Root Admin can open everything except other people's (and their own) personal files tab
+    if ($tab === 'myfiles' && ($u['role'] ?? '') === 'super_admin') return false;
+    if ($tab === 'logs' || $tab === 'access') return false;
+    if ($tab === 'admin' || $tab === 'departments') return ($u['role'] ?? '') === 'super_admin' && (tab_override($u, $tab) ?? true);
+    $ov = tab_override($u, $tab); if ($ov !== null) return $ov;
+    return tab_default($u, $tab);
+}
+function tab_map(array $u): array { $m = []; foreach (TAB_DEFS as $k => $_) $m[$k] = tab_access($u, $k); return $m; }
+function need_tab(array $u, string $tab, string $msg = 'You do not have access to this section'): void { if (!tab_access($u, $tab)) fail($msg, 403); }
+function is_root(?array $u): bool { return !empty($u['is_root']); }
+function need_root(): array { $u = need_user(); if (!is_root($u)) fail('Only the Root Admin can do this', 403); return $u; }
+function finance_default(array $u): bool { return ($u['role'] ?? '') === 'super_admin' || in_dept($u, 'Finance'); }
+function can_campaigns(array $u): bool { $ov = tab_override($u, 'campaigns'); return !empty($u['is_root']) || ($ov ?? (($u['role'] ?? '') === 'super_admin' || in_dept($u, 'Marketing'))); }
+function can_finance(array $u): bool { $ov = tab_override($u, 'finance'); return ($u['role'] ?? '') !== 'founder' && (!empty($u['is_root']) || ($ov ?? finance_default($u))); }
+
 function me(): ?array {
     static $u = false;
     if ($u !== false) return $u;
@@ -119,7 +162,7 @@ function me(): ?array {
     $u = $id ? one('SELECT u.id,u.name,u.email,u.role,u.department_id,u.job_title,u.must_change_password,d.name AS department
                     FROM users u LEFT JOIN departments d ON d.id=u.department_id WHERE u.id=? AND u.active=1', [$id]) : null;
     if ($u) { $u['department_ids'] = user_dept_ids((int)$u['id'], (int)($u['department_id'] ?? 0));
-        $u['head_of'] = head_dept_ids((int)$u['id']); try { $ga = games_access($u); $u['games'] = $ga['visible']; $u['games_open'] = $ga['open']; } catch (Throwable $e) { $u['games'] = false; $u['games_open'] = false; } $u['campaigns'] = can_campaigns($u); $u['finance'] = can_finance($u);
+        $u['head_of'] = head_dept_ids((int)$u['id']); try { $u['is_root'] = (int)(one('SELECT is_root FROM users WHERE id=?', [$u['id']])['is_root'] ?? 0); } catch (Throwable $e) { $u['is_root'] = 0; } try { $ga = games_access($u); $u['games'] = $ga['visible']; $u['games_open'] = $ga['open']; } catch (Throwable $e) { $u['games'] = false; $u['games_open'] = false; } $u['campaigns'] = can_campaigns($u); $u['finance'] = can_finance($u); $u['tabs'] = tab_map($u);
         $u['av'] = 0; try { $r0 = one('SELECT UNIX_TIMESTAMP(updated_at) t FROM user_avatars WHERE user_id=?', [$u['id']]); $u['av'] = $r0 ? (int)$r0['t'] : 0; } catch (Throwable $e) {} }
     if ($id && !$u) { session_destroy(); }
     return $u;
@@ -139,6 +182,11 @@ function log_act(?int $uid, string $action, string $detail = ''): void {
 }
 function notify(int $uid, string $type, string $title, string $body = '', string $link = ''): void {
     q('INSERT INTO notifications (user_id,type,title,body,link) VALUES (?,?,?,?,?)', [$uid, $type, mb_substr($title, 0, 200), mb_substr($body, 0, 500), $link ?: null]);
+    $nid = (int)db()->lastInsertId(); push_try($uid, $title, $body, (string)$link, 'n' . $nid);
+}
+/** Web Push to the person's phones/browsers (only if they allowed it); never lets a failure break the caller. */
+function push_try(int $uid, string $title, string $body, string $link, string $tag): void {
+    try { static $loaded = false; if (!$loaded) { require_once __DIR__ . '/push.php'; $loaded = true; } push_notify($uid, $title, $body, $link, $tag); } catch (Throwable $e) {}
 }
 
 function s(mixed $v, int $max = 200): string { return mb_substr(trim((string)$v), 0, $max); }

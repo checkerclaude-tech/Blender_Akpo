@@ -19,6 +19,7 @@ const GAME_DEFS = [
 function game_load(string $g): string { if (!isset(GAME_DEFS[$g])) fail('Unknown game', 400); require_once __DIR__ . '/game_' . $g . '.php'; return GAME_DEFS[$g]['prefix']; }
 function game_notify(int $to, string $kind, string $title, string $body, int $match): void {
     q('INSERT INTO notifications (user_id,type,title,body,link,read_at) VALUES (?,?,?,?,?,NOW())', [$to, 'game_' . $kind, mb_substr($title, 0, 200), mb_substr($body, 0, 500), '#/games/' . $match]);
+    push_try($to, $title, $body, '#/games/' . $match, 'game-' . $kind . '-' . $match);
 }
 function game_players(int $id): array { return all('SELECT p.user_id,p.seat,p.status,u.name FROM game_players p JOIN users u ON u.id=p.user_id WHERE p.match_id=? ORDER BY COALESCE(p.seat,99), u.name', [$id]); }
 function game_who(array $players, int $seat): int { foreach ($players as $p) if ($p['seat'] !== null && (int)$p['seat'] === $seat) return (int)$p['user_id']; return 0; }

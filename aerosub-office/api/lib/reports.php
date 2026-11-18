@@ -18,6 +18,12 @@ const RP_ACTIVE = ['todo', 'in_progress', 'blocked'];            // still being 
 const RP_CLOSED = ['done', 'canceled', 'transferred'];           // finished one way or another
 const RP_WORKING = ['in_progress', 'blocked'];                   // a daily report is expected on these
 
+/** Departments whose reports this person may read: only the ones they head (a manager role alone is not enough). */
+function rp_heads(array $u): array { return array_map('intval', $u['head_of'] ?? []); }
+function rp_heads_user(array $u, int $pid): bool {
+    $h = rp_heads($u); if (!$h) return false; $r = one('SELECT department_id FROM users WHERE id=?', [$pid]);
+    return (bool)array_intersect(user_dept_ids($pid, (int)($r['department_id'] ?? 0)), $h);
+}
 function rp_global(array $u): bool { return in_array($u['role'], ['super_admin', 'founder'], true); }
 
 /** Members of the given departments (primary or additional). */
@@ -30,7 +36,7 @@ function rp_member_sql(array $deptIds): string {
 function rp_scope(array $u): array {
     if (rp_global($u)) return ['1=1', []];
     $parts = ['r.user_id=?', 'EXISTS(SELECT 1 FROM report_shares rs WHERE rs.report_id=r.id AND rs.user_id=?)']; $p = [$u['id'], $u['id']];
-    if ($m = managed_dept_ids($u)) { $parts[] = 't.department_id IN (' . implode(',', $m) . ')'; $parts[] = 'r.user_id IN ' . rp_member_sql($m); }
+    if ($m = rp_heads($u)) { $parts[] = 't.department_id IN (' . implode(',', $m) . ')'; $parts[] = 'r.user_id IN ' . rp_member_sql($m); }
     return ['(' . implode(' OR ', $parts) . ')', $p];
 }
 
@@ -38,7 +44,7 @@ function rp_scope(array $u): array {
 function rp_task_scope(array $u): array {
     if (rp_global($u)) return ['1=1', []];
     $parts = ['t.assignee_id=?']; $p = [$u['id']];
-    if ($m = managed_dept_ids($u)) { $parts[] = 't.department_id IN (' . implode(',', $m) . ')'; $parts[] = 't.assignee_id IN ' . rp_member_sql($m); }
+    if ($m = rp_heads($u)) { $parts[] = 't.department_id IN (' . implode(',', $m) . ')'; $parts[] = 't.assignee_id IN ' . rp_member_sql($m); }
     return ['(' . implode(' OR ', $parts) . ')', $p];
 }
 
@@ -50,8 +56,8 @@ function rp_load(int $id): ?array {
 function rp_can_manage(array $u, array $r): bool {
     if ($u['role'] === 'super_admin') return true;
     if ($u['role'] === 'founder') return false;
-    $m = managed_dept_ids($u); if (!$m) return false;
-    return ($r['department_id'] && in_array((int)$r['department_id'], $m, true)) || manages_user($u, (int)$r['user_id']);
+    $m = rp_heads($u); if (!$m) return false;
+    return ($r['department_id'] && in_array((int)$r['department_id'], $m, true)) || rp_heads_user($u, (int)$r['user_id']);
 }
 function rp_can_view(array $u, array $r): bool {
     if (rp_global($u) || (int)$r['user_id'] === (int)$u['id'] || rp_can_manage($u, $r)) return true;
@@ -106,7 +112,7 @@ $sub2 = $seg[3] ?? null; $sub2 = ($sub2 !== null && ctype_digit($sub2)) ? (int)$
 /* ---------- dashboard ---------- */
 if ($method === 'GET' && $sub === 'dashboard') {
     $date = d($_GET['date'] ?? null) ?: $today;
-    $global = rp_global($u); $managed = managed_dept_ids($u); $review = $global || (bool)$managed;
+    $global = rp_global($u); $managed = rp_heads($u); $review = $global || (bool)$managed;
     // Filters the person is allowed to use
     $depts = $global ? all('SELECT id,name FROM departments ORDER BY name') : ($managed ? all('SELECT id,name FROM departments WHERE id IN (' . implode(',', $managed) . ') ORDER BY name') : []);
     $deptIds = array_map('intval', array_column($depts, 'id'));
@@ -173,7 +179,7 @@ if ($method === 'GET' && $sub === 'dashboard') {
     $mine = 0; foreach ($tasks as $t) if ((int)$t['assignee_id'] === $uid && in_array($t['status'], RP_WORKING, true) && !isset($reported[(int)$t['id'] . ':' . $uid])) $mine++;
     out(['date' => $date, 'today' => $today, 'scope' => $global ? 'all' : ($managed ? 'department' : 'own'), 'review' => $review, 'read_only' => $ro,
          'departments' => $depts, 'people' => $people, 'filter' => ['department' => $fd, 'user' => $fu],
-         'counts' => $counts, 'reports' => $reports, 'missing' => array_slice($missing, 0, 100), 'missing_total' => count($missing), 'people_rows' => $people_rows,
+         'perf' => tab_access($u, 'performance'), 'counts' => $counts, 'reports' => $reports, 'missing' => array_slice($missing, 0, 100), 'missing_total' => count($missing), 'people_rows' => $people_rows,
          'trend' => $trend, 'shared' => $shared, 'my_missing' => $mine,
          'totals' => ['reports' => count($reports), 'expected' => array_sum(array_column($people_rows, 'expected')), 'missing' => count($missing)]]);
 }
@@ -182,7 +188,7 @@ if ($method === 'GET' && $sub === 'dashboard') {
 const RP_LEGEND = ['lost' => ['NIL/LOST', 'FF0000'], 'view' => ['IN VIEW/AWAITING/REVIEW STATE', 'FFC000'], 'done' => ['AWARDED/DELIVERED/CLOSED OUT', '92D050']];
 const RP_LEGEND_SHORT = ['lost' => 'Lost', 'view' => 'In view', 'done' => 'Delivered'];
 function rp_week_start(string $any): string { $t = strtotime($any) ?: time(); return date('Y-m-d', strtotime('monday this week', $t)); }
-function rp_can_see_person(array $u, int $pid): bool { return rp_global($u) || $pid === (int)$u['id'] || manages_user($u, $pid); }
+function rp_can_see_person(array $u, int $pid): bool { return rp_global($u) || $pid === (int)$u['id'] || rp_heads_user($u, $pid); }
 
 if ($method === 'GET' && $sub === 'weekly' && !(isset($seg[2]) && ctype_digit($seg[2]))) {
     $pid = (int)($_GET['user'] ?? $uid) ?: $uid; if (!rp_can_see_person($u, $pid)) fail('Not allowed', 403);
@@ -210,7 +216,7 @@ if ($method === 'GET' && $sub === 'weekly' && !(isset($seg[2]) && ctype_digit($s
                    'outstanding' => mb_substr(implode(' · ', $out_), 0, 600), 'comment' => mb_substr(implode("\n", $cm), 0, 1500), 'review' => ''];
     }
     out(['code' => 'ASL-HR-WR-001', 'rev' => 'Rev 01', 'employee' => $emp['name'], 'designation' => (string)$emp['job_title'], 'week_start' => $mon, 'week_end' => $fri, 'date' => $fri, 'rows' => $rows,
-         'people' => rp_global($u) ? all("SELECT id,name FROM users WHERE active=1 AND role<>'founder' ORDER BY name") : (managed_dept_ids($u) ? all('SELECT id,name FROM users WHERE active=1 AND id IN ' . rp_member_sql(managed_dept_ids($u)) . ' ORDER BY name') : [['id' => $uid, 'name' => $u['name']]]),
+         'people' => rp_global($u) ? all("SELECT id,name FROM users WHERE active=1 AND role<>'founder' ORDER BY name") : (rp_heads($u) ? all('SELECT id,name FROM users WHERE active=1 AND id IN ' . rp_member_sql(rp_heads($u)) . ' ORDER BY name') : [['id' => $uid, 'name' => $u['name']]]),
          'legend' => array_map(fn($k) => ['key' => $k, 'label' => RP_LEGEND[$k][0], 'short' => RP_LEGEND_SHORT[$k], 'color' => RP_LEGEND[$k][1]], array_keys(RP_LEGEND))]);
 }
 
@@ -267,7 +273,7 @@ if ($method === 'POST' && $sub === 'weekly-xlsx') { // the edited sheet comes ba
 /* ---------- sharing a weekly report ---------- */
 function rp_legend_out(): array { return array_map(fn($k) => ['key' => $k, 'label' => RP_LEGEND[$k][0], 'short' => RP_LEGEND_SHORT[$k], 'color' => RP_LEGEND[$k][1]], array_keys(RP_LEGEND)); }
 function rp_weekly_access(array $u, array $row): bool {
-    if (rp_global($u) || (int)$row['user_id'] === (int)$u['id'] || manages_user($u, (int)$row['user_id'])) return true;
+    if (rp_global($u) || (int)$row['user_id'] === (int)$u['id'] || rp_heads_user($u, (int)$row['user_id'])) return true;
     return (bool)one('SELECT 1 FROM weekly_shares WHERE weekly_id=? AND user_id=?', [$row['id'], $u['id']]);
 }
 if ($method === 'GET' && ($seg[1] ?? '') === 'weekly' && isset($seg[2]) && ctype_digit($seg[2])) { // a saved (shared) weekly report
@@ -280,13 +286,13 @@ if ($method === 'GET' && ($seg[1] ?? '') === 'weekly' && isset($seg[2]) && ctype
 if ($method === 'GET' && $sub === 'weekly-shared') { // lists for the weekly page
     $with = all('SELECT w.id,w.week_start,u.name AS employee,s.note,s.created_at,sb.name AS shared_by FROM weekly_shares s JOIN weekly_reports w ON w.id=s.weekly_id JOIN users u ON u.id=w.user_id LEFT JOIN users sb ON sb.id=s.shared_by WHERE s.user_id=? ORDER BY s.created_at DESC LIMIT 30', [$uid]);
     $mine = all('SELECT w.id,w.week_start,w.updated_at,(SELECT COUNT(*) FROM weekly_shares s WHERE s.weekly_id=w.id) AS shares FROM weekly_reports w WHERE w.user_id=? ORDER BY w.week_start DESC LIMIT 12', [$uid]); $team = [];
-    if (rp_global($u) || managed_dept_ids($u)) $team = all('SELECT w.id,w.week_start,w.updated_at,u.name AS employee FROM weekly_reports w JOIN users u ON u.id=w.user_id WHERE w.user_id<>? ' . (rp_global($u) ? '' : 'AND w.user_id IN ' . rp_member_sql(managed_dept_ids($u))) . ' ORDER BY w.updated_at DESC LIMIT 30', [$uid]);
+    if (rp_global($u) || rp_heads($u)) $team = all('SELECT w.id,w.week_start,w.updated_at,u.name AS employee FROM weekly_reports w JOIN users u ON u.id=w.user_id WHERE w.user_id<>? ' . (rp_global($u) ? '' : 'AND w.user_id IN ' . rp_member_sql(rp_heads($u))) . ' ORDER BY w.updated_at DESC LIMIT 30', [$uid]);
     out(['with_me' => $with, 'mine' => $mine, 'team' => $team]);
 }
 if ($method === 'POST' && $sub === 'weekly-share') {
     if ($ro) fail('Founder accounts are read-only', 403);
     $b = body(); $pid = (int)($b['user_id'] ?? 0) ?: $uid;
-    if ($pid !== $uid && !($u['role'] === 'super_admin' || manages_user($u, $pid))) fail('You can only share your own weekly report', 403);
+    if ($pid !== $uid && !($u['role'] === 'super_admin' || rp_heads_user($u, $pid))) fail('You can only share your own weekly report', 403);
     $emp = one('SELECT id,name FROM users WHERE id=?', [$pid]); if (!$emp) fail('Not found', 404);
     $c = rp_weekly_clean($b, $today); $week = rp_week_start((string)($c['week_start'] ?: $c['date'])); $c['week_start'] = $week; $c['user_id'] = $pid; if ($c['employee'] === '') $c['employee'] = $emp['name'];
     if (!$c['rows']) fail('There is nothing in the report yet');
@@ -317,12 +323,15 @@ if ($method === 'POST' && $sub === 'weekly-share') {
 
 /* ---------- team performance (for heads, managers, admins) ---------- */
 if ($method === 'GET' && $sub === 'performance') {
-    $global = rp_global($u); $managed = managed_dept_ids($u); if (!$global && !$managed) fail('Only department heads, managers and admins can see team performance', 403);
+    need_tab($u, 'performance', 'Team performance is only shown to people the Root Admin has given it to');
+    $global = rp_global($u); $managed = rp_heads($u);
+    // Administrators and the Founder see every department; a department head sees their own; anyone else the Root Admin chose sees everyone
+    $everyone = $global || !$managed;
     $days = in_array((int)($_GET['days'] ?? 30), [7, 14, 30, 60, 90], true) ? (int)$_GET['days'] : 30; $to = $today; $from = date('Y-m-d', strtotime("-" . ($days - 1) . " days"));
-    $depts = $global ? all('SELECT id,name FROM departments ORDER BY name') : all('SELECT id,name FROM departments WHERE id IN (' . implode(',', $managed) . ') ORDER BY name'); $dids = array_map('intval', array_column($depts, 'id'));
+    $depts = $everyone ? all('SELECT id,name FROM departments ORDER BY name') : all('SELECT id,name FROM departments WHERE id IN (' . implode(',', $managed) . ') ORDER BY name'); $dids = array_map('intval', array_column($depts, 'id'));
     $fd = (int)($_GET['department'] ?? 0); if ($fd && !in_array($fd, $dids, true)) $fd = 0;
     $people = $fd ? all("SELECT id,name,job_title FROM users WHERE active=1 AND role<>'founder' AND id IN " . rp_member_sql([$fd]) . ' ORDER BY name')
-        : ($global ? all("SELECT id,name,job_title FROM users WHERE active=1 AND role<>'founder' ORDER BY name") : all("SELECT id,name,job_title FROM users WHERE active=1 AND role<>'founder' AND id IN " . rp_member_sql($managed) . ' ORDER BY name'));
+        : ($everyone ? all("SELECT id,name,job_title FROM users WHERE active=1 AND role<>'founder' ORDER BY name") : all("SELECT id,name,job_title FROM users WHERE active=1 AND role<>'founder' AND id IN " . rp_member_sql($managed) . ' ORDER BY name'));
     $ids = array_map(fn($x) => (int)$x['id'], $people); $in = $ids ? implode(',', $ids) : '0';
     $rep = []; foreach (all("SELECT user_id, COUNT(*) n, COUNT(DISTINCT report_date) dd, COALESCE(SUM(hours),0) h, COALESCE(AVG(progress),0) pr FROM daily_reports WHERE user_id IN ($in) AND report_date BETWEEN ? AND ? GROUP BY user_id", [$from, $to]) as $r) $rep[(int)$r['user_id']] = $r;
     $dn = []; foreach (all("SELECT assignee_id, COUNT(*) n, SUM(due_date IS NULL OR DATE(completed_at) <= due_date) ontime FROM tasks WHERE status='done' AND assignee_id IN ($in) AND DATE(completed_at) BETWEEN ? AND ? GROUP BY assignee_id", [$from, $to]) as $r) $dn[(int)$r['assignee_id']] = $r;

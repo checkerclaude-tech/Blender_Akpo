@@ -15,6 +15,10 @@ $sub = $seg[2] ?? ($id === null ? ($seg[1] ?? null) : null);
 // agent-owner and agent-auth use the office session and this CSRF check like any other route.
 if ($method !== 'GET' && $method !== 'OPTIONS' && !($r === 'login' || $r === 'invite' || $r === 'agent' || $r === 'agent-personal' || $r === 'csp-report' || $r === 'forgot' || $r === 'reset')) { cfg(); check_csrf(); }
 
+// Sections the Root Admin can switch off per person are refused here as well as hidden in the menu.
+$GATED = ['campaigns' => 'campaigns', 'mail' => 'mail', 'learn' => 'learn', 'courses' => 'learn', 'companies' => 'pipeline', 'contacts' => 'pipeline', 'pipeline' => 'pipeline', 'competitors' => 'competition', 'trade-events' => 'events',
+          'snapshot' => 'team', 'documents' => 'documents', 'reports' => 'reports', 'myfiles' => 'myfiles'];
+if (isset($GATED[$r])) { $gu = me(); if ($gu && !tab_access($gu, $GATED[$r])) fail('You do not have access to this section', 403); }
 try {
 switch ($r) {
 
@@ -230,6 +234,7 @@ case 'users':
         log_act((int)$u['id'], 'user_created', $email);
         out(['ok' => true, 'id' => $nid], 201);
     }
+    if (($method === 'DELETE' || $method === 'PATCH') && $id && !is_root($u) && (int)(one('SELECT is_root FROM users WHERE id=?', [$id])['is_root'] ?? 0)) fail('Only the Root Admin can change the Root Admin account', 403);
     if ($method === 'DELETE' && $id) { // archive: they lose access now; the account is kept for 60 days and can be restored
         $t = one('SELECT * FROM users WHERE id=? AND archived_at IS NULL', [$id]); if (!$t) fail('Not found', 404);
         if ($id === (int)$u['id']) fail('You cannot archive your own account');
@@ -455,9 +460,47 @@ case 'snapshot':
     out(['totals' => $tot, 'people' => $people, 'departments' => $byDept, 'recent' => $recent, 'upcoming' => $upcoming]);
 
 // ---------- ACTIVITY ----------
-case 'activity':
-    need_role(['super_admin']);
-    out(all('SELECT l.id,l.action,l.detail,l.created_at,u.name FROM activity_log l LEFT JOIN users u ON u.id=l.user_id ORDER BY l.id DESC LIMIT 200'));
+case 'activity': // the logs belong to the Root Admin
+    need_root();
+    $w = ['1=1']; $p = [];
+    if (!empty($_GET['user'])) { $w[] = 'l.user_id=?'; $p[] = (int)$_GET['user']; }
+    if (!empty($_GET['action'])) { $w[] = 'l.action LIKE ?'; $p[] = '%' . s($_GET['action'], 40) . '%'; }
+    if (!empty($_GET['q'])) { $w[] = '(l.detail LIKE ? OR l.action LIKE ? OR u.name LIKE ?)'; $qq = '%' . s($_GET['q'], 60) . '%'; array_push($p, $qq, $qq, $qq); }
+    if ($d1 = d($_GET['from'] ?? null)) { $w[] = 'l.created_at >= ?'; $p[] = $d1 . ' 00:00:00'; }
+    if ($d2 = d($_GET['to'] ?? null)) { $w[] = 'l.created_at <= ?'; $p[] = $d2 . ' 23:59:59'; }
+    $lim = max(1, min(1000, (int)($_GET['limit'] ?? 200)));
+    out(all('SELECT l.id,l.user_id,l.action,l.detail,l.created_at,u.name FROM activity_log l LEFT JOIN users u ON u.id=l.user_id WHERE ' . implode(' AND ', $w) . ' ORDER BY l.id DESC LIMIT ' . $lim, $p));
+
+// Who may open which tab: Root Admin only.   GET access  ·  GET access/{userId}  ·  PATCH access/{userId} {tabs:{performance:true,finance:false,mail:null}}
+case 'access':
+    $ru = need_root();
+    if ($method === 'GET' && !$id) { $rows = all("SELECT u.id,u.name,u.email,u.role,u.is_root,(SELECT d.name FROM departments d WHERE d.id=u.department_id) AS department,(SELECT COUNT(*) FROM user_access a WHERE a.user_id=u.id) AS overrides FROM users u WHERE u.active=1 AND u.archived_at IS NULL ORDER BY u.is_root DESC,u.name"); out(['users' => $rows]); }
+    if ($id) {
+        $t = one('SELECT id,name,email,role,department_id FROM users WHERE id=? AND archived_at IS NULL', [$id]); if (!$t) fail('Not found', 404);
+        $t['department_ids'] = user_dept_ids($id, (int)($t['department_id'] ?? 0)); $t['is_root'] = (int)(one('SELECT is_root FROM users WHERE id=?', [$id])['is_root'] ?? 0);
+        if ($method === 'PATCH') {
+            if ($t['is_root']) fail('The Root Admin can always open everything', 400); $b = body(); $in = (array)($b['tabs'] ?? []);
+            foreach ($in as $k => $v) { if (!isset(TAB_DEFS[$k]) || !TAB_DEFS[$k][1]) continue;
+                if ($v === null || $v === '' || $v === 'default') q('DELETE FROM user_access WHERE user_id=? AND tab=?', [$id, $k]);
+                else q('INSERT INTO user_access (user_id,tab,allowed,set_by) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE allowed=VALUES(allowed), set_by=VALUES(set_by)', [$id, $k, $v ? 1 : 0, $ru['id']]); }
+            log_act((int)$ru['id'], 'access_changed', $t['email'] . ': ' . implode(', ', array_map(fn($k) => $k . '=' . (($in[$k] === null || $in[$k] === 'default') ? 'default' : ($in[$k] ? 'on' : 'off')), array_keys($in))));
+            notify($id, 'access', 'Your access was updated', 'The Root Admin changed which sections you can open. Refresh the page to see the new menu.', '#/home');
+            out(['ok' => true]);
+        }
+        $target = $t; $ov = tab_overrides($t); $rows = [];
+        foreach (TAB_DEFS as $k => [$label, $grant]) { if (!$grant) continue; $def = tab_default($t, $k); if ($k === 'myfiles' && $t['role'] === 'super_admin') $def = false;
+            $rows[] = ['key' => $k, 'label' => $label, 'default' => $def, 'override' => array_key_exists($k, $ov) ? $ov[$k] : null, 'effective' => tab_access($t, $k), 'locked' => $k === 'myfiles' && $t['role'] === 'super_admin']; }
+        out(['user' => ['id' => $id, 'name' => $t['name'], 'email' => $t['email'], 'role' => $t['role']], 'tabs' => $rows]);
+    }
+    fail('Bad request', 404);
+
+case 'push':
+    require __DIR__ . '/lib/push.php';
+    break;
+
+case 'myfiles':
+    require __DIR__ . '/lib/myfiles.php';
+    break;
 
 case 'reports':
     require __DIR__ . '/lib/reports.php';
