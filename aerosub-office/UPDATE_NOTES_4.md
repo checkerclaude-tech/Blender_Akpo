@@ -17,3 +17,6 @@ Check its output: it must say `Root Admin account: dev.aaerosub@…`. If it says
 * Android/Chrome/desktop: an "Install Aerosub Office" banner; iPhone/iPad: a Share → Add to Home Screen guide (Safari). Both also on My profile.
 * After sign-in people are asked to turn on notifications. With permission, the server sends real Web Push (task assigned, report shared, game turn…) even when the app is closed. iPhone needs iOS 16.4+ and the app added to the Home Screen first. Profile has a "Send a test notification" button.
 * Requires HTTPS (needed by every browser for installs/push) and PHP openssl + curl.
+
+## Fix: question spreadsheet import
+* Importing the "ROV Essentials 50 Questions" sheet only added 2: in 48 rows the correct answer was typed in the *Correct Answer* column but was not repeated under Answer A–E, so the import could not tell which choice was right. The import now adds such an answer as one of the choices (spread over A–E; if all five were already full, the last wrong choice is dropped) and tells you how many questions it adjusted. 50/50 import.

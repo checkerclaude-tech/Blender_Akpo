@@ -132,9 +132,16 @@ function cr_parse_questions(array $table): array {
         $cv = $g('correct'); $letter = '';
         if (preg_match('/^(?:answer|option|choice)?\s*([A-Ea-e])$/', $cv, $m)) $letter = strtolower($m[1]);
         else foreach ($opts as $l => $t) if ($t !== '' && mb_strtolower($t) === mb_strtolower($cv)) { $letter = $l; break; }
+        $fixed = false;
+        if ($letter === '' && mb_strlen($cv) > 1) { // the correct answer is written out but is missing from the choices: add it instead of losing the question
+            $free = array_keys(array_filter($opts, fn($x) => $x === ''));
+            if ($free) { $letter = $free[0]; $opts[$letter] = mb_substr($cv, 0, 500); }
+            else { $opts['e'] = mb_substr($cv, 0, 500); $pick = ['a', 'b', 'c', 'd', 'e'][$i % 5]; [$opts['e'], $opts[$pick]] = [$opts[$pick], $opts['e']]; $letter = $pick === 'e' ? 'e' : $pick; $letter = array_search(mb_substr($cv, 0, 500), $opts, true); } // the last wrong choice makes room; spread the right answer over A-E
+            $fixed = true;
+        }
         if ($letter === '' || $opts[$letter] === '') { $err[] = ['row' => $line, 'error' => $cv === '' ? 'No correct answer given' : 'The correct answer "' . mb_substr($cv, 0, 40) . '" is not one of the answers']; continue; }
         $img = $g('img'); if ($img !== '' && !preg_match('~^(https://[^\s"<>]+|api/learn/img/\d+)$~i', $img)) { $err[] = ['row' => $line, 'error' => 'The image link must start with https://']; continue; }
-        $ok[] = ['question' => mb_substr($q, 0, 2000), 'image_url' => $img !== '' ? mb_substr($img, 0, 500) : null, 'opts' => $opts, 'correct' => strtoupper($letter), 'hint' => $g('hint') !== '' ? mb_substr($g('hint'), 0, 500) : null];
+        $ok[] = ['question' => mb_substr($q, 0, 2000), 'image_url' => $img !== '' ? mb_substr($img, 0, 500) : null, 'opts' => $opts, 'correct' => strtoupper($letter), 'fixed' => $fixed, 'hint' => $g('hint') !== '' ? mb_substr($g('hint'), 0, 500) : null];
     }
     return [$ok, $err];
 }
@@ -305,7 +312,7 @@ if ($part === 'questions') {
         $replace = ($b['mode'] ?? 'append') === 'replace'; if ($replace && $ok) { q('DELETE FROM course_questions WHERE course_id=?', [$cid]); $count = 0; $pos = 1; }
         if ($count + count($ok) > 1000) fail('A course can hold up to 1000 questions');
         foreach ($ok as $qq) cr_insert_question($cid, $qq, $pos++);
-        log_act($uid, 'course_questions_imported', $course['title'] . ' +' . count($ok)); out(['ok' => true, 'added' => count($ok), 'skipped' => count($err), 'errors' => array_slice($err, 0, 60), 'total' => (int)one('SELECT COUNT(*) c FROM course_questions WHERE course_id=?', [$cid])['c'], 'replaced' => $replace && $ok]);
+        log_act($uid, 'course_questions_imported', $course['title'] . ' +' . count($ok)); out(['ok' => true, 'added' => count($ok), 'fixed' => count(array_filter($ok, fn($x) => !empty($x['fixed']))), 'skipped' => count($err), 'errors' => array_slice($err, 0, 60), 'total' => (int)one('SELECT COUNT(*) c FROM course_questions WHERE course_id=?', [$cid])['c'], 'replaced' => $replace && $ok]);
     }
     if ($method === 'POST' && !$sid) { if ($count >= 1000) fail('A course can hold up to 1000 questions'); cr_insert_question($cid, cr_question_in($b), $pos); out(['ok' => true, 'id' => (int)db()->lastInsertId()], 201); }
     if ($method === 'DELETE' && !$sid) { q('DELETE FROM course_questions WHERE course_id=?', [$cid]); out(['ok' => true]); }
