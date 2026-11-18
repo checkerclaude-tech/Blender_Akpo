@@ -184,7 +184,7 @@ const RP_LEGEND_SHORT = ['lost' => 'Lost', 'view' => 'In view', 'done' => 'Deliv
 function rp_week_start(string $any): string { $t = strtotime($any) ?: time(); return date('Y-m-d', strtotime('monday this week', $t)); }
 function rp_can_see_person(array $u, int $pid): bool { return rp_global($u) || $pid === (int)$u['id'] || manages_user($u, $pid); }
 
-if ($method === 'GET' && $sub === 'weekly') {
+if ($method === 'GET' && $sub === 'weekly' && !(isset($seg[2]) && ctype_digit($seg[2]))) {
     $pid = (int)($_GET['user'] ?? $uid) ?: $uid; if (!rp_can_see_person($u, $pid)) fail('Not allowed', 403);
     $emp = one('SELECT id,name,job_title FROM users WHERE id=?', [$pid]); if (!$emp) fail('Not found', 404);
     $mon = rp_week_start((string)(d($_GET['week'] ?? null) ?: $today)); $fri = date('Y-m-d', strtotime($mon . ' +4 days')); $sun = date('Y-m-d', strtotime($mon . ' +6 days'));
@@ -214,13 +214,18 @@ if ($method === 'GET' && $sub === 'weekly') {
          'legend' => array_map(fn($k) => ['key' => $k, 'label' => RP_LEGEND[$k][0], 'short' => RP_LEGEND_SHORT[$k], 'color' => RP_LEGEND[$k][1]], array_keys(RP_LEGEND))]);
 }
 
-if ($method === 'POST' && $sub === 'weekly-xlsx') { // the edited sheet comes back from the page and is written out in the template's layout
-    require_once __DIR__ . '/xlsx.php'; $b = body();
+function rp_weekly_clean(array $b, string $today): array {
     $T = fn($v, $n) => mb_substr(trim((string)($v ?? '')), 0, $n);
     $rows = []; foreach (array_slice((array)($b['rows'] ?? []), 0, 120) as $r) { if (!is_array($r)) continue;
         $cls = array_key_exists((string)($r['status'] ?? ''), RP_LEGEND) ? $r['status'] : 'view';
         $rows[] = ['client' => $T($r['client'] ?? '', 200), 'project' => $T($r['project'] ?? '', 200), 'task' => $T($r['task'] ?? '', 400), 'status' => $cls, 'outstanding' => $T($r['outstanding'] ?? '', 800), 'comment' => $T($r['comment'] ?? '', 2000), 'review' => $T($r['review'] ?? '', 800)]; }
     $emp = $T($b['employee'] ?? '', 120); $des = $T($b['designation'] ?? '', 120); $code = $T($b['code'] ?? 'ASL-HR-WR-001', 40); $rev = $T($b['rev'] ?? 'Rev 01', 20); $dateTxt = $T($b['date_text'] ?? '', 40);
+    $date = d($b['date'] ?? null) ?: $today;
+    return ['code' => $code, 'rev' => $rev, 'employee' => $emp, 'designation' => $des, 'date' => $date, 'date_text' => $dateTxt, 'week_start' => (string)(d($b['week_start'] ?? null) ?: ''), 'rows' => $rows];
+}
+function rp_weekly_xlsx(array $c): string {
+    require_once __DIR__ . '/xlsx.php';
+    $rows = $c['rows']; $emp = $c['employee']; $des = $c['designation']; $code = $c['code']; $rev = $c['rev']; $dateTxt = $c['date_text'];
     $gray = 'BFBFBF'; $thin = ['border' => 'thin', 'wrap' => true];
     $W = [3.2, 5.3, 31.7, 35, 41.2, 14, 24.1, 30.9, 31.5]; $cells = []; $R = [];
     // header band with the logo
@@ -250,9 +255,89 @@ if ($method === 'POST' && $sub === 'weekly-xlsx') { // the edited sheet comes ba
     $logo = (string)@file_get_contents(__DIR__ . '/../../assets/img/aerosub-logo.png'); $dim = @getimagesizefromstring($logo);
     $sheet = ['name' => 'Weekly report', 'cols' => $W, 'rows' => $R, 'merges' => ['B2:G3'], 'landscape' => true];
     if ($logo !== '' && $dim) $sheet['image'] = ['data' => $logo, 'col' => 1, 'row' => 0, 'w' => 190, 'h' => (int)round(190 * $dim[1] / $dim[0])];
-    try { $bin = xlsx_write($sheet); } catch (RuntimeException $e) { fail($e->getMessage(), 501); }
-    $fn = 'Weekly_Report_' . (preg_replace('/[^A-Za-z0-9]+/', '_', $emp) ?: 'Team') . '_' . date('d-M-Y', strtotime((string)(d($b['date'] ?? null) ?: $today))) . '.xlsx';
-    header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'); header('Content-Disposition: attachment; filename="' . $fn . '"'); header('Content-Length: ' . strlen($bin)); header('Cache-Control: no-store'); echo $bin; exit;
+    return xlsx_write($sheet);
+}
+function rp_weekly_filename(array $c): string { return 'Weekly_Report_' . (preg_replace('/[^A-Za-z0-9]+/', '_', $c['employee']) ?: 'Team') . '_' . date('d-M-Y', strtotime($c['date'])) . '.xlsx'; }
+if ($method === 'POST' && $sub === 'weekly-xlsx') { // the edited sheet comes back from the page and is written out in the template's layout
+    $c = rp_weekly_clean(body(), $today);
+    try { $bin = rp_weekly_xlsx($c); } catch (RuntimeException $e) { fail($e->getMessage(), 501); }
+    header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'); header('Content-Disposition: attachment; filename="' . rp_weekly_filename($c) . '"'); header('Content-Length: ' . strlen($bin)); header('Cache-Control: no-store'); echo $bin; exit;
+}
+
+/* ---------- sharing a weekly report ---------- */
+function rp_legend_out(): array { return array_map(fn($k) => ['key' => $k, 'label' => RP_LEGEND[$k][0], 'short' => RP_LEGEND_SHORT[$k], 'color' => RP_LEGEND[$k][1]], array_keys(RP_LEGEND)); }
+function rp_weekly_access(array $u, array $row): bool {
+    if (rp_global($u) || (int)$row['user_id'] === (int)$u['id'] || manages_user($u, (int)$row['user_id'])) return true;
+    return (bool)one('SELECT 1 FROM weekly_shares WHERE weekly_id=? AND user_id=?', [$row['id'], $u['id']]);
+}
+if ($method === 'GET' && ($seg[1] ?? '') === 'weekly' && isset($seg[2]) && ctype_digit($seg[2])) { // a saved (shared) weekly report
+    $row = one('SELECT * FROM weekly_reports WHERE id=?', [(int)$seg[2]]); if (!$row || !rp_weekly_access($u, $row)) fail('Not found', 404);
+    $c = json_decode((string)$row['data'], true) ?: [];
+    $sh = one('SELECT s.note,s.created_at,sb.name AS shared_by FROM weekly_shares s LEFT JOIN users sb ON sb.id=s.shared_by WHERE s.weekly_id=? AND s.user_id=?', [$row['id'], $uid]);
+    out($c + ['people' => [], 'legend' => rp_legend_out(), 'week_end' => date('Y-m-d', strtotime($row['week_start'] . ' +4 days')), 'saved' => ['id' => (int)$row['id'], 'owner_id' => (int)$row['user_id'], 'updated_at' => $row['updated_at'], 'shared_by' => $sh['shared_by'] ?? null, 'note' => $sh['note'] ?? null,
+        'recipients' => all('SELECT u.name FROM weekly_shares s JOIN users u ON u.id=s.user_id WHERE s.weekly_id=? ORDER BY u.name', [$row['id']])]]);
+}
+if ($method === 'GET' && $sub === 'weekly-shared') { // lists for the weekly page
+    $with = all('SELECT w.id,w.week_start,u.name AS employee,s.note,s.created_at,sb.name AS shared_by FROM weekly_shares s JOIN weekly_reports w ON w.id=s.weekly_id JOIN users u ON u.id=w.user_id LEFT JOIN users sb ON sb.id=s.shared_by WHERE s.user_id=? ORDER BY s.created_at DESC LIMIT 30', [$uid]);
+    $mine = all('SELECT w.id,w.week_start,w.updated_at,(SELECT COUNT(*) FROM weekly_shares s WHERE s.weekly_id=w.id) AS shares FROM weekly_reports w WHERE w.user_id=? ORDER BY w.week_start DESC LIMIT 12', [$uid]); $team = [];
+    if (rp_global($u) || managed_dept_ids($u)) $team = all('SELECT w.id,w.week_start,w.updated_at,u.name AS employee FROM weekly_reports w JOIN users u ON u.id=w.user_id WHERE w.user_id<>? ' . (rp_global($u) ? '' : 'AND w.user_id IN ' . rp_member_sql(managed_dept_ids($u))) . ' ORDER BY w.updated_at DESC LIMIT 30', [$uid]);
+    out(['with_me' => $with, 'mine' => $mine, 'team' => $team]);
+}
+if ($method === 'POST' && $sub === 'weekly-share') {
+    if ($ro) fail('Founder accounts are read-only', 403);
+    $b = body(); $pid = (int)($b['user_id'] ?? 0) ?: $uid;
+    if ($pid !== $uid && !($u['role'] === 'super_admin' || manages_user($u, $pid))) fail('You can only share your own weekly report', 403);
+    $emp = one('SELECT id,name FROM users WHERE id=?', [$pid]); if (!$emp) fail('Not found', 404);
+    $c = rp_weekly_clean($b, $today); $week = rp_week_start((string)($c['week_start'] ?: $c['date'])); $c['week_start'] = $week; $c['user_id'] = $pid; if ($c['employee'] === '') $c['employee'] = $emp['name'];
+    if (!$c['rows']) fail('There is nothing in the report yet');
+    $ids = array_values(array_unique(array_filter(array_map('intval', (array)($b['user_ids'] ?? [])))));  $ids = array_values(array_diff($ids, [$uid, $pid])); if (!$ids) fail('Choose at least one person to share it with');
+    q('INSERT INTO weekly_reports (user_id,week_start,data) VALUES (?,?,?) ON DUPLICATE KEY UPDATE data=VALUES(data), updated_at=NOW()', [$pid, $week, json_encode($c, JSON_UNESCAPED_UNICODE)]);
+    $wid = (int)one('SELECT id FROM weekly_reports WHERE user_id=? AND week_start=?', [$pid, $week])['id'];
+    $note = s($b['note'] ?? '', 500); $email = !empty($b['email']); $bin = null;
+    require_once __DIR__ . '/accounts.php'; require_once __DIR__ . '/campcore.php';
+    if ($email) { try { $bin = rp_weekly_xlsx($c); } catch (Throwable $e) { $bin = null; } }
+    $link = camp_base() . '/#/reports/weekly/' . $wid; $total = count($c['rows']); $done = count(array_filter($c['rows'], fn($r) => $r['status'] === 'done')); $lost = count(array_filter($c['rows'], fn($r) => $r['status'] === 'lost'));
+    $names = []; $sent = 0; $failed = 0;
+    foreach ($ids as $x) {
+        $r = one('SELECT id,name,email FROM users WHERE id=? AND active=1', [$x]); if (!$r) continue;
+        q('INSERT INTO weekly_shares (weekly_id,user_id,shared_by,note) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE shared_by=VALUES(shared_by), note=VALUES(note), created_at=NOW()', [$wid, $x, $uid, $note ?: null]);
+        notify($x, 'weekly_shared', $u['name'] . ' shared a weekly report' . ($pid !== $uid ? ' for ' . $emp['name'] : ''), 'Week of ' . date('j M', strtotime($week)) . ' · ' . $total . ' item' . ($total === 1 ? '' : 's') . ($note ? ' — ' . mb_substr($note, 0, 100) : ''), '#/reports/weekly/' . $wid);
+        $names[] = $r['name'];
+        if ($email && $r['email']) {
+            $subj = 'Weekly report: ' . $c['employee'] . ' · week of ' . date('j M Y', strtotime($week));
+            $text = "Hello " . $r['name'] . ",\n\n" . $u['name'] . " shared the weekly report of " . $c['employee'] . " (week of " . date('j M Y', strtotime($week)) . ") with you.\n" . $total . " item(s), " . $done . " delivered/closed out, " . $lost . " lost/nil.\n" . ($note ? "\nNote: " . $note . "\n" : '') . "\nOpen it in Aerosub Office: " . $link . "\n" . ($bin ? "The Excel file is attached.\n" : '');
+            $html = '<p>Hello ' . htmlspecialchars($r['name']) . ',</p><p><b>' . htmlspecialchars($u['name']) . '</b> shared the weekly report of <b>' . htmlspecialchars($c['employee']) . '</b> (week of ' . date('j M Y', strtotime($week)) . ') with you.</p><p>' . $total . ' item(s) · ' . $done . ' delivered / closed out · ' . $lost . ' lost / nil</p>' . ($note ? '<p style="border-left:3px solid #00A3DE;padding-left:10px;color:#444">' . nl2br(htmlspecialchars($note)) . '</p>' : '') . '<p><a href="' . htmlspecialchars($link) . '">Open the report in Aerosub Office</a>' . ($bin ? ' (the Excel file is attached)' : '') . '</p>';
+            if (acct_send_mail($r['email'], $subj, $html, $text, $bin ? [['name' => rp_weekly_filename($c), 'type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'data' => $bin]] : [])) { $sent++; q('UPDATE weekly_shares SET emailed=1 WHERE weekly_id=? AND user_id=?', [$wid, $x]); } else $failed++;
+        }
+    }
+    if (!$names) fail('Choose at least one active person');
+    log_act($uid, 'weekly_shared', $c['employee'] . ' ' . $week);
+    out(['ok' => true, 'id' => $wid, 'shared' => $names, 'emailed' => $sent, 'email_failed' => $failed, 'link' => $link]);
+}
+
+/* ---------- team performance (for heads, managers, admins) ---------- */
+if ($method === 'GET' && $sub === 'performance') {
+    $global = rp_global($u); $managed = managed_dept_ids($u); if (!$global && !$managed) fail('Only department heads, managers and admins can see team performance', 403);
+    $days = in_array((int)($_GET['days'] ?? 30), [7, 14, 30, 60, 90], true) ? (int)$_GET['days'] : 30; $to = $today; $from = date('Y-m-d', strtotime("-" . ($days - 1) . " days"));
+    $depts = $global ? all('SELECT id,name FROM departments ORDER BY name') : all('SELECT id,name FROM departments WHERE id IN (' . implode(',', $managed) . ') ORDER BY name'); $dids = array_map('intval', array_column($depts, 'id'));
+    $fd = (int)($_GET['department'] ?? 0); if ($fd && !in_array($fd, $dids, true)) $fd = 0;
+    $people = $fd ? all("SELECT id,name,job_title FROM users WHERE active=1 AND role<>'founder' AND id IN " . rp_member_sql([$fd]) . ' ORDER BY name')
+        : ($global ? all("SELECT id,name,job_title FROM users WHERE active=1 AND role<>'founder' ORDER BY name") : all("SELECT id,name,job_title FROM users WHERE active=1 AND role<>'founder' AND id IN " . rp_member_sql($managed) . ' ORDER BY name'));
+    $ids = array_map(fn($x) => (int)$x['id'], $people); $in = $ids ? implode(',', $ids) : '0';
+    $rep = []; foreach (all("SELECT user_id, COUNT(*) n, COUNT(DISTINCT report_date) dd, COALESCE(SUM(hours),0) h, COALESCE(AVG(progress),0) pr FROM daily_reports WHERE user_id IN ($in) AND report_date BETWEEN ? AND ? GROUP BY user_id", [$from, $to]) as $r) $rep[(int)$r['user_id']] = $r;
+    $dn = []; foreach (all("SELECT assignee_id, COUNT(*) n, SUM(due_date IS NULL OR DATE(completed_at) <= due_date) ontime FROM tasks WHERE status='done' AND assignee_id IN ($in) AND DATE(completed_at) BETWEEN ? AND ? GROUP BY assignee_id", [$from, $to]) as $r) $dn[(int)$r['assignee_id']] = $r;
+    $op = []; foreach (all("SELECT assignee_id, SUM(status='todo') todo, SUM(status='in_progress') prog, SUM(status='blocked') blk, SUM(status='deferred') def, SUM(status IN ('todo','in_progress','blocked') AND due_date < CURDATE()) late FROM tasks WHERE assignee_id IN ($in) GROUP BY assignee_id") as $r) $op[(int)$r['assignee_id']] = $r;
+    $work = 0; for ($t = strtotime($from); $t <= strtotime($to); $t += 86400) if ((int)date('N', $t) <= 5) $work++; $work = max(1, $work);
+    $rows = []; $tot = ['reports' => 0, 'done' => 0, 'hours' => 0.0, 'blocked' => 0, 'late' => 0];
+    foreach ($people as $p) { $i = (int)$p['id']; $r = $rep[$i] ?? null; $d = $dn[$i] ?? null; $o = $op[$i] ?? null;
+        $row = ['id' => $i, 'name' => $p['name'], 'reports' => (int)($r['n'] ?? 0), 'days_reported' => (int)($r['dd'] ?? 0), 'consistency' => round(min(1, (int)($r['dd'] ?? 0) / $work) * 100), 'hours' => round((float)($r['h'] ?? 0), 1), 'avg_progress' => (int)round((float)($r['pr'] ?? 0)),
+                'done' => (int)($d['n'] ?? 0), 'on_time' => isset($d['n']) && (int)$d['n'] ? (int)round(((int)$d['ontime']) * 100 / (int)$d['n']) : null, 'todo' => (int)($o['todo'] ?? 0), 'in_progress' => (int)($o['prog'] ?? 0), 'blocked' => (int)($o['blk'] ?? 0), 'deferred' => (int)($o['def'] ?? 0), 'late' => (int)($o['late'] ?? 0)];
+        $tot['reports'] += $row['reports']; $tot['done'] += $row['done']; $tot['hours'] += $row['hours']; $tot['blocked'] += $row['blocked']; $tot['late'] += $row['late']; $rows[] = $row; }
+    $byDay = array_column(all("SELECT report_date dte, COUNT(*) c FROM daily_reports WHERE user_id IN ($in) AND report_date BETWEEN ? AND ? GROUP BY report_date", [$from, $to]), 'c', 'dte');
+    $dDay = array_column(all("SELECT DATE(completed_at) dte, COUNT(*) c FROM tasks WHERE status='done' AND assignee_id IN ($in) AND DATE(completed_at) BETWEEN ? AND ? GROUP BY DATE(completed_at)", [$from, $to]), 'c', 'dte');
+    $series = []; for ($t = strtotime($from); $t <= strtotime($to); $t += 86400) { $k = date('Y-m-d', $t); $series[] = ['date' => $k, 'reports' => (int)($byDay[$k] ?? 0), 'done' => (int)($dDay[$k] ?? 0)]; }
+    $status = array_map('intval', one("SELECT COALESCE(SUM(status='todo'),0) todo, COALESCE(SUM(status='in_progress'),0) in_progress, COALESCE(SUM(status='blocked'),0) blocked, COALESCE(SUM(status='deferred'),0) deferred, COALESCE(SUM(status='canceled' AND updated_at >= ?),0) canceled, COALESCE(SUM(status='done' AND completed_at >= ?),0) done, COALESCE(SUM(status='transferred' AND updated_at >= ?),0) transferred FROM tasks WHERE assignee_id IN ($in)", [$from . ' 00:00:00', $from . ' 00:00:00', $from . ' 00:00:00']) ?: []);
+    out(['days' => $days, 'from' => $from, 'to' => $to, 'workdays' => $work, 'departments' => $depts, 'department' => $fd, 'people' => $rows, 'series' => $series, 'status' => $status, 'totals' => $tot]);
 }
 
 /* ---------- history ---------- */

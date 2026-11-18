@@ -293,6 +293,10 @@ function migrate_templates(): array {
         if (!col_exists('fin_items', $c)) { db()->exec("ALTER TABLE fin_items ADD COLUMN $c $def"); $log[] = "Finance items: $c added."; }
     foreach (['bank_name' => 'VARCHAR(120) NULL', 'account_name' => 'VARCHAR(160) NULL', 'account_number' => 'VARCHAR(60) NULL', 'website' => 'VARCHAR(120) NULL', 'rc_number' => 'VARCHAR(40) NULL', 'inv_next' => 'BIGINT UNSIGNED NOT NULL DEFAULT 100026706'] as $c => $def)
         if (!col_exists('fin_settings', $c)) { db()->exec("ALTER TABLE fin_settings ADD COLUMN $c $def"); $log[] = "Finance settings: $c added."; }
+    foreach (['sales_email' => 'VARCHAR(120) NULL', 'sales_tel' => 'VARCHAR(60) NULL', 'currency_symbol' => 'VARCHAR(8) NULL'] as $c => $def)
+        if (!col_exists('fin_docs', $c)) { db()->exec("ALTER TABLE fin_docs ADD COLUMN $c $def"); $log[] = "Finance documents: $c added."; }
+    if (!col_exists('fin_settings', 'currency_symbol')) { db()->exec('ALTER TABLE fin_settings ADD COLUMN currency_symbol VARCHAR(8) NULL'); $log[] = 'Finance settings: currency sign added.';
+        q("UPDATE fin_settings SET currency='NGN', currency_symbol='₦' WHERE id=1 AND currency='USD'"); $log[] = 'Default currency is now Naira (change it under Finance → Company details).'; }
     // brand details taken from the invoice template, filled in only where nothing has been entered yet
     foreach (['company_name' => 'Aerosub Solutions Limited', 'phone' => '+234 703 310 0499', 'email' => 'info@aerosub.co', 'website' => 'www.aerosub.co', 'rc_number' => '1757563', 'address' => '16 Amadi Close, Rumuomasi, Port Harcourt.'] as $c => $v)
         q("UPDATE fin_settings SET $c=? WHERE id=1 AND ($c IS NULL OR $c='')", [$v]);
@@ -329,4 +333,34 @@ function migrate_courses(): array {
         FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
     ] as $s) db()->exec($s);
     return ['Courses, question banks, tests and grades ready.'];
+}
+
+// Weekly reports that people share, and who they were shared with. Safe to run repeatedly.
+function migrate_weekly(): array {
+    foreach ([
+    "CREATE TABLE IF NOT EXISTS weekly_reports (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, user_id INT UNSIGNED NOT NULL, week_start DATE NOT NULL, data MEDIUMTEXT NOT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, UNIQUE KEY uq_week (user_id,week_start),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    "CREATE TABLE IF NOT EXISTS weekly_shares (weekly_id INT UNSIGNED NOT NULL, user_id INT UNSIGNED NOT NULL, shared_by INT UNSIGNED NULL, note VARCHAR(500) NULL, emailed TINYINT(1) NOT NULL DEFAULT 0,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (weekly_id,user_id), KEY (user_id),
+        FOREIGN KEY (weekly_id) REFERENCES weekly_reports(id) ON DELETE CASCADE, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    ] as $q) db()->exec($q);
+    return ['Weekly report sharing ready.'];
+}
+
+// Games: admin settings (who sees them, when they are open), matches and players. Safe to run repeatedly.
+function migrate_games(): array {
+    foreach ([
+    "CREATE TABLE IF NOT EXISTS game_settings (id TINYINT UNSIGNED PRIMARY KEY, visibility ENUM('none','all','selected') NOT NULL DEFAULT 'none', mode ENUM('always','window') NOT NULL DEFAULT 'always',
+        start_time CHAR(5) NOT NULL DEFAULT '12:00', end_time CHAR(5) NOT NULL DEFAULT '14:00', days VARCHAR(20) NOT NULL DEFAULT '1,2,3,4,5,6,7', games VARCHAR(120) NOT NULL DEFAULT 'chess,ludo,scrabble,cards',
+        preset VARCHAR(12) NOT NULL DEFAULT 'always', updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    "CREATE TABLE IF NOT EXISTS game_users (user_id INT UNSIGNED NOT NULL PRIMARY KEY, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    "CREATE TABLE IF NOT EXISTS game_matches (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, game VARCHAR(20) NOT NULL, status ENUM('waiting','active','finished','cancelled') NOT NULL DEFAULT 'waiting', creator_id INT UNSIGNED NOT NULL,
+        state MEDIUMTEXT NULL, turn_user_id INT UNSIGNED NULL, version INT UNSIGNED NOT NULL DEFAULT 1, winners VARCHAR(120) NULL, result VARCHAR(200) NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, KEY (status), KEY (turn_user_id), FOREIGN KEY (creator_id) REFERENCES users(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    "CREATE TABLE IF NOT EXISTS game_players (match_id INT UNSIGNED NOT NULL, user_id INT UNSIGNED NOT NULL, seat TINYINT UNSIGNED NULL, status ENUM('invited','accepted','declined') NOT NULL DEFAULT 'invited',
+        PRIMARY KEY (match_id,user_id), KEY (user_id,status), FOREIGN KEY (match_id) REFERENCES game_matches(id) ON DELETE CASCADE, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    ] as $q) db()->exec($q);
+    db()->exec('INSERT IGNORE INTO game_settings (id) VALUES (1)');
+    return ['Games ready (hidden from staff until the Super Admin turns them on in Games → Settings).'];
 }

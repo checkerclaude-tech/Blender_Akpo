@@ -82,6 +82,33 @@ function manages_user(array $u, int $uid): bool {
     $r = one('SELECT department_id FROM users WHERE id=?', [$uid]);
     return (bool)array_intersect(user_dept_ids($uid, (int)($r['department_id'] ?? 0)), $m);
 }
+/* ---- Games: the Super Admin decides who sees them and when they are open ---- */
+function games_settings(): array {
+    static $s = null; if ($s !== null) return $s;
+    $d = ['visibility' => 'none', 'mode' => 'always', 'start_time' => '12:00', 'end_time' => '14:00', 'days' => '1,2,3,4,5,6,7', 'games' => 'chess,ludo,scrabble,cards', 'preset' => 'always'];
+    try { $s = one('SELECT * FROM game_settings WHERE id=1') ?: $d; } catch (Throwable $e) { $s = $d; } return $s;
+}
+function games_window_open(array $s): bool {
+    if ($s['mode'] !== 'window') return true;
+    if (!in_array((string)date('N'), explode(',', (string)$s['days']), true)) return false;
+    $now = date('H:i'); $a = (string)$s['start_time']; $b = (string)$s['end_time'];
+    return $a <= $b ? ($now >= $a && $now <= $b) : ($now >= $a || $now <= $b);
+}
+function games_window_text(array $s): string {
+    if ($s['mode'] !== 'window') return 'Open all the time';
+    $names = [1 => 'Mon', 2 => 'Tue', 3 => 'Wed', 4 => 'Thu', 5 => 'Fri', 6 => 'Sat', 7 => 'Sun']; $days = array_map('intval', explode(',', (string)$s['days']));
+    $dt = count($days) === 7 ? 'every day' : (count($days) === 5 && !array_diff([1, 2, 3, 4, 5], $days) ? 'Mon to Fri' : implode(', ', array_map(fn($d) => $names[$d] ?? '', $days)));
+    return 'Open ' . $s['start_time'] . ' to ' . $s['end_time'] . ', ' . $dt;
+}
+/** visible: shows in the menu; open: may play right now. The Super Admin always sees and plays. */
+function games_access(array $u): array {
+    $s = games_settings(); $open = games_window_open($s); $text = games_window_text($s); $enabled = array_values(array_filter(explode(',', (string)$s['games'])));
+    if ($u['role'] === 'super_admin') return ['visible' => true, 'open' => true, 'window_open' => $open, 'text' => $text, 'games' => $enabled, 'visibility' => $s['visibility']];
+    $vis = false;
+    if ($s['visibility'] === 'all') $vis = true;
+    elseif ($s['visibility'] === 'selected') { try { $vis = (bool)one('SELECT 1 FROM game_users WHERE user_id=?', [$u['id']]); } catch (Throwable $e) { $vis = false; } }
+    return ['visible' => $vis, 'open' => $vis && $open, 'window_open' => $open, 'text' => $text, 'games' => $enabled, 'visibility' => $s['visibility']];
+}
 function can_campaigns(array $u): bool { return $u['role'] === 'super_admin' || in_dept($u, 'Marketing'); }
 function can_finance(array $u): bool { return $u['role'] === 'super_admin' || in_dept($u, 'Finance'); }
 function me(): ?array {
@@ -92,7 +119,7 @@ function me(): ?array {
     $u = $id ? one('SELECT u.id,u.name,u.email,u.role,u.department_id,u.job_title,u.must_change_password,d.name AS department
                     FROM users u LEFT JOIN departments d ON d.id=u.department_id WHERE u.id=? AND u.active=1', [$id]) : null;
     if ($u) { $u['department_ids'] = user_dept_ids((int)$u['id'], (int)($u['department_id'] ?? 0));
-        $u['head_of'] = head_dept_ids((int)$u['id']); $u['campaigns'] = can_campaigns($u); $u['finance'] = can_finance($u);
+        $u['head_of'] = head_dept_ids((int)$u['id']); try { $ga = games_access($u); $u['games'] = $ga['visible']; $u['games_open'] = $ga['open']; } catch (Throwable $e) { $u['games'] = false; $u['games_open'] = false; } $u['campaigns'] = can_campaigns($u); $u['finance'] = can_finance($u);
         $u['av'] = 0; try { $r0 = one('SELECT UNIX_TIMESTAMP(updated_at) t FROM user_avatars WHERE user_id=?', [$u['id']]); $u['av'] = $r0 ? (int)$r0['t'] : 0; } catch (Throwable $e) {} }
     if ($id && !$u) { session_destroy(); }
     return $u;

@@ -493,6 +493,10 @@ case 'courses':
     require __DIR__ . '/lib/courses.php';
     break;
 
+case 'games':
+    require __DIR__ . '/lib/games.php';
+    break;
+
 case 'campaigns':
     require __DIR__ . '/lib/campaigns.php';
     break;

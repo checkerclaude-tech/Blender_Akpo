@@ -1,0 +1,69 @@
+/* Theme skins: Christmas, Monday office, Cookie, Cyber Punk, Broken PC, Tetris.
+ * Each skin is a complete palette (so it overrides light and dark mode) plus a few decorations. A skin can be applied to the whole app
+ * (<html data-skin="…">) or only to the Games view (.gm-root[data-skin="…"]). Every colour pair was checked for readable contrast. */
+
+/* ---- shared behaviour ---- */
+.gm-root[data-skin]{background:var(--bg);color:var(--ink)}
+[data-skin][data-skin] :is(.btn:not(.ghost),.nav a.on,.cal .d.today .n,.ag-tab.on,.ag-send){color:var(--on-fill,#fff)}
+[data-skin][data-skin] .chip.on{background:var(--fill);border-color:var(--fill);color:var(--on-fill,#fff)}
+[data-skin][data-skin] .side{background:var(--navy)}
+[data-skin][data-skin] .gatecard,[data-skin][data-skin] .modal{color:var(--ink)}
+
+/* ---- Christmas ---- */
+[data-skin="xmas"][data-skin]{--bg:#F6EEDD;--card:#FFFDF7;--ink:#2B1417;--muted:#6B4F50;--line:#E2D2B6;--mist:#F1E6CF;--navy:#5E0E19;--navy-2:#7A1626;--cyan:#177245;--cyan-d:#0F5A35;--fill:#177245;--fill-d:#0F5A35;--on-fill:#fff;--link:#0F6B3C;--ok:#177245;--warn:#9A5A00;--bad:#B3122E;--r:16px;--sq-l:#F3E6C8;--sq-d:#6E9B76;--shadow:0 1px 2px rgba(94,14,25,.10),0 8px 22px rgba(94,14,25,.10)}
+html[data-skin="xmas"] body,.gm-root[data-skin="xmas"]{background-color:var(--bg);background-image:radial-gradient(circle,rgba(255,255,255,.95) 1.6px,transparent 2.2px),radial-gradient(circle,rgba(23,114,69,.08) 2.4px,transparent 3.4px);background-size:46px 46px,92px 92px;background-position:0 0,23px 23px}
+[data-skin="xmas"] .side{background-image:repeating-linear-gradient(45deg,rgba(255,255,255,.06) 0 10px,transparent 10px 20px)}
+[data-skin="xmas"] .main::before,.gm-root[data-skin="xmas"]::before{content:"";display:block;height:8px;border-radius:99px;margin:0 0 16px;background:repeating-linear-gradient(45deg,#B3122E 0 12px,#fff 12px 24px,#177245 24px 36px,#fff 36px 48px)}
+[data-skin="xmas"] .top h1::after{content:" ❄";opacity:.55;font-size:.7em}
+[data-skin="xmas"] .brand::after{content:"🎄";font-size:14px;margin-left:6px;letter-spacing:0}
+
+/* ---- Monday office ---- */
+[data-skin="monday"][data-skin]{--bg:#E8EBEF;--card:#FFFFFF;--ink:#1C2735;--muted:#546174;--line:#C9D1DA;--mist:#EEF1F4;--navy:#2B3646;--navy-2:#364357;--cyan:#3A6AA5;--cyan-d:#2C5384;--fill:#3A6AA5;--fill-d:#2C5384;--on-fill:#fff;--link:#2B5C99;--ok:#2F7D4F;--warn:#8F6200;--bad:#B3261E;--r:8px;--sq-l:#E9E4D6;--sq-d:#8DA1B8;--shadow:0 1px 0 rgba(28,39,53,.08),0 3px 8px rgba(28,39,53,.06)}
+html[data-skin="monday"] body,.gm-root[data-skin="monday"]{background-color:var(--bg);background-image:linear-gradient(rgba(28,39,53,.045) 1px,transparent 1px);background-size:100% 28px}
+[data-skin="monday"] .main::before,.gm-root[data-skin="monday"]::before{content:"Monday morning mode ☕  coffee first, then the inbox.";display:block;font-size:12px;color:var(--muted);margin:0 0 12px;letter-spacing:.02em}
+[data-skin="monday"] .card{border-top:3px solid #E8B923}
+
+/* ---- Cookie ---- */
+[data-skin="cookie"][data-skin]{--bg:#F7E9D2;--card:#FFF8EC;--ink:#3A2210;--muted:#755437;--line:#E3CBA6;--mist:#F2DFC0;--navy:#4A2A12;--navy-2:#5E3718;--cyan:#A8570F;--cyan-d:#8A460A;--fill:#A8570F;--fill-d:#8A460A;--on-fill:#fff;--link:#8A4A0C;--ok:#4A7C25;--warn:#8F5500;--bad:#B3261E;--r:20px;--sq-l:#F6E3BF;--sq-d:#B98055;--shadow:0 2px 0 rgba(74,42,18,.10),0 8px 18px rgba(74,42,18,.10)}
+html[data-skin="cookie"] body,.gm-root[data-skin="cookie"]{background-color:var(--bg);background-image:radial-gradient(ellipse 6px 4.5px at 18% 28%,rgba(74,42,18,.20) 98%,transparent),radial-gradient(ellipse 5px 4px at 62% 12%,rgba(74,42,18,.17) 98%,transparent),radial-gradient(ellipse 6px 4px at 78% 64%,rgba(74,42,18,.20) 98%,transparent),radial-gradient(ellipse 4.5px 3.5px at 34% 82%,rgba(74,42,18,.16) 98%,transparent);background-size:210px 210px}
+[data-skin="cookie"] .btn{border-radius:99px;box-shadow:0 2px 0 rgba(0,0,0,.18)}
+[data-skin="cookie"] .brand::after{content:"🍪";font-size:14px;margin-left:6px;letter-spacing:0}
+
+/* ---- Cyber Punk ---- */
+[data-skin="cyber"][data-skin]{color-scheme:dark;--bg:#0C0918;--card:#150F2A;--ink:#EAF6FF;--muted:#AEB9E6;--line:#3D2C70;--mist:#1D1540;--navy:#07050F;--navy-2:#150F2A;--cyan:#00E5FF;--cyan-d:#00B8CC;--fill:#00E5FF;--fill-d:#00B8CC;--on-fill:#04101A;--link:#4FE8FF;--ok:#38F2A8;--warn:#FFD23F;--bad:#FF5C8A;--r:4px;--sq-l:#2A2150;--sq-d:#120C2C;--shadow:0 0 0 1px #3D2C70,0 0 16px rgba(0,229,255,.10)}
+html[data-skin="cyber"] body,.gm-root[data-skin="cyber"]{background-color:var(--bg);background-image:linear-gradient(rgba(255,46,151,.07) 1px,transparent 1px),linear-gradient(90deg,rgba(0,229,255,.06) 1px,transparent 1px);background-size:34px 34px}
+[data-skin="cyber"] :is(h1,h2,h3,.brand){font-family:ui-monospace,Consolas,"Courier New",monospace;letter-spacing:.05em}
+[data-skin="cyber"] :is(h1,h2){text-shadow:0 0 10px rgba(0,229,255,.55)}
+[data-skin="cyber"] .side{border-right:1px solid #FF2E97;box-shadow:0 0 18px rgba(255,46,151,.28)}
+[data-skin="cyber"] .nav a.on,[data-skin="cyber"] .btn:not(.ghost){box-shadow:0 0 12px rgba(0,229,255,.55)}
+[data-skin="cyber"] .card{border-color:#3D2C70}
+[data-skin="cyber"] .tag{background:var(--mist);color:var(--ink);border:1px solid var(--line)}
+
+/* ---- Broken PC ---- */
+[data-skin="brokenpc"][data-skin]{color-scheme:dark;--bg:#0A2A8A;--card:#0E37AE;--ink:#FFFFFF;--muted:#CFDCFF;--line:#5A82E8;--mist:#123FBF;--navy:#051A66;--navy-2:#0A2A8A;--cyan:#FFFFFF;--cyan-d:#DCE6FF;--fill:#FFFFFF;--fill-d:#DCE6FF;--on-fill:#0A2A8A;--link:#FFF3A3;--ok:#8CFFC1;--warn:#FFE066;--bad:#FFB3B3;--r:2px;--sq-l:#2F5DD8;--sq-d:#0A2278;--shadow:0 0 0 1px #5A82E8}
+html[data-skin="brokenpc"] body,.gm-root[data-skin="brokenpc"]{background-color:var(--bg);background-image:repeating-linear-gradient(0deg,rgba(255,255,255,.045) 0 2px,transparent 2px 4px);font-family:Consolas,"Lucida Console","Courier New",monospace}
+[data-skin="brokenpc"] :is(h1,h2,h3,.brand,.btn){font-family:Consolas,"Lucida Console","Courier New",monospace}
+[data-skin="brokenpc"] h1{text-shadow:2px 0 #ff2e63,-2px 0 #00e5ff}
+[data-skin="brokenpc"] .main::before,.gm-root[data-skin="brokenpc"]::before{content:":(  A problem has been detected and everything is fine. Carry on.";display:block;font-size:12px;color:var(--muted);margin:0 0 12px}
+[data-skin="brokenpc"] .tag{background:var(--mist);color:var(--ink);border:1px solid var(--line)}
+html[data-skin="brokenpc"] body::after{content:"";position:fixed;right:0;top:0;width:260px;height:260px;pointer-events:none;opacity:.3;z-index:1;background:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 360 360' fill='none' stroke='white' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'><path d='M360 0 L262 78 L286 112 L214 150 L238 214 L170 238 L182 300 L120 360'/><path d='M262 78 L300 70 L330 30'/><path d='M214 150 L170 128 L150 80'/><path d='M238 214 L286 236 L312 292'/><path d='M286 112 L326 138'/></svg>") no-repeat right top/contain}
+
+/* ---- Tetris ---- */
+[data-skin="tetris"][data-skin]{color-scheme:dark;--bg:#10101C;--card:#1A1A2E;--ink:#F4F4FF;--muted:#B0B3DA;--line:#3A3A68;--mist:#202040;--navy:#08080F;--navy-2:#14142A;--cyan:#FFD500;--cyan-d:#E0BB00;--fill:#FFD500;--fill-d:#E0BB00;--on-fill:#1A1500;--link:#7DD3FF;--ok:#56E39F;--warn:#FFB347;--bad:#FF6B6B;--r:3px;--sq-l:#26264A;--sq-d:#15152C;--shadow:4px 4px 0 rgba(0,0,0,.45)}
+html[data-skin="tetris"] body,.gm-root[data-skin="tetris"]{background-color:var(--bg);background-image:linear-gradient(rgba(255,255,255,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.045) 1px,transparent 1px);background-size:28px 28px}
+[data-skin="tetris"] :is(h1,h2,h3,.brand){font-family:ui-monospace,Consolas,"Courier New",monospace;text-transform:uppercase;letter-spacing:.08em}
+[data-skin="tetris"] .card{border:2px solid var(--line);box-shadow:4px 4px 0 rgba(0,0,0,.45)}
+[data-skin="tetris"] .tag{background:var(--mist);color:var(--ink);border:1px solid var(--line)}
+html[data-skin="tetris"] body::after{content:"";position:fixed;right:34px;bottom:30px;width:20px;height:20px;pointer-events:none;opacity:.7;z-index:60;background:#FF8A00;box-shadow:20px 0 #FF8A00,40px 0 #FF8A00,40px -20px #FF8A00,-60px 0 #00E5FF,-40px 0 #00E5FF,-20px 0 #00E5FF,-80px 0 #00E5FF,-100px -40px #B14DFF,-80px -40px #B14DFF,-80px -60px #B14DFF,-60px -40px #B14DFF}
+@media (max-width:860px){html[data-skin="tetris"] body::after,html[data-skin="brokenpc"] body::after{display:none}}
+
+/* chess squares follow the skin */
+.gm-root{--sq-l:#EEEED2;--sq-d:#769656}
+
+/* theme pickers */
+.sk-chips{display:flex;flex-wrap:wrap;gap:8px}
+.sk-chip{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:99px;padding:6px 14px 6px 8px;font-size:13.5px;font-weight:500;cursor:pointer;font-family:inherit}
+.sk-chip:hover{background:var(--mist)}.sk-chip.on{outline:2px solid var(--fill);outline-offset:1px;font-weight:700}
+.sk-sw{width:22px;height:22px;border-radius:50%;border:1px solid rgba(0,0,0,.25);flex:none}
+.sk-default{background:linear-gradient(135deg,#0C1F61 50%,#00A3DE 50%)}.sk-xmas{background:linear-gradient(135deg,#B3122E 50%,#177245 50%)}.sk-monday{background:linear-gradient(135deg,#2B3646 50%,#E8B923 50%)}
+.sk-cookie{background:linear-gradient(135deg,#4A2A12 50%,#D9953A 50%)}.sk-cyber{background:linear-gradient(135deg,#FF2E97 50%,#00E5FF 50%)}.sk-brokenpc{background:linear-gradient(135deg,#0A2A8A 50%,#fff 50%)}.sk-tetris{background:linear-gradient(135deg,#FFD500 50%,#B14DFF 50%)}

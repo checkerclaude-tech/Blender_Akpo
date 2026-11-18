@@ -5,6 +5,8 @@ $u = need_user(); $uid = (int)$u['id']; $role = $u['role']; $b = $method === 'GE
 $fin = can_finance($u); $ro = $role === 'founder'; $sid = isset($seg[2]) && ctype_digit($seg[2]) ? (int)$seg[2] : 0; $act = $sid ? ($seg[3] ?? '') : ($seg[2] ?? '');
 function fx_s($v, int $n = 500): ?string { $v = trim((string)($v ?? '')); return $v === '' ? null : mb_substr($v, 0, $n); }
 function fx_num($v, float $def = 0): float { return is_numeric($v) ? round((float)$v, 3) : $def; }
+/** The sign shown before amounts (₦ $ £ € or whatever the user types). Empty = use the usual sign for the currency code. */
+function fx_sym($v): ?string { $v = (string)($v ?? ''); $v = preg_replace('/[\x00-\x1F]/', '', $v) ?? ''; $v = trim(str_replace(['<', '>', '"', "'", '&', '\\'], '', $v)); return $v === '' ? null : mb_substr($v, 0, 8); }
 function fx_cur($v): string { $v = strtoupper(preg_replace('/[^A-Za-z]/', '', (string)$v)); return strlen($v) >= 2 && strlen($v) <= 5 ? $v : 'USD'; }
 const FX_DAILY = ['day rate', 'per day', 'daily'];
 /** [shown, counted] for one line. On a commercial, a "Day rate" line counts qty x rate x days, "As incurred / Optional / As applicable" lines are shown but not counted. */
@@ -51,9 +53,10 @@ function fx_clean_items($raw): array {
 function fx_save_items(int $id, array $items): void { q('DELETE FROM fin_items WHERE doc_id=?', [$id]); foreach ($items as $n => $i) q('INSERT INTO fin_items (doc_id,position,description,qty,unit,unit_price,category,freq,amount_note) VALUES (?,?,?,?,?,?,?,?,?)', [$id, $n, $i['description'], $i['qty'], $i['unit'], $i['unit_price'], $i['category'] ?? null, $i['freq'] ?? null, $i['amount_note'] ?? null]); }
 /** The template fields (attention, customer id, ship to, lead time, project title, days ...). Only fields present in $b change. */
 function fx_save_extra(int $id, array $b): void {
-    $f = ['customer_id' => 60, 'sales_rep' => 80, 'attention' => 120, 'terms_instr' => 120, 'payment_terms' => 120, 'ship_to' => 500, 'shipping_method' => 80, 'delivery_leadtime' => 120, 'subject' => 300, 'intro' => 3000];
+    $f = ['customer_id' => 60, 'sales_rep' => 80, 'sales_email' => 120, 'sales_tel' => 60, 'attention' => 120, 'terms_instr' => 120, 'payment_terms' => 120, 'ship_to' => 500, 'shipping_method' => 80, 'delivery_leadtime' => 120, 'subject' => 300, 'intro' => 3000];
     $sets = []; $vals = [];
     foreach ($f as $k => $n) if (array_key_exists($k, $b)) { $sets[] = "$k=?"; $vals[] = fx_s($b[$k], $n); }
+    if (array_key_exists('currency_symbol', $b)) { $sets[] = 'currency_symbol=?'; $vals[] = fx_sym($b['currency_symbol']); }
     if (array_key_exists('days', $b)) { $sets[] = 'days=?'; $vals[] = max(1, min(365, (int)$b['days'])); }
     if ($sets) { $vals[] = $id; q('UPDATE fin_docs SET ' . implode(',', $sets) . ' WHERE id=?', $vals); }
 }
@@ -68,7 +71,7 @@ if ($seg[0] === 'finance') {
         if (!$fin) fail('Not allowed', 403); $cur = fx_cur($b['currency'] ?? 'USD'); $rate = max(0, min(100, fx_num($b['tax_rate'] ?? 0)));
         q('UPDATE fin_settings SET company_name=?,address=?,email=?,phone=?,tax_id=?,bank_details=?,currency=?,tax_label=?,tax_rate=?,terms=?,footer=? WHERE id=1', [fx_s($b['company_name'] ?? '', 160), fx_s($b['address'] ?? '', 800), fx_s($b['email'] ?? '', 190), fx_s($b['phone'] ?? '', 60), fx_s($b['tax_id'] ?? '', 80), fx_s($b['bank_details'] ?? '', 1200), $cur, fx_s($b['tax_label'] ?? 'VAT', 30) ?: 'VAT', $rate, fx_s($b['terms'] ?? '', 2000), fx_s($b['footer'] ?? '', 300)]);
         $nx = (int)preg_replace('/\D/', '', (string)($b['inv_next'] ?? ''));
-        q('UPDATE fin_settings SET bank_name=?,account_name=?,account_number=?,website=?,rc_number=? WHERE id=1', [fx_s($b['bank_name'] ?? '', 120), fx_s($b['account_name'] ?? '', 160), fx_s($b['account_number'] ?? '', 60), fx_s($b['website'] ?? '', 120), fx_s($b['rc_number'] ?? '', 40)]);
+        q('UPDATE fin_settings SET currency_symbol=?,bank_name=?,account_name=?,account_number=?,website=?,rc_number=? WHERE id=1', [fx_sym($b['currency_symbol'] ?? ''), fx_s($b['bank_name'] ?? '', 120), fx_s($b['account_name'] ?? '', 160), fx_s($b['account_number'] ?? '', 60), fx_s($b['website'] ?? '', 120), fx_s($b['rc_number'] ?? '', 40)]);
         if ($nx > 0) { $top = (int)(one("SELECT MAX(CAST(number AS UNSIGNED)) m FROM fin_docs WHERE doc_type='invoice' AND number REGEXP '^[0-9]{6,}$'")['m'] ?? 0); if ($nx <= $top) fail('The next invoice number must be higher than ' . $top . ', which is already used.'); q('UPDATE fin_settings SET inv_next=? WHERE id=1', [$nx]); }
         out(['ok' => true]);
     }
@@ -86,7 +89,7 @@ if ($seg[0] === 'finance') {
             elseif (!$fin && !$ro) fail('Not allowed', 403);
             foreach (['type' => 'doc_type', 'status' => 'status'] as $g => $col) if (!empty($_GET[$g])) { $w[] = "d.$col=?"; $p[] = $_GET[$g]; }
             if (!empty($_GET['q'])) { $w[] = '(d.number LIKE ? OR d.client_name LIKE ? OR d.po_number LIKE ? OR d.rfq_ref LIKE ?)'; $qq = '%' . mb_substr((string)$_GET['q'], 0, 60) . '%'; array_push($p, $qq, $qq, $qq, $qq); }
-            $rows = all('SELECT d.id,d.doc_type,d.number,d.status,d.client_name,d.po_number,d.rfq_ref,d.issue_date,d.due_date,d.currency,d.task_id,d.parent_id,d.amount_paid,d.discount,d.tax_rate,' . fx_sub_sql() . ' AS sub FROM fin_docs d WHERE ' . implode(' AND ', $w) . ' ORDER BY d.id DESC LIMIT 300', $p);
+            $rows = all('SELECT d.id,d.doc_type,d.number,d.status,d.client_name,d.po_number,d.rfq_ref,d.issue_date,d.due_date,d.currency,d.currency_symbol,d.task_id,d.parent_id,d.amount_paid,d.discount,d.tax_rate,' . fx_sub_sql() . ' AS sub FROM fin_docs d WHERE ' . implode(' AND ', $w) . ' ORDER BY d.id DESC LIMIT 300', $p);
             foreach ($rows as &$r) { $net = (float)$r['sub'] - min((float)$r['discount'], (float)$r['sub']); $r['total'] = $r['doc_type'] === 'receipt' ? (float)$r['amount_paid'] : round($net + $net * (float)$r['tax_rate'] / 100, 2); unset($r['sub']); } unset($r);
             out(['docs' => $rows, 'can_edit' => $fin]);
         }
@@ -135,7 +138,7 @@ if ($seg[0] === 'finance') {
                 q('INSERT INTO fin_docs (doc_type,number,task_id,company_id,po_number,rfq_ref,client_name,client_address,client_email,currency,issue_date,due_date,tax_label,tax_rate,discount,notes,terms,parent_id,created_by) SELECT ?,?,task_id,company_id,po_number,rfq_ref,client_name,client_address,client_email,currency,?,?,tax_label,tax_rate,discount,notes,terms,id,? FROM fin_docs WHERE id=?',
                   [$to, fx_number($to), date('Y-m-d'), $to === 'invoice' ? date('Y-m-d', strtotime('+30 days')) : null, $uid, $sid]); break; } catch (PDOException $e) { if ($try === 4 || strpos($e->getMessage(), 'uq_number') === false) throw $e; } }
             $nid = (int)db()->lastInsertId();
-            q('UPDATE fin_docs SET subject=?, attention=?, customer_id=?, sales_rep=?, terms_instr=?, payment_terms=?, ship_to=?, shipping_method=?, delivery_leadtime=?, valid_until=? WHERE id=?', [$d['subject'], $d['attention'], $d['customer_id'], $d['sales_rep'], $d['terms_instr'], $d['payment_terms'], $d['ship_to'], $d['shipping_method'], $d['delivery_leadtime'], $d['valid_until'], $nid]);
+            q('UPDATE fin_docs SET currency_symbol=?, sales_email=?, sales_tel=?, subject=?, attention=?, customer_id=?, sales_rep=?, terms_instr=?, payment_terms=?, ship_to=?, shipping_method=?, delivery_leadtime=?, valid_until=? WHERE id=?', [$d['currency_symbol'], $d['sales_email'], $d['sales_tel'], $d['subject'], $d['attention'], $d['customer_id'], $d['sales_rep'], $d['terms_instr'], $d['payment_terms'], $d['ship_to'], $d['shipping_method'], $d['delivery_leadtime'], $d['valid_until'], $nid]);
             if ($d['doc_type'] === 'commercial') { // an invoice bills what is counted: day-rate lines become qty x days, "as incurred / optional" lines are left out
                 $pos = 0; foreach ($d['items'] as $i) { if (trim((string)$i['amount_note']) !== '') continue;
                     $mult = in_array(strtolower(trim((string)$i['freq'])), FX_DAILY, true) ? max(1, (int)$d['days']) : 1;
@@ -150,7 +153,7 @@ if ($seg[0] === 'finance') {
             for ($try = 0; $try < 5; $try++) { try {
                 q("INSERT INTO fin_docs (doc_type,number,task_id,company_id,po_number,rfq_ref,client_name,client_address,client_email,currency,issue_date,status,tax_label,tax_rate,discount,notes,parent_id,amount_paid,pay_method,pay_ref,created_by) SELECT 'receipt',?,task_id,company_id,po_number,rfq_ref,client_name,client_address,client_email,currency,?,'paid',tax_label,0,0,NULL,id,?,?,?,? FROM fin_docs WHERE id=?",
                   [fx_number('receipt'), fx_date($b['date'] ?? null) ?: date('Y-m-d'), $amt, fx_s($b['method'] ?? '', 60), fx_s($b['reference'] ?? '', 120), $uid, $sid]); break; } catch (PDOException $e) { if ($try === 4 || strpos($e->getMessage(), 'uq_number') === false) throw $e; } }
-            $rid = (int)db()->lastInsertId(); q('INSERT INTO fin_items (doc_id,position,description,qty,unit,unit_price) VALUES (?,?,?,?,?,?)', [$rid, 0, 'Payment received against invoice ' . $d['number'] . ($d['po_number'] ? ' (PO ' . $d['po_number'] . ')' : ''), 1, null, $amt]);
+            $rid = (int)db()->lastInsertId(); q('UPDATE fin_docs SET currency_symbol=? WHERE id=?', [$d['currency_symbol'], $rid]); q('INSERT INTO fin_items (doc_id,position,description,qty,unit,unit_price) VALUES (?,?,?,?,?,?)', [$rid, 0, 'Payment received against invoice ' . $d['number'] . ($d['po_number'] ? ' (PO ' . $d['po_number'] . ')' : ''), 1, null, $amt]);
             if (abs($bal - $amt) < 0.005) q("UPDATE fin_docs SET status='paid' WHERE id=?", [$sid]); log_act($uid, 'fin_payment', $d['number'] . ' ' . $amt);
             out(['id' => $rid, 'number' => fx_doc($rid, false)['number'], 'fully_paid' => abs($bal - $amt) < 0.005], 201);
         }

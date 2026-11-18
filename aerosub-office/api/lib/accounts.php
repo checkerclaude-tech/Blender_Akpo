@@ -4,14 +4,14 @@ declare(strict_types=1);
 const ARCHIVE_DAYS = 60;
 
 /** Sends one e-mail. Uses the sending account set up under Campaigns → Settings; falls back to the server's own mail(). Returns false if neither worked. */
-function acct_send_mail(string $to, string $subject, string $html, string $text): bool {
+function acct_send_mail(string $to, string $subject, string $html, string $text, array $attachments = []): bool {
     try {
         require_once __DIR__ . '/campcore.php';
         $st = camp_settings();
         if (!empty($st['smtp_host']) && !empty($st['smtp_user']) && !empty($st['secret_enc']) && !empty($st['from_email'])) {
             $sm = camp_smtp($st);
             $raw = build_message(['from' => ['name' => (string)($st['from_name'] ?: 'Aerosub Office'), 'email' => $st['from_email']], 'to' => [['name' => '', 'email' => $to]], 'cc' => [],
-                'subject' => $subject, 'html' => $html, 'text' => $text, 'attachments' => []]);
+                'subject' => $subject, 'html' => $html, 'text' => $text, 'attachments' => $attachments]);
             $sm->deliver($st['from_email'], [$to], $raw);
             return true;
         }
