@@ -1,0 +1,472 @@
+<?php
+declare(strict_types=1);
+require __DIR__ . '/lib/core.php';
+const TASK_STATUSES = ['todo', 'in_progress', 'blocked', 'done', 'deferred', 'canceled', 'transferred'];
+
+$method = $_SERVER['REQUEST_METHOD'];
+$path = trim(preg_replace('#^.*?/api/?#', '', parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH)), '/');
+$path = preg_replace('#^index\.php/?#', '', $path);
+$seg = $path === '' ? [] : explode('/', $path);
+$r = $seg[0] ?? '';
+$id = isset($seg[1]) && ctype_digit($seg[1]) ? (int)$seg[1] : null;
+$sub = $seg[2] ?? ($id === null ? ($seg[1] ?? null) : null);
+
+// Only 'agent' (the laptop) skips the office session check: it authenticates with its own token (agent_token.php).
+// agent-owner and agent-auth use the office session and this CSRF check like any other route.
+if ($method !== 'GET' && $method !== 'OPTIONS' && !($r === 'login' || $r === 'invite' || $r === 'agent' || $r === 'agent-personal' || $r === 'csp-report')) { cfg(); check_csrf(); }
+
+try {
+switch ($r) {
+
+case 'health': out(['ok' => true, 'time' => date('c')]);
+
+// The browser posts here when the Content Security Policy would block something (see .htaccess). No login or request token is
+// possible for a browser-sent report, so it only writes a short log line, capped so a flood cannot fill the log.
+case 'csp-report':
+    if ($method !== 'POST') fail('POST only', 405);
+    cfg();
+    $recent = one("SELECT COUNT(*) c FROM activity_log WHERE action='csp_violation' AND created_at > (NOW() - INTERVAL 10 MINUTE)");
+    if ((int)$recent['c'] < 30) {
+        $raw = json_decode(substr((string)file_get_contents('php://input'), 0, 4000), true);
+        $rep = is_array($raw) ? ($raw['csp-report'] ?? $raw) : [];
+        $clean = fn($k) => preg_replace('/[^ -~]/', '', mb_substr((string)($rep[$k] ?? ''), 0, 90));
+        log_act(null, 'csp_violation', $clean('violated-directive') . ' | ' . $clean('blocked-uri') . ' | ' . $clean('document-uri'));
+    }
+    http_response_code(204); exit;
+
+// ---------- AGENT PLATFORM (see office-app-changes/README.md) ----------
+case 'agent':
+    require __DIR__ . '/lib/agent.php';
+    break;
+
+// The Personal agent's laptop (its own token, scope 'personal'): it only moves encrypted text. See lib/agent_relay.php.
+case 'agent-personal':
+    require __DIR__ . '/lib/agent_relay.php';
+    break;
+
+case 'agent-tokens':
+    require __DIR__ . '/lib/agent_admin.php';
+    break;
+
+case 'agent-owner':
+    require __DIR__ . '/lib/agent_owner.php';
+    break;
+
+case 'agent-auth':
+    require __DIR__ . '/lib/agent_auth.php';
+    break;
+
+case 'documents':
+case 'research-requests':
+case 'agent-ratings':
+case 'agent-badges':
+    require __DIR__ . '/lib/agent_team.php';
+    break;
+
+
+// ---------- AUTH ----------
+case 'login':
+    if ($method !== 'POST') fail('POST only', 405);
+    $b = body(); $email = strtolower(s($b['email'] ?? '', 190)); $pass = (string)($b['password'] ?? '');
+    $ip = $_SERVER['REMOTE_ADDR'] ?? '0';
+    $n = one('SELECT COUNT(*) c FROM login_attempts WHERE (email=? OR ip=?) AND created_at > (NOW() - INTERVAL 15 MINUTE)', [$email, $ip]);
+    if ($n['c'] >= 8) fail('Too many attempts. Try again in 15 minutes.', 429);
+    $u = one('SELECT * FROM users WHERE email=? AND active=1', [$email]);
+    if (!$u || !password_verify($pass, $u['password_hash'])) {
+        q('INSERT INTO login_attempts (email,ip) VALUES (?,?)', [$email, $ip]);
+        fail('Incorrect email or password', 401);
+    }
+    start_session(); session_regenerate_id(true);
+    $_SESSION['uid'] = (int)$u['id']; unset($_SESSION['csrf']);
+    q('UPDATE users SET last_seen_at=NOW() WHERE id=?', [$u['id']]);
+    log_act((int)$u['id'], 'login');
+    out(['user' => me(), 'csrf' => csrf_token()]);
+
+case 'logout':
+    start_session(); session_destroy(); out(['ok' => true]);
+
+case 'me':
+    $u = me();
+    if (!$u) out(['user' => null]);
+    q('UPDATE users SET last_seen_at=NOW() WHERE id=?', [$u['id']]);
+    try { require_once __DIR__ . '/lib/taskfiles.php'; meeting_reminders(); } catch (Throwable $e) {}
+    $mc = false; try { $mc = (bool)one('SELECT 1 FROM mail_accounts WHERE user_id=?', [$u['id']]); } catch (Throwable $e) {}
+    out(['user' => $u, 'csrf' => csrf_token(), 'mail' => $mc, 'unread' => (int)one('SELECT COUNT(*) c FROM notifications WHERE user_id=? AND read_at IS NULL', [$u['id']])['c']]);
+
+case 'password':
+    $u = need_user(); $b = body();
+    $full = one('SELECT password_hash FROM users WHERE id=?', [$u['id']]);
+    if (!password_verify((string)($b['current'] ?? ''), $full['password_hash'])) fail('Current password is incorrect', 403);
+    $new = (string)($b['new'] ?? '');
+    if (strlen($new) < 10) fail('New password must be at least 10 characters');
+    q('UPDATE users SET password_hash=?, must_change_password=0 WHERE id=?', [password_hash($new, PASSWORD_DEFAULT), $u['id']]);
+    log_act((int)$u['id'], 'password_changed');
+    out(['ok' => true]);
+
+// ---------- DEPARTMENTS ----------
+case 'departments':
+    $u = need_user();
+    if ($method === 'GET' && !$id) {
+        try { out(all('SELECT d.id,d.name,d.head_id,h.name AS head_name,(SELECT COUNT(*) FROM user_departments x WHERE x.department_id=d.id) AS member_count FROM departments d LEFT JOIN users h ON h.id=d.head_id ORDER BY d.name')); }
+        catch (Throwable $e) { out(all('SELECT id,name FROM departments ORDER BY name')); } // before /upgrade.php has run
+    }
+    need_role(['super_admin']);
+    if ($method === 'POST' && !$id) {
+        $name = s(body()['name'] ?? '', 80); if ($name === '') fail('Name required');
+        q('INSERT IGNORE INTO departments (name) VALUES (?)', [$name]); log_act((int)$u['id'], 'department_added', $name);
+        out(['ok' => true]);
+    }
+    if ($method === 'DELETE' && $id && !$sub) { q('DELETE FROM departments WHERE id=?', [$id]); out(['ok' => true]); }
+    $dep = $id ? one('SELECT * FROM departments WHERE id=?', [$id]) : null; if (!$dep) fail('Department not found', 404);
+    if ($method === 'PATCH' && !$sub) { // set or clear the head of department, or rename it
+        $b = body();
+        if (array_key_exists('name', $b)) { $nm = s($b['name'], 80); if ($nm === '') fail('Name required'); q('UPDATE departments SET name=? WHERE id=?', [$nm, $id]); }
+        if (array_key_exists('head_id', $b)) {
+            $hid = (int)($b['head_id'] ?: 0);
+            if ($hid) {
+                $h = one('SELECT id,name,role FROM users WHERE id=? AND active=1', [$hid]); if (!$h) fail('Choose an active user');
+                if ($h['role'] === 'founder') fail('Founder accounts are read-only, so they cannot head a department');
+                q('INSERT IGNORE INTO user_departments (user_id,department_id) VALUES (?,?)', [$hid, $id]);
+                q('UPDATE users SET department_id=? WHERE id=? AND department_id IS NULL', [$id, $hid]);
+                if ((int)($dep['head_id'] ?? 0) !== $hid) notify($hid, 'dept_head', 'You are now head of ' . $dep['name'], 'You can see the daily reports of your department, comment on them and share them.', '#/reports');
+            }
+            q('UPDATE departments SET head_id=? WHERE id=?', [$hid ?: null, $id]);
+            log_act((int)$u['id'], $hid ? 'department_head_set' : 'department_head_cleared', $dep['name']);
+        }
+        out(['ok' => true]);
+    }
+    if ($sub === 'members') { // add or remove people in a department
+        $b = body(); $uidT = isset($seg[3]) && ctype_digit($seg[3]) ? (int)$seg[3] : 0;
+        if ($method === 'POST') {
+            $ids = array_values(array_unique(array_filter(array_map('intval', (array)($b['user_ids'] ?? [])))));
+            if (!$ids) fail('Choose at least one person');
+            foreach ($ids as $x) {
+                $r = one('SELECT id,department_id FROM users WHERE id=? AND active=1', [$x]); if (!$r) continue;
+                if (q('INSERT IGNORE INTO user_departments (user_id,department_id) VALUES (?,?)', [$x, $id])->rowCount() && $x !== (int)$u['id'])
+                    notify($x, 'dept_added', 'You were added to ' . $dep['name'], '', '#/reports');
+                if (!$r['department_id']) q('UPDATE users SET department_id=? WHERE id=?', [$id, $x]);
+            }
+            log_act((int)$u['id'], 'department_members_added', $dep['name']);
+            out(['ok' => true]);
+        }
+        if ($method === 'DELETE' && $uidT) {
+            q('DELETE FROM user_departments WHERE user_id=? AND department_id=?', [$uidT, $id]);
+            $left = one('SELECT department_id FROM user_departments WHERE user_id=? ORDER BY department_id LIMIT 1', [$uidT]);
+            q('UPDATE users SET department_id=? WHERE id=? AND (department_id=? OR department_id IS NULL)', [$left ? (int)$left['department_id'] : null, $uidT, $id]);
+            if ((int)($dep['head_id'] ?? 0) === $uidT) q('UPDATE departments SET head_id=NULL WHERE id=?', [$id]);
+            log_act((int)$u['id'], 'department_member_removed', $dep['name']);
+            out(['ok' => true]);
+        }
+    }
+    fail('Bad request', 404);
+
+// ---------- USERS ----------
+case 'users':
+    $u = need_user();
+    $admin = $u['role'] === 'super_admin';
+    if ($method === 'GET' && !$id) {
+        $rows = all('SELECT u.id,u.name,u.email,u.role,u.department_id,d.name AS department,u.job_title,u.active,u.last_seen_at
+                     FROM users u LEFT JOIN departments d ON d.id=u.department_id ORDER BY u.active DESC,u.name');
+        $mem = []; try { foreach (all('SELECT user_id,department_id FROM user_departments') as $m) $mem[(int)$m['user_id']][] = (int)$m['department_id']; } catch (Throwable $e) {}
+        foreach ($rows as &$x) { $ids = $mem[(int)$x['id']] ?? []; if ($x['department_id']) $ids[] = (int)$x['department_id']; $x['department_ids'] = array_values(array_unique($ids)); }
+        unset($x);
+        foreach ($rows as &$x) { if (!$admin && !in_array($u['role'], ['founder', 'manager'], true)) unset($x['email'], $x['last_seen_at']); }
+        unset($x);
+        out($rows);
+    }
+    need_role(['super_admin']); $b = body();
+    $roles = ['super_admin', 'founder', 'manager', 'employee'];
+    if ($method === 'POST') {
+        $email = strtolower(s($b['email'] ?? '', 190)); $name = s($b['name'] ?? '', 120); $pw = (string)($b['password'] ?? '');
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL) || $name === '') fail('Name and a valid email are required');
+        if (strlen($pw) < 10) fail('Temporary password must be at least 10 characters');
+        if (one('SELECT id FROM users WHERE email=?', [$email])) fail('That email already exists');
+        q('INSERT INTO users (name,email,password_hash,role,department_id,job_title,must_change_password) VALUES (?,?,?,?,?,?,1)',
+          [$name, $email, password_hash($pw, PASSWORD_DEFAULT), in((string)($b['role'] ?? ''), $roles, 'employee'), ($b['department_id'] ?? null) ?: null, s($b['job_title'] ?? '', 120) ?: null]);
+        $nid = (int)db()->lastInsertId(); sync_user_depts($nid, $b);
+        log_act((int)$u['id'], 'user_created', $email);
+        out(['ok' => true, 'id' => $nid], 201);
+    }
+    if ($method === 'PATCH' && $id) {
+        $t = one('SELECT * FROM users WHERE id=?', [$id]); if (!$t) fail('Not found', 404);
+        $role = in((string)($b['role'] ?? $t['role']), $roles, $t['role']);
+        $active = isset($b['active']) ? (int)(bool)$b['active'] : (int)$t['active'];
+        if ($id === (int)$u['id'] && ($role !== 'super_admin' || !$active)) fail('You cannot demote or deactivate yourself');
+        q('UPDATE users SET name=?,role=?,department_id=?,job_title=?,active=? WHERE id=?',
+          [s($b['name'] ?? $t['name'], 120), $role, array_key_exists('department_id', $b) ? ($b['department_id'] ?: null) : $t['department_id'],
+           array_key_exists('job_title', $b) ? (s($b['job_title'], 120) ?: null) : $t['job_title'], $active, $id]);
+        if (!empty($b['password'])) {
+            if (strlen((string)$b['password']) < 10) fail('Password must be at least 10 characters');
+            q('UPDATE users SET password_hash=?, must_change_password=1 WHERE id=?', [password_hash((string)$b['password'], PASSWORD_DEFAULT), $id]);
+        }
+        if (array_key_exists('department_ids', $b)) sync_user_depts($id, $b);
+        log_act((int)$u['id'], 'user_updated', $t['email']);
+        out(['ok' => true]);
+    }
+    fail('Bad request', 404);
+
+// ---------- TASKS ----------
+case 'tasks':
+    $u = need_user(); $uid = (int)$u['id'];
+    $vis = function (array $u): array { // visibility SQL
+        if (in_array($u['role'], ['super_admin', 'founder'], true)) return ['1=1', []];
+        $sh = 'EXISTS(SELECT 1 FROM task_shares ts WHERE ts.task_id=t.id AND ts.user_id=?)' . (can_finance($u) ? " OR t.task_type='rfq'" : '');
+        $md = managed_dept_ids($u);
+        if ($md) { $mdl = implode(',', $md); return ['(t.assignee_id=? OR t.creator_id=? OR ' . $sh . ' OR t.department_id IN (' . $mdl . '))', [$u['id'], $u['id'], $u['id']]]; }
+        return ['(t.assignee_id=? OR t.creator_id=? OR ' . $sh . ')', [$u['id'], $u['id'], $u['id']]];
+    };
+    $canEdit = function (array $t) use ($u): bool {
+        if ($u['role'] === 'super_admin') return true;
+        if ($u['role'] === 'founder') return false;
+        if ((int)$t['creator_id'] === (int)$u['id']) return true;
+        return $t['department_id'] && in_array((int)$t['department_id'], managed_dept_ids($u), true);
+    };
+    require_once __DIR__ . '/lib/taskfiles.php';
+    $sel = 'SELECT t.*, (SELECT COUNT(*) FROM task_files tf WHERE tf.task_id=t.id) AS file_count, (SELECT COUNT(*) FROM task_shares tsc WHERE tsc.task_id=t.id) AS share_count, a.name AS assignee_name, c.name AS creator_name, d.name AS department, co.name AS company_name, ct.name AS contact_name
+            FROM tasks t LEFT JOIN users a ON a.id=t.assignee_id JOIN users c ON c.id=t.creator_id LEFT JOIN departments d ON d.id=t.department_id
+            LEFT JOIN companies co ON co.id=t.company_id LEFT JOIN contacts ct ON ct.id=t.contact_id';
+
+    if ($method === 'GET' && !$id) {
+        [$w, $p] = $vis($u); $where = [$w];
+        foreach (['status', 'priority'] as $f) if (!empty($_GET[$f])) { $where[] = "t.$f=?"; $p[] = $_GET[$f]; }
+        if (!empty($_GET['assignee'])) { $where[] = 't.assignee_id=?'; $p[] = $_GET['assignee'] === 'me' ? $uid : (int)$_GET['assignee']; }
+        if (!empty($_GET['department'])) { $where[] = 't.department_id=?'; $p[] = (int)$_GET['department']; }
+        if (!empty($_GET['company_id'])) { $where[] = 't.company_id=?'; $p[] = (int)$_GET['company_id']; }
+        if (!empty($_GET['type'])) { $where[] = 't.task_type=?'; $p[] = $_GET['type']; }
+        if (!empty($_GET['shared'])) { $where[] = 'EXISTS(SELECT 1 FROM task_shares tz WHERE tz.task_id=t.id AND tz.user_id=?)'; $p[] = $uid; }
+        if (!empty($_GET['meetings'])) { $where[] = "t.task_type='meeting' AND (t.assignee_id=? OR t.creator_id=? OR EXISTS(SELECT 1 FROM task_shares tm WHERE tm.task_id=t.id AND tm.user_id=?))"; array_push($p, $uid, $uid, $uid); }
+        out(all("$sel WHERE " . implode(' AND ', $where) . " ORDER BY t.status='done', t.due_date IS NULL, t.due_date, FIELD(t.priority,'urgent','high','medium','low') LIMIT 500", $p));
+    }
+    if ($method === 'GET' && $id && !in_array($sub, ['files', 'share', 'defer', 'updates', 'report', 'transfer'], true)) {
+        [$w, $p] = $vis($u); $t = one("$sel WHERE t.id=? AND $w", array_merge([$id], $p)); if (!$t) fail('Not found', 404);
+        $t['comments'] = all('SELECT c.id,c.body,c.created_at,u.name FROM task_comments c JOIN users u ON u.id=c.user_id WHERE c.task_id=? ORDER BY c.id', [$id]);
+        $t['can_edit'] = $canEdit($t);
+        $t['files'] = all('SELECT f.id,f.name,f.mime,f.size,f.created_at,f.user_id,u.name AS user_name FROM task_files f LEFT JOIN users u ON u.id=f.user_id WHERE f.task_id=? ORDER BY f.id', [$id]);
+        $t['shares'] = all('SELECT s.user_id AS id,u.name FROM task_shares s JOIN users u ON u.id=s.user_id WHERE s.task_id=? ORDER BY u.name', [$id]);
+        $t['updates'] = all('SELECT x.id,x.kind,x.data,x.created_at,u.name AS user_name FROM task_updates x LEFT JOIN users u ON u.id=x.user_id WHERE x.task_id=? ORDER BY x.id DESC LIMIT 100', [$id]);
+        out($t);
+    }
+    if ($method === 'POST' && !$id) {
+        if ($u['role'] === 'founder') fail('Founder accounts are read-only', 403);
+        $b = body(); $title = s($b['title'] ?? '', 200); if ($title === '') fail('Title required');
+        $assignee = !empty($b['assignee_id']) ? (int)$b['assignee_id'] : $uid;
+        if ($u['role'] === 'employee' && $assignee !== $uid && !manages_user($u, $assignee)) fail('Employees can only create tasks for themselves', 403);
+        $at = one('SELECT id,department_id FROM users WHERE id=? AND active=1', [$assignee]); if (!$at) fail('Assignee not found');
+        if ($u['role'] === 'manager' && $assignee !== $uid && !manages_user($u, $assignee)) fail('Managers can assign within their department', 403);
+        $dept = !empty($b['department_id']) ? (int)$b['department_id'] : ($at['department_id'] ?: null);
+        if (empty($b['department_id']) && $assignee !== $uid && ($u['head_of'] ?? [])) { // a department head giving a task: file it under the department they head
+            $shared = array_values(array_intersect(user_dept_ids($assignee, (int)$at['department_id']), $u['head_of'])); if ($shared) $dept = $shared[0]; }
+        $ttype = in((string)($b['task_type'] ?? ''), ['general', 'research', 'build', 'operations', 'field', 'rfq', 'meeting'], 'general');
+        $st_at = $ttype === 'meeting' ? dt($b['starts_at'] ?? null) : null; $en_at = $ttype === 'meeting' ? dt($b['ends_at'] ?? null) : null; if ($ttype === 'meeting' && !$st_at) fail('Choose when the meeting starts');
+        q('INSERT INTO tasks (title,description,status,priority,assignee_id,creator_id,department_id,due_date,company_id,contact_id,task_type,starts_at,ends_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+          [$title, s($b['description'] ?? '', 5000) ?: null, in((string)($b['status'] ?? ''), TASK_STATUSES, 'todo'),
+           in((string)($b['priority'] ?? ''), ['low', 'medium', 'high', 'urgent'], 'medium'), $assignee, $uid, $dept, d($b['due_date'] ?? null),
+           !empty($b['company_id']) ? (int)$b['company_id'] : null, !empty($b['contact_id']) ? (int)$b['contact_id'] : null, $ttype, $st_at, $en_at]);
+        $tid = (int)db()->lastInsertId();
+        if ($assignee !== $uid) notify($assignee, 'task_assigned', 'New task: ' . $title, 'Assigned by ' . $u['name'], '#/tasks/' . $tid);
+        log_act($uid, 'task_created', $title);
+        out(['ok' => true, 'id' => $tid], 201);
+    }
+    if ($id) {
+        [$w, $p] = $vis($u); $t = one("$sel WHERE t.id=? AND $w", array_merge([$id], $p)); if (!$t) fail('Not found', 404);
+        if (in_array($sub, ['files', 'share', 'defer', 'updates', 'report'], true)) { require __DIR__ . '/lib/taskx.php'; }
+        if ($sub === 'transfer' && $method === 'POST') { require_once __DIR__ . '/lib/reports.php'; rp_transfer_task($t, $u, body(), $canEdit($t)); }
+        if ($sub === 'comments' && $method === 'POST') {
+            $c = s(body()['body'] ?? '', 3000); if ($c === '') fail('Comment is empty');
+            q('INSERT INTO task_comments (task_id,user_id,body) VALUES (?,?,?)', [$id, $uid, $c]);
+            foreach (array_unique(array_filter([$t['assignee_id'], $t['creator_id']])) as $nid) if ((int)$nid !== $uid)
+                notify((int)$nid, 'task_comment', $u['name'] . ' commented on: ' . $t['title'], mb_substr($c, 0, 140), '#/tasks/' . $id);
+            out(['ok' => true], 201);
+        }
+        if ($method === 'PATCH') {
+            $b = body(); $isAssignee = (int)$t['assignee_id'] === $uid; $full = $canEdit($t);
+            if ($u['role'] === 'founder') fail('Founder accounts are read-only', 403);
+            if (!$full && !$isAssignee) fail('Not allowed', 403);
+            $status = in((string)($b['status'] ?? $t['status']), TASK_STATUSES, $t['status']);
+            if ($status !== $t['status']) {
+                if ($status === 'transferred') fail('Use Transfer to move a task to someone else', 400);
+                if ($status === 'canceled' && !$full) fail('Only the person who gave the task, or a department head, can cancel it', 403);
+                if ($t['status'] === 'transferred') fail('This task was transferred. Open the new copy instead', 400);
+            }
+            $new = ['status' => $status];
+            if (array_key_exists('status_reason', $b)) $new['status_reason'] = s($b['status_reason'], 300) ?: null;
+            elseif ($status !== $t['status']) $new['status_reason'] = null;
+            if ($full) {
+                $new += [
+                    'title' => s($b['title'] ?? $t['title'], 200) ?: $t['title'],
+                    'description' => array_key_exists('description', $b) ? (s($b['description'], 5000) ?: null) : $t['description'],
+                    'priority' => in((string)($b['priority'] ?? $t['priority']), ['low', 'medium', 'high', 'urgent'], $t['priority']),
+                    'assignee_id' => array_key_exists('assignee_id', $b) ? (($b['assignee_id'] ?: null)) : $t['assignee_id'],
+                    'due_date' => array_key_exists('due_date', $b) ? d($b['due_date']) : $t['due_date'],
+                    'company_id' => array_key_exists('company_id', $b) ? (($b['company_id'] ?: null)) : $t['company_id'],
+                    'contact_id' => array_key_exists('contact_id', $b) ? (($b['contact_id'] ?: null)) : $t['contact_id'],
+                ];
+                if (array_key_exists('task_type', $b)) $new['task_type'] = in((string)$b['task_type'], ['general', 'research', 'build', 'operations', 'field', 'rfq', 'meeting'], $t['task_type']);
+                if (array_key_exists('starts_at', $b)) { $new['starts_at'] = dt($b['starts_at']); $new['remind_sent'] = 0; }
+                if (array_key_exists('ends_at', $b)) $new['ends_at'] = dt($b['ends_at']);
+                if ($u['role'] === 'employee' && $new['assignee_id'] && (int)$new['assignee_id'] !== $uid && !manages_user($u, (int)$new['assignee_id'])) fail('Employees can only keep tasks assigned to themselves', 403);
+            }
+            $sets = []; $vals = [];
+            foreach ($new as $k => $v) { $sets[] = "$k=?"; $vals[] = $v; }
+            $sets[] = 'completed_at=' . ($status === 'done' ? ($t['completed_at'] ? 'completed_at' : 'NOW()') : 'NULL');
+            $vals[] = $id;
+            q('UPDATE tasks SET ' . implode(',', $sets) . ' WHERE id=?', $vals);
+            if ($status !== $t['status']) {
+                log_act($uid, 'task_' . $status, $t['title']);
+                if ((int)$t['creator_id'] !== $uid) notify((int)$t['creator_id'], 'task_status', $u['name'] . ' marked "' . $t['title'] . '" ' . str_replace('_', ' ', $status), '', '#/tasks/' . $id);
+            }
+            if (isset($new['assignee_id']) && (int)$new['assignee_id'] && (int)$new['assignee_id'] !== (int)$t['assignee_id'] && (int)$new['assignee_id'] !== $uid)
+                notify((int)$new['assignee_id'], 'task_assigned', 'Task assigned to you: ' . $t['title'], 'By ' . $u['name'], '#/tasks/' . $id);
+            out(['ok' => true]);
+        }
+        if ($method === 'DELETE') { if (!$canEdit($t)) fail('Not allowed', 403); q('DELETE FROM tasks WHERE id=?', [$id]); log_act($uid, 'task_deleted', $t['title']); out(['ok' => true]); }
+    }
+    fail('Bad request', 404);
+
+// ---------- SCHEDULE (EVENTS) ----------
+case 'events':
+    $u = need_user(); $uid = (int)$u['id']; $super = $u['role'] === 'super_admin';
+    if ($method === 'GET') {
+        $from = dt($_GET['from'] ?? '') ?: date('Y-m-01 00:00:00'); $to = dt($_GET['to'] ?? '') ?: date('Y-m-t 23:59:59');
+        $sql = 'SELECT e.*, c.name AS creator_name FROM events e JOIN users c ON c.id=e.creator_id
+                WHERE e.starts_at <= ? AND e.ends_at >= ? AND (? = 1 OR e.creator_id=? OR e.scope=\'company\'
+                  OR (e.scope=\'department\' AND e.department_id IN (' . dept_sql_list($u) . ')) OR EXISTS (SELECT 1 FROM event_attendees a WHERE a.event_id=e.id AND a.user_id=?))
+                ORDER BY e.starts_at';
+        $rows = all($sql, [$to, $from, $super ? 1 : 0, $uid, $uid]);
+        foreach ($rows as &$e) $e['attendees'] = all('SELECT u.id,u.name FROM event_attendees a JOIN users u ON u.id=a.user_id WHERE a.event_id=?', [$e['id']]);
+        unset($e);
+        out($rows);
+    }
+    if ($method === 'POST' && !$id) {
+        $b = body(); $title = s($b['title'] ?? '', 200); $st = dt($b['starts_at'] ?? ''); $en = dt($b['ends_at'] ?? '');
+        if ($title === '' || !$st) fail('Title and start time required'); if (!$en || $en < $st) $en = $st;
+        $scope = in((string)($b['scope'] ?? ''), ['private', 'department', 'company'], 'private');
+        if ($scope === 'company' && !in_array($u['role'], ['super_admin', 'manager', 'founder'], true)) fail('Only managers and admins can publish company-wide events', 403);
+        q('INSERT INTO events (title,description,kind,starts_at,ends_at,all_day,location,scope,department_id,creator_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
+          [$title, s($b['description'] ?? '', 3000) ?: null, in((string)($b['kind'] ?? ''), ['meeting', 'deadline', 'travel', 'leave', 'other'], 'meeting'),
+           $st, $en, !empty($b['all_day']) ? 1 : 0, s($b['location'] ?? '', 190) ?: null, $scope, $u['department_id'] ?: null, $uid]);
+        $eid = (int)db()->lastInsertId();
+        foreach (array_unique(array_map('intval', (array)($b['attendees'] ?? []))) as $aid) {
+            if (!$aid || !one('SELECT id FROM users WHERE id=? AND active=1', [$aid])) continue;
+            q('INSERT IGNORE INTO event_attendees (event_id,user_id) VALUES (?,?)', [$eid, $aid]);
+            if ($aid !== $uid) notify($aid, 'event_invite', 'Invited: ' . $title, date('D j M, H:i', strtotime($st)), '#/schedule');
+        }
+        log_act($uid, 'event_created', $title);
+        out(['ok' => true, 'id' => $eid], 201);
+    }
+    if ($id && $method === 'DELETE') {
+        $e = one('SELECT * FROM events WHERE id=?', [$id]); if (!$e) fail('Not found', 404);
+        if (!$super && (int)$e['creator_id'] !== $uid) fail('Not allowed', 403);
+        q('DELETE FROM events WHERE id=?', [$id]); out(['ok' => true]);
+    }
+    fail('Bad request', 404);
+
+// ---------- NOTIFICATIONS ----------
+case 'notifications':
+    $u = need_user(); $uid = (int)$u['id'];
+    if ($method === 'GET') out(all('SELECT id,type,title,body,link,read_at,created_at FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 60', [$uid]));
+    if ($method === 'POST' && $sub === 'read') { // POST /notifications/read  {id?}
+        $nid = (int)(body()['id'] ?? 0);
+        if ($nid) q('UPDATE notifications SET read_at=NOW() WHERE id=? AND user_id=?', [$nid, $uid]);
+        else q('UPDATE notifications SET read_at=NOW() WHERE user_id=? AND read_at IS NULL', [$uid]);
+        out(['ok' => true]);
+    }
+    fail('Bad request', 404);
+
+// ---------- FOUNDER SNAPSHOT ----------
+case 'snapshot':
+    need_role(['super_admin', 'founder', 'manager']); $u = me();
+    $scope = $u['role'] === 'manager' ? ' AND (u.department_id IN (' . dept_sql_list($u) . ') OR u.id IN (SELECT user_id FROM user_departments WHERE department_id IN (' . dept_sql_list($u) . ')))' : '';
+    $people = all("SELECT u.id,u.name,u.job_title,u.role,u.last_seen_at,d.name AS department,
+        SUM(t.status IN ('todo','in_progress','blocked')) AS open_tasks,
+        SUM(t.status IN ('todo','in_progress','blocked') AND t.due_date < CURDATE()) AS overdue,
+        SUM(t.status='blocked') AS blocked,
+        SUM(t.status='in_progress') AS in_progress,
+        SUM(t.status='done' AND t.completed_at >= (NOW() - INTERVAL 7 DAY)) AS done_7d
+        FROM users u LEFT JOIN departments d ON d.id=u.department_id LEFT JOIN tasks t ON t.assignee_id=u.id
+        WHERE u.active=1 AND u.role IN ('employee','manager') $scope GROUP BY u.id ORDER BY overdue DESC, open_tasks DESC");
+    foreach ($people as &$p) foreach (['open_tasks', 'overdue', 'blocked', 'in_progress', 'done_7d'] as $k) $p[$k] = (int)$p[$k];
+    unset($p);
+    $tot = ['open' => 0, 'overdue' => 0, 'blocked' => 0, 'done_7d' => 0];
+    foreach ($people as $p) { $tot['open'] += $p['open_tasks']; $tot['overdue'] += $p['overdue']; $tot['blocked'] += $p['blocked']; $tot['done_7d'] += $p['done_7d']; }
+    $byDept = all("SELECT COALESCE(d.name,'Unassigned') AS department, SUM(t.status IN ('todo','in_progress','blocked')) AS open_tasks, SUM(t.status='done') AS done_tasks
+        FROM tasks t LEFT JOIN departments d ON d.id=t.department_id GROUP BY d.id ORDER BY open_tasks DESC");
+    $recent = all('SELECT l.action,l.detail,l.created_at,u.name FROM activity_log l LEFT JOIN users u ON u.id=l.user_id WHERE l.action<>\'login\' ORDER BY l.id DESC LIMIT 25');
+    $upcoming = all("SELECT t.id,t.title,t.due_date,t.priority,a.name AS assignee FROM tasks t LEFT JOIN users a ON a.id=t.assignee_id
+        WHERE t.status IN ('todo','in_progress','blocked') AND t.due_date IS NOT NULL AND t.due_date <= (CURDATE() + INTERVAL 7 DAY) ORDER BY t.due_date LIMIT 15");
+    out(['totals' => $tot, 'people' => $people, 'departments' => $byDept, 'recent' => $recent, 'upcoming' => $upcoming]);
+
+// ---------- ACTIVITY ----------
+case 'activity':
+    need_role(['super_admin']);
+    out(all('SELECT l.id,l.action,l.detail,l.created_at,u.name FROM activity_log l LEFT JOIN users u ON u.id=l.user_id ORDER BY l.id DESC LIMIT 200'));
+
+case 'reports':
+    require __DIR__ . '/lib/reports.php';
+    break;
+
+case 'invites':
+case 'invite':
+    require __DIR__ . '/lib/invite.php';
+    break;
+
+case 'finance':
+case 'catalog':
+case 'news':
+    require __DIR__ . '/lib/finance.php';
+    break;
+
+case 'research':
+case 'projects':
+    require_once __DIR__ . '/lib/taskfiles.php';
+    require __DIR__ . '/lib/taskx.php';
+    break;
+
+case 'competitors':
+case 'trade-events':
+    require __DIR__ . '/lib/market.php';
+    break;
+
+case 'learn':
+    require __DIR__ . '/lib/learn.php';
+    break;
+
+case 'campaigns':
+    require __DIR__ . '/lib/campaigns.php';
+    break;
+
+case 'avatar':
+    $u = need_user();
+    if ($method === 'GET') {
+        $row = $id ? one('SELECT mime,data FROM user_avatars WHERE user_id=?', [$id]) : null;
+        if (!$row) { http_response_code(404); exit; }
+        header('Content-Type: ' . $row['mime']); header('X-Content-Type-Options: nosniff'); header('Cache-Control: private, max-age=86400'); header('Content-Length: ' . strlen($row['data'])); echo $row['data']; exit;
+    }
+    if ($method === 'DELETE') { q('DELETE FROM user_avatars WHERE user_id=?', [$u['id']]); out(['ok' => true]); }
+    if ($method === 'POST') {
+        $b = body(); $d = (string)($b['data'] ?? '');
+        if (!preg_match('~^data:image/(jpeg|png);base64,([A-Za-z0-9+/=\r\n]+)$~', $d, $mm)) fail('Choose a JPG or PNG picture.');
+        $bin = base64_decode($mm[2], true); if ($bin === false || strlen($bin) > 200000) fail('That picture is too large. Try a smaller one.');
+        $info = @getimagesizefromstring($bin); if (!$info || !in_array($info[2], [IMAGETYPE_JPEG, IMAGETYPE_PNG], true) || $info[0] > 800 || $info[1] > 800) fail('That picture could not be read.');
+        $mime = $info[2] === IMAGETYPE_PNG ? 'image/png' : 'image/jpeg';
+        q('INSERT INTO user_avatars (user_id,mime,data) VALUES (?,?,?) ON DUPLICATE KEY UPDATE mime=VALUES(mime),data=VALUES(data),updated_at=NOW()', [$u['id'], $mime, $bin]);
+        out(['ok' => true, 'av' => time()]);
+    }
+    fail('Bad request', 405);
+
+case 'mail':
+    require __DIR__ . '/lib/mailapi.php';
+    break;
+
+case 'companies': case 'contacts': case 'pipeline':
+    require __DIR__ . '/lib/pipeline.php';
+    break;
+
+default:
+    fail('Not found', 404);
+}
+} catch (PDOException $e) {
+    error_log('Aerosub Office DB error: ' . $e->getMessage());
+    if (preg_match('/Unknown column|doesn.t exist/i', $e->getMessage())) fail('Database needs an upgrade: sign in as Super Admin and open /upgrade.php', 500);
+    fail('Database error', 500);
+}
