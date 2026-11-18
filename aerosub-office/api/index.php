@@ -13,7 +13,7 @@ $sub = $seg[2] ?? ($id === null ? ($seg[1] ?? null) : null);
 
 // Only 'agent' (the laptop) skips the office session check: it authenticates with its own token (agent_token.php).
 // agent-owner and agent-auth use the office session and this CSRF check like any other route.
-if ($method !== 'GET' && $method !== 'OPTIONS' && !($r === 'login' || $r === 'invite' || $r === 'agent' || $r === 'agent-personal' || $r === 'csp-report')) { cfg(); check_csrf(); }
+if ($method !== 'GET' && $method !== 'OPTIONS' && !($r === 'login' || $r === 'invite' || $r === 'agent' || $r === 'agent-personal' || $r === 'csp-report' || $r === 'forgot' || $r === 'reset')) { cfg(); check_csrf(); }
 
 try {
 switch ($r) {
@@ -81,6 +81,44 @@ case 'login':
     q('UPDATE users SET last_seen_at=NOW() WHERE id=?', [$u['id']]);
     log_act((int)$u['id'], 'login');
     out(['user' => me(), 'csrf' => csrf_token()]);
+
+// Forgotten password: e-mails a one-hour link to the account's address and tells the Super Admins, who can also set a temporary password.
+// The reply is always the same, so it cannot be used to find out which addresses have an account.
+case 'forgot':
+    if ($method !== 'POST') fail('POST only', 405);
+    require_once __DIR__ . '/lib/accounts.php';
+    $email = strtolower(s(body()['email'] ?? '', 190)); $ip = 'rst:' . ($_SERVER['REMOTE_ADDR'] ?? '0');
+    if ((int)one('SELECT COUNT(*) c FROM login_attempts WHERE ip=? AND created_at > (NOW() - INTERVAL 1 HOUR)', [$ip])['c'] >= 6) fail('Too many requests. Try again in an hour, or ask your administrator.', 429);
+    q('INSERT INTO login_attempts (email,ip) VALUES (?,?)', ['reset:' . $email, $ip]);
+    $generic = ['ok' => true, 'message' => 'If that email belongs to an account, a recovery link is on its way and your administrator has been told.'];
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) out($generic);
+    $acc = one('SELECT id,name,email FROM users WHERE email=? AND active=1', [$email]); if (!$acc) out($generic);
+    $tok = bin2hex(random_bytes(20));
+    q('DELETE FROM password_resets WHERE user_id=? AND used_at IS NULL', [$acc['id']]);
+    q('INSERT INTO password_resets (user_id,token_hash,expires_at) VALUES (?,?,DATE_ADD(NOW(), INTERVAL 1 HOUR))', [$acc['id'], hash('sha256', $tok)]);
+    require_once __DIR__ . '/lib/campcore.php';
+    $link = camp_base() . '/#/reset/' . $tok;
+    $txt = "Hello " . $acc['name'] . ",\n\nSomeone asked to reset the password for your Aerosub Office account. Open this link within one hour to choose a new password:\n\n$link\n\nIf this was not you, ignore this email: your password has not changed.\n";
+    $html = '<p>Hello ' . htmlspecialchars($acc['name']) . ',</p><p>Someone asked to reset the password for your Aerosub Office account. Open this link within one hour to choose a new password:</p><p><a href="' . htmlspecialchars($link) . '">Choose a new password</a></p><p style="color:#666">If this was not you, ignore this email: your password has not changed.</p>';
+    $sent = acct_send_mail($acc['email'], 'Reset your Aerosub Office password', $html, $txt);
+    foreach (all("SELECT id FROM users WHERE role='super_admin' AND active=1") as $adm)
+        notify((int)$adm['id'], 'password_reset', 'Password reset requested: ' . $acc['name'], ($sent ? 'A recovery link was emailed to them.' : 'The recovery email could not be sent.') . ' You can also set a temporary password: Admin → Edit.', '#/admin');
+    log_act((int)$acc['id'], 'password_reset_requested', $sent ? 'email sent' : 'email failed');
+    out($generic);
+
+case 'reset':
+    $tok = preg_replace('/[^a-f0-9]/', '', (string)($seg[1] ?? '')); $ip = 'rst:' . ($_SERVER['REMOTE_ADDR'] ?? '0');
+    if ((int)one('SELECT COUNT(*) c FROM login_attempts WHERE ip=? AND created_at > (NOW() - INTERVAL 15 MINUTE)', [$ip])['c'] >= 25) fail('Too many attempts. Try again later.', 429);
+    $pr = strlen($tok) === 40 ? one('SELECT r.*,u.name,u.email FROM password_resets r JOIN users u ON u.id=r.user_id WHERE r.token_hash=? AND u.active=1', [hash('sha256', $tok)]) : null;
+    if (!$pr || $pr['used_at'] || strtotime($pr['expires_at']) < time()) { q('INSERT INTO login_attempts (email,ip) VALUES (?,?)', ['reset-token', $ip]); fail('This reset link has expired or was already used. Ask for a new one.', 410); }
+    if ($method === 'GET') out(['email' => $pr['email'], 'name' => $pr['name']]);
+    if ($method !== 'POST') fail('Not found', 404);
+    $pw = (string)(body()['password'] ?? ''); if (strlen($pw) < 10) fail('Choose a password of at least 10 characters');
+    q('UPDATE users SET password_hash=?, must_change_password=0 WHERE id=?', [password_hash($pw, PASSWORD_DEFAULT), $pr['user_id']]);
+    q('UPDATE password_resets SET used_at=NOW() WHERE user_id=?', [$pr['user_id']]);
+    q('DELETE FROM login_attempts WHERE email=?', [strtolower($pr['email'])]);
+    log_act((int)$pr['user_id'], 'password_reset_done');
+    out(['ok' => true]);
 
 case 'logout':
     start_session(); session_destroy(); out(['ok' => true]);
@@ -164,9 +202,14 @@ case 'departments':
 case 'users':
     $u = need_user();
     $admin = $u['role'] === 'super_admin';
+    if ($method === 'GET' && !$id && !empty($_GET['archived'])) {
+        need_role(['super_admin']); require_once __DIR__ . '/lib/accounts.php'; purge_archived_users();
+        out(all('SELECT u.id,u.name,u.email,u.role,u.job_title,u.archived_at,DATE_ADD(u.archived_at, INTERVAL ' . ARCHIVE_DAYS . ' DAY) AS delete_on,GREATEST(0,DATEDIFF(DATE_ADD(u.archived_at, INTERVAL ' . ARCHIVE_DAYS . ' DAY), NOW())) AS days_left,a.name AS archived_by_name
+                 FROM users u LEFT JOIN users a ON a.id=u.archived_by WHERE u.archived_at IS NOT NULL ORDER BY u.archived_at DESC'));
+    }
     if ($method === 'GET' && !$id) {
         $rows = all('SELECT u.id,u.name,u.email,u.role,u.department_id,d.name AS department,u.job_title,u.active,u.last_seen_at
-                     FROM users u LEFT JOIN departments d ON d.id=u.department_id ORDER BY u.active DESC,u.name');
+                     FROM users u LEFT JOIN departments d ON d.id=u.department_id WHERE u.archived_at IS NULL ORDER BY u.active DESC,u.name');
         $mem = []; try { foreach (all('SELECT user_id,department_id FROM user_departments') as $m) $mem[(int)$m['user_id']][] = (int)$m['department_id']; } catch (Throwable $e) {}
         foreach ($rows as &$x) { $ids = $mem[(int)$x['id']] ?? []; if ($x['department_id']) $ids[] = (int)$x['department_id']; $x['department_ids'] = array_values(array_unique($ids)); }
         unset($x);
@@ -176,19 +219,34 @@ case 'users':
     }
     need_role(['super_admin']); $b = body();
     $roles = ['super_admin', 'founder', 'manager', 'employee'];
-    if ($method === 'POST') {
+    if ($method === 'POST' && !$id) {
         $email = strtolower(s($b['email'] ?? '', 190)); $name = s($b['name'] ?? '', 120); $pw = (string)($b['password'] ?? '');
         if (!filter_var($email, FILTER_VALIDATE_EMAIL) || $name === '') fail('Name and a valid email are required');
         if (strlen($pw) < 10) fail('Temporary password must be at least 10 characters');
-        if (one('SELECT id FROM users WHERE email=?', [$email])) fail('That email already exists');
+        if ($ex = one('SELECT id,archived_at FROM users WHERE email=?', [$email])) fail($ex['archived_at'] ? 'That email belongs to an archived account. Restore it from Admin → Archived users.' : 'That email already exists');
         q('INSERT INTO users (name,email,password_hash,role,department_id,job_title,must_change_password) VALUES (?,?,?,?,?,?,1)',
           [$name, $email, password_hash($pw, PASSWORD_DEFAULT), in((string)($b['role'] ?? ''), $roles, 'employee'), ($b['department_id'] ?? null) ?: null, s($b['job_title'] ?? '', 120) ?: null]);
         $nid = (int)db()->lastInsertId(); sync_user_depts($nid, $b);
         log_act((int)$u['id'], 'user_created', $email);
         out(['ok' => true, 'id' => $nid], 201);
     }
+    if ($method === 'DELETE' && $id) { // archive: they lose access now; the account is kept for 60 days and can be restored
+        $t = one('SELECT * FROM users WHERE id=? AND archived_at IS NULL', [$id]); if (!$t) fail('Not found', 404);
+        if ($id === (int)$u['id']) fail('You cannot archive your own account');
+        if ($t['role'] === 'super_admin' && (int)one("SELECT COUNT(*) c FROM users WHERE role='super_admin' AND active=1 AND archived_at IS NULL AND id<>?", [$id])['c'] === 0) fail('This is the only active Super Admin');
+        q('UPDATE users SET active=0, archived_at=NOW(), archived_by=? WHERE id=?', [$u['id'], $id]);
+        q('UPDATE departments SET head_id=NULL WHERE head_id=?', [$id]);
+        $open = (int)one("SELECT COUNT(*) c FROM tasks WHERE assignee_id=? AND status IN ('todo','in_progress','blocked','deferred')", [$id])['c'];
+        log_act((int)$u['id'], 'user_archived', $t['email']);
+        out(['ok' => true, 'open_tasks' => $open, 'delete_on' => date('Y-m-d', strtotime('+60 days'))]);
+    }
+    if ($method === 'POST' && $id && $sub === 'restore') {
+        $t = one('SELECT * FROM users WHERE id=? AND archived_at IS NOT NULL', [$id]); if (!$t) fail('Not found', 404);
+        q('UPDATE users SET active=1, archived_at=NULL, archived_by=NULL WHERE id=?', [$id]); log_act((int)$u['id'], 'user_restored', $t['email']);
+        out(['ok' => true]);
+    }
     if ($method === 'PATCH' && $id) {
-        $t = one('SELECT * FROM users WHERE id=?', [$id]); if (!$t) fail('Not found', 404);
+        $t = one('SELECT * FROM users WHERE id=? AND archived_at IS NULL', [$id]); if (!$t) fail('Not found', 404);
         $role = in((string)($b['role'] ?? $t['role']), $roles, $t['role']);
         $active = isset($b['active']) ? (int)(bool)$b['active'] : (int)$t['active'];
         if ($id === (int)$u['id'] && ($role !== 'super_admin' || !$active)) fail('You cannot demote or deactivate yourself');

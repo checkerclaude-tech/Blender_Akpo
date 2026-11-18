@@ -52,6 +52,7 @@
   const RP = { date: '', dept: '', user: '', status: '' };
 
   views.reports = async () => {
+    if (location.hash.split('/')[2] === 'weekly') return weeklyView();
     const v = $('#view'); v.innerHTML = '<div class="empty">Loading…</div>';
     const q = new URLSearchParams(); if (RP.date) q.set('date', RP.date); if (RP.dept) q.set('department', RP.dept); if (RP.user) q.set('user', RP.user);
     const D = await api('reports/dashboard?' + q.toString());
@@ -61,7 +62,7 @@
     const people = D.people || [];
     v.innerHTML =
       '<div class="top"><div><h1>Reports</h1><div class="muted">' + esc(scopeTxt) + '</div></div><span class="right row">' +
-      (ro ? '' : '<button class="btn" id="rpnew">+ Daily report</button>') + '<button class="btn ghost" id="rpprint">Print</button></span></div>' +
+      (ro ? '' : '<button class="btn" id="rpnew">+ Daily report</button>') + '<a class="btn ghost" href="#/reports/weekly">Weekly report</a><button class="btn ghost" id="rpprint">Print</button></span></div>' +
       '<div class="rp-filters"><div class="row"><button class="btn ghost sm" id="rpprev" aria-label="Previous day">‹</button><input type="date" id="rpdate" value="' + esc(D.date) + '" max="' + esc(D.today) + '" aria-label="Report date">' +
       '<button class="btn ghost sm" id="rpnext" aria-label="Next day"' + (isToday ? ' disabled' : '') + '>›</button>' + (isToday ? '' : '<button class="btn ghost sm" id="rptoday">Today</button>') + '</div>' +
       (D.review && D.departments.length > 1 ? '<select id="rpdept" aria-label="Department">' + opt('', 'All departments', RP.dept) + D.departments.map(d => opt(d.id, d.name, RP.dept)).join('') + '</select>' : '') +
@@ -247,6 +248,48 @@
       const to = +$('#trto', m).value; if (!to) { $('#er', m).textContent = 'Choose who the task goes to'; return; }
       try { const r = await api('tasks/' + t.id + '/transfer', { method: 'POST', data: { to_user_id: to, note: $('#trn', m).value } }); m.close(); parent.close(); toast('Task transferred'); X.render(); if (r && r.id) location.hash = '#/tasks/' + r.id; } catch (er) { $('#er', m).textContent = er.message; }
     };
+  }
+
+  /* ---------- weekly report: the "Team weekly report" sheet (ASL-HR-WR-001), editable, then Excel or print ---------- */
+  const WK = { week: '', user: '' };
+  const shiftWeek = (v, n) => shiftDay(v, 7 * n);
+  async function weeklyView() {
+    const v = $('#view'); v.innerHTML = '<div class="empty">Loading…</div>';
+    const q = new URLSearchParams(); if (WK.week) q.set('week', WK.week); if (WK.user) q.set('user', WK.user);
+    const W = await api('reports/weekly?' + q.toString()); WK.week = W.week_start; WK.user = String(W.people.find(p => p.name === W.employee)?.id || WK.user || '');
+    const legend = W.legend, col = k => '#' + (legend.find(l => l.key === k) || legend[1]).color;
+    const dateTxt = dayOf(W.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    const cell = (k, val) => '<td class="wr-edit" contenteditable="true" spellcheck="true" data-k="' + k + '">' + esc(val || '') + '</td>';
+    const rowHtml = (r, n) => '<tr><td class="wr-sn">' + (n + 1) + '</td>' + cell('client', r.client) + cell('project', r.project) + cell('task', r.task) +
+      '<td class="wr-st" style="background:' + col(r.status) + '"><select data-k="status" aria-label="Status">' + legend.map(l => opt(l.key, l.short, r.status)).join('') + '</select></td>' + cell('outstanding', r.outstanding) + cell('comment', r.comment) + cell('review', r.review) +
+      '<td class="wr-x noprint"><button type="button" class="btn ghost sm" data-del aria-label="Remove row">✕</button></td></tr>';
+    v.innerHTML = '<div class="top noprint"><div><h1>Weekly report</h1><div class="muted">Week of ' + esc(fmtShort(W.week_start)) + ' to ' + esc(fmtShort(W.week_end)) + '. Filled in from your tasks and daily reports. Change anything, then download or print.</div></div><span class="right row"><a class="btn ghost" href="#/reports">‹ Reports</a><button class="btn" id="wxl">Download Excel</button><button class="btn ghost" id="wpr">Print / PDF</button></span></div>' +
+      '<div class="rp-filters noprint"><div class="row"><button class="btn ghost sm" id="wprev" aria-label="Previous week">‹</button><input type="date" id="wdate" value="' + esc(W.week_start) + '" aria-label="Any day in the week"><button class="btn ghost sm" id="wnext" aria-label="Next week">›</button></div>' +
+      (W.people.length > 1 ? '<select id="wuser" aria-label="Person">' + W.people.map(p => opt(p.id, p.name, WK.user)).join('') + '</select>' : '') + '</div>' +
+      '<div class="wr-sheet print-ok"><div class="wr-band"><img src="assets/img/aerosub-logo.png" alt="Aerosub" data-rm="1"><span class="wr-code"><b>' + esc(W.code) + '</b><span>' + esc(W.rev) + '</span></span></div>' +
+      '<div class="wr-head"><div class="wr-title">TEAM WEEKLY REPORT</div><div class="wr-meta"><div><b>Employee name</b><span class="wr-edit" contenteditable="true" id="wname">' + esc(W.employee) + '</span></div><div><b>Date</b><span class="wr-edit" contenteditable="true" id="wdt">' + esc(dateTxt) + '</span></div></div></div>' +
+      '<table class="wr-t"><thead><tr><th>SN</th><th>Client/Category</th><th>Project</th><th>Task</th><th>Status</th><th>Outstanding</th><th>Suggestion/Comment</th><th>Management review</th><th class="noprint"></th></tr></thead><tbody id="wbody">' + W.rows.map(rowHtml).join('') + '</tbody></table>' +
+      '<div class="row noprint" style="margin:8px 0"><button class="btn ghost sm" id="wadd">+ Add row</button></div>' +
+      '<div class="wr-foot"><table class="wr-leg"><tr><th colspan="2">**LEGEND**</th></tr>' + legend.map(l => '<tr><td style="background:#' + l.color + '"></td><td>' + esc(l.label) + '</td></tr>').join('') + '</table>' +
+      '<table class="wr-leg"><tr><td>Reported by:</td><td class="wr-edit" contenteditable="true" id="wby">' + esc(W.employee) + '</td></tr><tr><td>Designation:</td><td class="wr-edit" contenteditable="true" id="wdes">' + esc(W.designation) + '</td></tr></table></div></div>';
+    const body = $('#wbody'); const renum = () => $$('#wbody tr').forEach((tr, i) => { $('.wr-sn', tr).textContent = i + 1; });
+    const wire = tr => { $('[data-del]', tr).onclick = () => { tr.remove(); renum(); }; const sel = $('select', tr); sel.onchange = () => { $('.wr-st', tr).style.background = col(sel.value); };
+      $$('.wr-edit', tr).forEach(c => c.onpaste = e => { e.preventDefault(); document.execCommand('insertText', false, (e.clipboardData || window.clipboardData).getData('text/plain')); }); };
+    $$('#wbody tr').forEach(wire);
+    $('#wadd').onclick = () => { body.insertAdjacentHTML('beforeend', rowHtml({ status: 'view' }, body.children.length)); wire(body.lastElementChild); body.lastElementChild.querySelector('.wr-edit').focus(); };
+    const T = c => c.innerText.replace(/\u00a0/g, ' ').trim();
+    const collect = () => ({ code: W.code, rev: W.rev, employee: T($('#wname')), designation: T($('#wdes')), date: W.date, date_text: T($('#wdt')),
+      rows: $$('#wbody tr').map(tr => { const o = {}; $$('[data-k]', tr).forEach(c => { o[c.dataset.k] = c.tagName === 'SELECT' ? c.value : T(c); }); return o; }).filter(r => r.client || r.project || r.task || r.outstanding || r.comment || r.review) });
+    $('#wby').oninput = () => { $('#wname').textContent = T($('#wby')); };
+    $('#wxl').onclick = async e => { const b = e.target; b.disabled = true;
+      try { const res = await fetch('api/reports/weekly-xlsx', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': S.csrf }, body: JSON.stringify(collect()) });
+        if (!res.ok) { let m = 'Could not create the Excel file'; try { m = (await res.json()).error || m; } catch {} throw new Error(m); }
+        const blob = await res.blob(), a = document.createElement('a'), fn = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || ''); a.href = URL.createObjectURL(blob); a.download = fn ? fn[1] : 'Weekly_Report.xlsx'; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); toast('Excel file downloaded'); }
+      catch (er) { toast(er.message); } b.disabled = false; };
+    $('#wpr').onclick = () => window.print();
+    const go = () => X.render();
+    $('#wdate').onchange = e => { WK.week = e.target.value; go(); }; $('#wprev').onclick = () => { WK.week = shiftWeek(W.week_start, -1); go(); }; $('#wnext').onclick = () => { WK.week = shiftWeek(W.week_start, 1); go(); };
+    const wu = $('#wuser'); if (wu) wu.onchange = () => { WK.user = wu.value; go(); };
   }
 
   /* ---------- Departments: set the head, add and remove people (Super Admin) ---------- */

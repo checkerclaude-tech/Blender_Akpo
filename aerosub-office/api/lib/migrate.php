@@ -270,3 +270,36 @@ function migrate_reports(): array {
     $log[] = 'Daily reports, report comments and report sharing ready.';
     return $log;
 }
+
+// Password recovery and archived (soft-deleted) users. Safe to run repeatedly.
+function migrate_accounts(): array {
+    $log = [];
+    foreach (['archived_at' => 'DATETIME NULL', 'archived_by' => 'INT UNSIGNED NULL'] as $c => $def)
+        if (!col_exists('users', $c)) { db()->exec("ALTER TABLE users ADD COLUMN $c $def"); $log[] = "Users: $c added."; }
+    db()->exec("CREATE TABLE IF NOT EXISTS password_resets (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, user_id INT UNSIGNED NOT NULL, token_hash CHAR(64) NOT NULL, expires_at DATETIME NOT NULL, used_at DATETIME NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE KEY (token_hash), KEY (user_id), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $log[] = 'Password recovery and user archive ready.';
+    return $log;
+}
+
+// Invoice and commercial templates: extra document fields, structured bank details, automatic invoice numbers. Safe to run repeatedly.
+function migrate_templates(): array {
+    $log = [];
+    db()->exec('INSERT IGNORE INTO fin_settings (id) VALUES (1)');
+    $docCols = ['customer_id' => 'VARCHAR(60) NULL', 'sales_rep' => 'VARCHAR(80) NULL', 'attention' => 'VARCHAR(120) NULL', 'terms_instr' => 'VARCHAR(120) NULL', 'payment_terms' => 'VARCHAR(120) NULL',
+                'ship_to' => 'VARCHAR(500) NULL', 'shipping_method' => 'VARCHAR(80) NULL', 'delivery_leadtime' => 'VARCHAR(120) NULL', 'subject' => 'VARCHAR(300) NULL', 'days' => 'SMALLINT UNSIGNED NOT NULL DEFAULT 1', 'intro' => 'TEXT NULL'];
+    foreach ($docCols as $c => $def) if (!col_exists('fin_docs', $c)) { db()->exec("ALTER TABLE fin_docs ADD COLUMN $c $def"); $log[] = "Finance documents: $c added."; }
+    foreach (['category' => 'VARCHAR(120) NULL', 'freq' => 'VARCHAR(40) NULL', 'amount_note' => 'VARCHAR(40) NULL'] as $c => $def)
+        if (!col_exists('fin_items', $c)) { db()->exec("ALTER TABLE fin_items ADD COLUMN $c $def"); $log[] = "Finance items: $c added."; }
+    foreach (['bank_name' => 'VARCHAR(120) NULL', 'account_name' => 'VARCHAR(160) NULL', 'account_number' => 'VARCHAR(60) NULL', 'website' => 'VARCHAR(120) NULL', 'rc_number' => 'VARCHAR(40) NULL', 'inv_next' => 'BIGINT UNSIGNED NOT NULL DEFAULT 100026706'] as $c => $def)
+        if (!col_exists('fin_settings', $c)) { db()->exec("ALTER TABLE fin_settings ADD COLUMN $c $def"); $log[] = "Finance settings: $c added."; }
+    // brand details taken from the invoice template, filled in only where nothing has been entered yet
+    foreach (['company_name' => 'Aerosub Solutions Limited', 'phone' => '+234 703 310 0499', 'email' => 'info@aerosub.co', 'website' => 'www.aerosub.co', 'rc_number' => '1757563', 'address' => '16 Amadi Close, Rumuomasi, Port Harcourt.'] as $c => $v)
+        q("UPDATE fin_settings SET $c=? WHERE id=1 AND ($c IS NULL OR $c='')", [$v]);
+    q("UPDATE fin_settings SET company_name='Aerosub Solutions Limited' WHERE id=1 AND company_name='Aerosub'");
+    // continue after the highest numeric invoice number already used
+    $m = one("SELECT MAX(CAST(number AS UNSIGNED)) m FROM fin_docs WHERE doc_type='invoice' AND number REGEXP '^[0-9]{6,}$'");
+    if ($m && $m['m']) q('UPDATE fin_settings SET inv_next=GREATEST(inv_next, ?) WHERE id=1', [(int)$m['m'] + 1]);
+    $log[] = 'Invoice and commercial templates ready (next invoice number: ' . (one('SELECT inv_next n FROM fin_settings WHERE id=1')['n'] ?? '?') . ').';
+    return $log;
+}

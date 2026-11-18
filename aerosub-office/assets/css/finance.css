@@ -1,0 +1,71 @@
+/* Invoice (A4 portrait) and commercial (A4 landscape) layouts, after the Aerosub Word templates. */
+:root{--inv-cyan:#BDEBFB;--inv-line:#1AA7D8;--inv-navy:#0A1F5C;--cm-line:#111;--cm-green:#C6E0B4;--cm-head:#E7E6E6}
+
+/* item rows in the form */
+.fin-items .frow{display:grid;grid-template-columns:minmax(0,3fr) 70px 70px 110px auto 34px;gap:6px;margin-bottom:6px;align-items:center}
+.fin-items .frow.c{grid-template-columns:minmax(120px,1.2fr) minmax(0,2fr) 58px 60px 108px 100px 118px auto 34px}
+.fin-items .fl{font-size:12.5px;color:var(--muted);text-align:right;white-space:nowrap;min-width:70px}
+@media (max-width:820px){.fin-items .frow,.fin-items .frow.c{grid-template-columns:1fr 1fr;padding:8px;border:1px solid var(--line);border-radius:10px}.fin-items .frow>input:first-child{grid-column:1/-1}.fin-items .frow.c>input:nth-child(2){grid-column:1/-1}}
+
+/* the printed sheet, shown on screen as a page */
+.fin-sheet{background:#fff;color:#111;font-family:Poppins,Inter,Arial,sans-serif;font-size:11px;line-height:1.4;margin:0 auto 24px;box-shadow:0 8px 30px rgba(10,20,60,.25);-webkit-print-color-adjust:exact;print-color-adjust:exact;position:relative}
+.fin-sheet *{box-sizing:border-box}
+
+/* ---------- invoice ---------- */
+.fin-sheet.inv{width:210mm;min-height:297mm}
+.inv-bg{position:absolute;inset:0;background:url(../img/invoice-page.png) 0 0/100% 100% no-repeat;z-index:0}
+.inv-title-cover{position:absolute;right:8.5%;top:3.6%;width:36%;height:7.6%;background:#E5F5FC;color:#0A1F5C;font:800 17px/1.05 Poppins,Arial,sans-serif;text-align:center;display:flex;align-items:center;justify-content:center;letter-spacing:.02em;z-index:1}
+.inv-body{position:relative;z-index:2;padding:45mm 19mm 26mm}
+.inv-meta{text-align:right;font-size:11.5px;margin-bottom:5px}
+.inv-grid,.inv-items,.inv-bank{width:100%;border-collapse:collapse;table-layout:fixed}
+.inv-grid td,.inv-items td,.inv-items th,.inv-bank td{border:1px solid var(--inv-line);padding:3px 6px;vertical-align:top;word-wrap:break-word}
+.inv-grid tr.h td,.inv-items tr.h td,.inv-bank tr.h td{background:var(--inv-cyan);font-weight:600;font-size:10px}
+.inv-grid tr.tall td{height:30mm;font-size:10.5px}.inv-grid .gap{height:7px}
+.inv-items{margin-top:0}.inv-items td.c{text-align:center}.inv-items td.r{text-align:right}
+.inv-items tbody td{height:11mm;font-size:10.5px}.inv-items td.r,.inv-items tfoot td.navy{white-space:nowrap;font-size:9.5px}
+.inv-items tfoot td{border:1px solid var(--inv-line);background:var(--inv-cyan);font-weight:700;font-size:10px;padding:3px 6px}.inv-items tfoot td.navy{background:var(--inv-navy);color:#fff;text-align:right}
+.inv-words{margin-top:5px;font-size:10.5px}
+.inv-lines{margin:10px 0 4px 3mm;font-size:11px}.inv-lines>div{margin-bottom:5px}
+.inv-notes,.inv-terms{font-size:9.5px;margin-top:8px;white-space:normal}.inv-terms{color:#444}
+.inv-sign{display:flex;justify-content:space-between;gap:20mm;margin:14mm 0 8mm;font-weight:600;font-size:10.5px}.inv-sign>div{flex:1}.inv-sign .line{border-bottom:1px solid #222;height:9mm;margin-right:6mm}
+.inv-bank{width:78%}.inv-bank td.k{width:36%;background:var(--inv-cyan);font-weight:600;font-size:10px}.inv-bank tr.h td{text-align:left}
+.fvoid{color:#d6334a;border:3px solid #d6334a;display:inline-block;padding:2px 14px;font:800 22px Poppins,Arial;transform:rotate(-8deg);opacity:.75}
+
+/* ---------- commercial ---------- */
+.fin-sheet.comm{width:297mm;background:#fff}
+.comm .cover{height:210mm;background:#001F5F;color:#fff;position:relative;overflow:hidden;page-break-after:always;break-after:page}
+.comm .cv-band{position:absolute;left:0;top:67mm;width:122mm;height:31mm;background:#fff;display:flex;align-items:center;padding-left:24mm}.comm .cv-band img{height:15mm}
+.comm .cv-text{position:absolute;left:135mm;top:68mm;right:20mm}.comm .cv-k{font:700 21px Poppins,Arial;letter-spacing:.06em}.comm .cv-sub{font-size:13px;margin-top:6px;opacity:.95}.comm .cv-ref{font-size:11px;margin-top:10px;opacity:.8}
+.comm .cv-for{position:absolute;left:26mm;top:135mm;font-size:13px}
+.comm .tbl{padding:14mm 16mm 16mm;position:relative}
+.comm .ct{font:700 15px/1.3 Calibri,Carlito,Arial,sans-serif;color:#1F3E8F;margin:0 0 6px}
+.comm .ci{font:400 14px/1.45 Calibri,Carlito,Arial,sans-serif;color:#2F5496;margin:0 0 8px}
+.comm-t{width:100%;border-collapse:collapse;font:400 11px Calibri,Carlito,Arial,sans-serif}
+.comm-t th,.comm-t td{border:1px solid var(--cm-line);padding:2px 5px;vertical-align:middle}
+.comm-t th{background:var(--cm-head);font-weight:700;text-align:center;font-size:11px}
+.comm-t td.c{text-align:center}.comm-t td.r{text-align:right}.comm-t td.b{font-weight:700}.comm-t td.big{font-size:13px}
+.comm-t tr.sub td{background:#fff}.comm-t tr.est td{padding:5px}.comm-t tr.est.grand td{background:var(--cm-green)}.comm-t td.blank{border-top:1px solid var(--cm-line)}
+.comm-t tr.total td.g{background:var(--cm-green)}
+.comm-t tr{break-inside:avoid}
+.cm-foot{font:400 11px Calibri,Carlito,Arial,sans-serif;margin-top:10px;color:#222}.cm-co{margin-top:12px;color:#666;font-size:10px}
+
+/* ---------- printing ---------- */
+.inv-pg{position:absolute;right:19mm;bottom:12mm;font-size:9px;color:#fff;opacity:.0}
+.fin-sheet.inv{height:297mm;overflow:hidden;min-height:0}
+.comm .pgwrap{width:100%;border-collapse:collapse}.comm .pgwrap>thead>tr>td,.comm .pgwrap>tbody>tr>td,.comm .pgwrap>tfoot>tr>td{border:0;padding:0}
+.comm .pgwrap .sp{height:6mm}.comm .pgwrap .sp.f{height:9mm;font:10px Arial;color:#0A5EB0;padding-top:3mm}
+.comm .tbl{padding:8mm 16mm 0}
+@page{size:A4 portrait;margin:0}
+@page comm{size:A4 landscape;margin:0}
+@page wr{size:A4 landscape;margin:8mm}
+@media print{
+  #app{display:block!important;min-height:0!important}.main{max-width:none!important;width:auto!important;padding:0!important}
+  .noprint{display:none!important}
+  .fin-sheet,.fin-sheet *,.wr-sheet,.wr-sheet *,.print-ok,.print-ok *{visibility:visible}
+  html,body{background:#fff!important}
+  body:has(.fin-sheet.comm){page:comm}
+  .fin-sheet{box-shadow:none;margin:0}
+  .fin-sheet.inv{break-after:page;page-break-after:always}.fin-sheet.inv:last-of-type{break-after:auto;page-break-after:auto}
+  .comm .tbl{padding:0 16mm}
+  .inv-sign,.inv-bank{break-inside:avoid}
+}

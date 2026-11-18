@@ -6,12 +6,27 @@ $fin = can_finance($u); $ro = $role === 'founder'; $sid = isset($seg[2]) && ctyp
 function fx_s($v, int $n = 500): ?string { $v = trim((string)($v ?? '')); return $v === '' ? null : mb_substr($v, 0, $n); }
 function fx_num($v, float $def = 0): float { return is_numeric($v) ? round((float)$v, 3) : $def; }
 function fx_cur($v): string { $v = strtoupper(preg_replace('/[^A-Za-z]/', '', (string)$v)); return strlen($v) >= 2 && strlen($v) <= 5 ? $v : 'USD'; }
-function fx_totals(array $items, float $discount, float $rate): array {
-    $sub = 0.0; foreach ($items as $i) $sub += round((float)$i['qty'] * (float)$i['unit_price'], 2);
+const FX_DAILY = ['day rate', 'per day', 'daily'];
+/** [shown, counted] for one line. On a commercial, a "Day rate" line counts qty x rate x days, "As incurred / Optional / As applicable" lines are shown but not counted. */
+function fx_line(array $i, string $type, int $days): array {
+    $base = round((float)$i['qty'] * (float)$i['unit_price'], 2);
+    if ($type !== 'commercial') return [$base, $base];
+    if (trim((string)($i['amount_note'] ?? '')) !== '') return [0.0, 0.0];
+    return [$base, in_array(strtolower(trim((string)($i['freq'] ?? ''))), FX_DAILY, true) ? round($base * max(1, $days), 2) : $base];
+}
+/** SQL for the same sum, for lists (needs the fin_docs alias d). */
+function fx_sub_sql(): string {
+    return "(SELECT COALESCE(SUM(CASE WHEN d.doc_type='commercial' THEN (CASE WHEN COALESCE(i.amount_note,'')<>'' THEN 0 WHEN LOWER(TRIM(COALESCE(i.freq,''))) IN ('day rate','per day','daily') THEN i.qty*i.unit_price*GREATEST(d.days,1) ELSE i.qty*i.unit_price END) ELSE i.qty*i.unit_price END),0) FROM fin_items i WHERE i.doc_id=d.id)";
+}
+function fx_totals(array $items, float $discount, float $rate, string $type = 'invoice', int $days = 1): array {
+    $sub = 0.0; foreach ($items as $i) $sub += fx_line($i, $type, $days)[1];
     $disc = min(max(0, $discount), $sub); $net = $sub - $disc; $tax = round($net * $rate / 100, 2); return ['subtotal' => round($sub, 2), 'discount' => round($disc, 2), 'tax' => $tax, 'total' => round($net + $tax, 2)];
 }
 function fx_settings(): array { return one('SELECT * FROM fin_settings WHERE id=1') ?: ['currency' => 'USD', 'tax_label' => 'VAT', 'tax_rate' => 0]; }
 function fx_number(string $type): string {
+    if ($type === 'invoice') { // plain running number (100026706, 100026707, ...) like the invoice template; Finance can change the next number in Company details
+        try { for ($k = 0; $k < 20; $k++) { q('UPDATE fin_settings SET inv_next = LAST_INSERT_ID(inv_next) + 1 WHERE id=1'); $n = (int)one('SELECT LAST_INSERT_ID() n')['n']; if ($n > 0 && !one('SELECT 1 FROM fin_docs WHERE number=?', [(string)$n])) return (string)$n; } } catch (Throwable $e) {}
+    }
     $pre = ['commercial' => 'COM', 'proforma' => 'PRO', 'invoice' => 'INV', 'receipt' => 'REC'][$type]; $y = date('Y');
     $r = one("SELECT MAX(CAST(SUBSTRING_INDEX(number,'-',-1) AS UNSIGNED)) m FROM fin_docs WHERE number LIKE ?", ["$pre-$y-%"]); return sprintf('%s-%s-%04d', $pre, $y, ((int)($r['m'] ?? 0)) + 1);
 }
@@ -24,16 +39,24 @@ function fx_task_visible(array $u, int $tid): bool {
 }
 function fx_doc(int $id, bool $items = true): ?array {
     $d = one('SELECT d.*, u.name AS created_by_name, t.title AS task_title FROM fin_docs d LEFT JOIN users u ON u.id=d.created_by LEFT JOIN tasks t ON t.id=d.task_id WHERE d.id=?', [$id]); if (!$d) return null;
-    $d['items'] = $items ? all('SELECT description,qty,unit,unit_price FROM fin_items WHERE doc_id=? ORDER BY position,id', [$id]) : [];
-    $d['totals'] = fx_totals($d['items'], (float)$d['discount'], (float)$d['tax_rate']);
+    $d['items'] = $items ? all('SELECT description,qty,unit,unit_price,category,freq,amount_note FROM fin_items WHERE doc_id=? ORDER BY position,id', [$id]) : [];
+    $d['totals'] = fx_totals($d['items'], (float)$d['discount'], (float)$d['tax_rate'], (string)$d['doc_type'], (int)$d['days']);
     return $d;
 }
 function fx_clean_items($raw): array {
-    $out = []; foreach (array_slice((array)$raw, 0, 100) as $i) { $desc = fx_s($i['description'] ?? '', 500); if (!$desc) continue; $qty = fx_num($i['qty'] ?? 1, 1); if ($qty <= 0 || $qty > 1e7) fail('Quantity must be more than zero');
-        $price = fx_num($i['unit_price'] ?? 0); if ($price < 0 || $price > 1e10) fail('Unit price is not valid'); $out[] = ['description' => $desc, 'qty' => $qty, 'unit' => fx_s($i['unit'] ?? '', 30), 'unit_price' => $price]; }
+    $out = []; foreach (array_slice((array)$raw, 0, 100) as $i) { $desc = fx_s($i['description'] ?? '', 500); if (!$desc) continue; $note = fx_s($i['amount_note'] ?? '', 40); $qty = fx_num($i['qty'] ?? 1, 1); if (($qty <= 0 && !$note) || $qty < 0 || $qty > 1e7) fail('Quantity must be more than zero');
+        $price = fx_num($i['unit_price'] ?? 0); if ($price < 0 || $price > 1e10) fail('Unit price is not valid'); $out[] = ['description' => $desc, 'qty' => $qty, 'unit' => fx_s($i['unit'] ?? '', 30), 'unit_price' => $price, 'category' => fx_s($i['category'] ?? '', 120), 'freq' => fx_s($i['freq'] ?? '', 40), 'amount_note' => $note]; }
     return $out;
 }
-function fx_save_items(int $id, array $items): void { q('DELETE FROM fin_items WHERE doc_id=?', [$id]); foreach ($items as $n => $i) q('INSERT INTO fin_items (doc_id,position,description,qty,unit,unit_price) VALUES (?,?,?,?,?,?)', [$id, $n, $i['description'], $i['qty'], $i['unit'], $i['unit_price']]); }
+function fx_save_items(int $id, array $items): void { q('DELETE FROM fin_items WHERE doc_id=?', [$id]); foreach ($items as $n => $i) q('INSERT INTO fin_items (doc_id,position,description,qty,unit,unit_price,category,freq,amount_note) VALUES (?,?,?,?,?,?,?,?,?)', [$id, $n, $i['description'], $i['qty'], $i['unit'], $i['unit_price'], $i['category'] ?? null, $i['freq'] ?? null, $i['amount_note'] ?? null]); }
+/** The template fields (attention, customer id, ship to, lead time, project title, days ...). Only fields present in $b change. */
+function fx_save_extra(int $id, array $b): void {
+    $f = ['customer_id' => 60, 'sales_rep' => 80, 'attention' => 120, 'terms_instr' => 120, 'payment_terms' => 120, 'ship_to' => 500, 'shipping_method' => 80, 'delivery_leadtime' => 120, 'subject' => 300, 'intro' => 3000];
+    $sets = []; $vals = [];
+    foreach ($f as $k => $n) if (array_key_exists($k, $b)) { $sets[] = "$k=?"; $vals[] = fx_s($b[$k], $n); }
+    if (array_key_exists('days', $b)) { $sets[] = 'days=?'; $vals[] = max(1, min(365, (int)$b['days'])); }
+    if ($sets) { $vals[] = $id; q('UPDATE fin_docs SET ' . implode(',', $sets) . ' WHERE id=?', $vals); }
+}
 function fx_date($v): ?string { $v = trim((string)($v ?? '')); return preg_match('/^\d{4}-\d{2}-\d{2}$/', $v) ? $v : null; }
 
 /* =============== FINANCE =============== */
@@ -44,10 +67,13 @@ if ($seg[0] === 'finance') {
         if ($method === 'GET') out(['settings' => fx_settings(), 'can_edit' => $fin]);
         if (!$fin) fail('Not allowed', 403); $cur = fx_cur($b['currency'] ?? 'USD'); $rate = max(0, min(100, fx_num($b['tax_rate'] ?? 0)));
         q('UPDATE fin_settings SET company_name=?,address=?,email=?,phone=?,tax_id=?,bank_details=?,currency=?,tax_label=?,tax_rate=?,terms=?,footer=? WHERE id=1', [fx_s($b['company_name'] ?? '', 160), fx_s($b['address'] ?? '', 800), fx_s($b['email'] ?? '', 190), fx_s($b['phone'] ?? '', 60), fx_s($b['tax_id'] ?? '', 80), fx_s($b['bank_details'] ?? '', 1200), $cur, fx_s($b['tax_label'] ?? 'VAT', 30) ?: 'VAT', $rate, fx_s($b['terms'] ?? '', 2000), fx_s($b['footer'] ?? '', 300)]);
+        $nx = (int)preg_replace('/\D/', '', (string)($b['inv_next'] ?? ''));
+        q('UPDATE fin_settings SET bank_name=?,account_name=?,account_number=?,website=?,rc_number=? WHERE id=1', [fx_s($b['bank_name'] ?? '', 120), fx_s($b['account_name'] ?? '', 160), fx_s($b['account_number'] ?? '', 60), fx_s($b['website'] ?? '', 120), fx_s($b['rc_number'] ?? '', 40)]);
+        if ($nx > 0) { $top = (int)(one("SELECT MAX(CAST(number AS UNSIGNED)) m FROM fin_docs WHERE doc_type='invoice' AND number REGEXP '^[0-9]{6,}$'")['m'] ?? 0); if ($nx <= $top) fail('The next invoice number must be higher than ' . $top . ', which is already used.'); q('UPDATE fin_settings SET inv_next=? WHERE id=1', [$nx]); }
         out(['ok' => true]);
     }
     if ($sub === 'summary') { if (!$fin && !$ro) fail('Not allowed', 403);
-        $rows = all("SELECT d.id,d.doc_type,d.status,d.discount,d.tax_rate,d.amount_paid,d.currency,d.issue_date,(SELECT COALESCE(SUM(qty*unit_price),0) FROM fin_items i WHERE i.doc_id=d.id) AS sub FROM fin_docs d WHERE d.status<>'void'");
+        $rows = all("SELECT d.id,d.doc_type,d.status,d.discount,d.tax_rate,d.amount_paid,d.currency,d.issue_date," . fx_sub_sql() . " AS sub FROM fin_docs d WHERE d.status<>'void'");
         $o = ['outstanding' => [], 'paid_month' => [], 'counts' => ['commercial' => 0, 'proforma' => 0, 'invoice' => 0, 'receipt' => 0], 'unpaid_invoices' => 0];
         foreach ($rows as $r) { $o['counts'][$r['doc_type']]++; $net = (float)$r['sub'] - min((float)$r['discount'], (float)$r['sub']); $tot = round($net + $net * (float)$r['tax_rate'] / 100, 2); $c = $r['currency'];
             if ($r['doc_type'] === 'invoice' && in_array($r['status'], ['draft', 'sent'], true)) { $paid = (float)(one("SELECT COALESCE(SUM(amount_paid),0) s FROM fin_docs WHERE doc_type='receipt' AND parent_id=? AND status<>'void'", [$r['id']])['s'] ?? 0); $o['outstanding'][$c] = round(($o['outstanding'][$c] ?? 0) + max(0, $tot - $paid), 2); if ($r['status'] === 'sent') $o['unpaid_invoices']++; }
@@ -60,7 +86,7 @@ if ($seg[0] === 'finance') {
             elseif (!$fin && !$ro) fail('Not allowed', 403);
             foreach (['type' => 'doc_type', 'status' => 'status'] as $g => $col) if (!empty($_GET[$g])) { $w[] = "d.$col=?"; $p[] = $_GET[$g]; }
             if (!empty($_GET['q'])) { $w[] = '(d.number LIKE ? OR d.client_name LIKE ? OR d.po_number LIKE ? OR d.rfq_ref LIKE ?)'; $qq = '%' . mb_substr((string)$_GET['q'], 0, 60) . '%'; array_push($p, $qq, $qq, $qq, $qq); }
-            $rows = all('SELECT d.id,d.doc_type,d.number,d.status,d.client_name,d.po_number,d.rfq_ref,d.issue_date,d.due_date,d.currency,d.task_id,d.parent_id,d.amount_paid,d.discount,d.tax_rate,(SELECT COALESCE(SUM(qty*unit_price),0) FROM fin_items i WHERE i.doc_id=d.id) AS sub FROM fin_docs d WHERE ' . implode(' AND ', $w) . ' ORDER BY d.id DESC LIMIT 300', $p);
+            $rows = all('SELECT d.id,d.doc_type,d.number,d.status,d.client_name,d.po_number,d.rfq_ref,d.issue_date,d.due_date,d.currency,d.task_id,d.parent_id,d.amount_paid,d.discount,d.tax_rate,' . fx_sub_sql() . ' AS sub FROM fin_docs d WHERE ' . implode(' AND ', $w) . ' ORDER BY d.id DESC LIMIT 300', $p);
             foreach ($rows as &$r) { $net = (float)$r['sub'] - min((float)$r['discount'], (float)$r['sub']); $r['total'] = $r['doc_type'] === 'receipt' ? (float)$r['amount_paid'] : round($net + $net * (float)$r['tax_rate'] / 100, 2); unset($r['sub']); } unset($r);
             out(['docs' => $rows, 'can_edit' => $fin]);
         }
@@ -76,7 +102,7 @@ if ($seg[0] === 'finance') {
                   [$type, fx_number($type), $tid, $cid, fx_s($b['po_number'] ?? '', 80), fx_s($b['rfq_ref'] ?? '', 80), $client, fx_s($b['client_address'] ?? '', 800), fx_s($b['client_email'] ?? '', 190), fx_cur($b['currency'] ?? $st['currency']), $issue, fx_date($b['due_date'] ?? null), fx_date($b['valid_until'] ?? null),
                    fx_s($b['tax_label'] ?? $st['tax_label'], 30) ?: 'VAT', max(0, min(100, fx_num($b['tax_rate'] ?? $st['tax_rate']))), max(0, fx_num($b['discount'] ?? 0)), fx_s($b['notes'] ?? '', 3000), fx_s($b['terms'] ?? $st['terms'], 3000), null, $uid]); break; }
                 catch (PDOException $e) { if ($try === 4 || strpos($e->getMessage(), 'uq_number') === false) throw $e; } }
-            $nid = (int)db()->lastInsertId(); fx_save_items($nid, $items); log_act($uid, 'fin_created', $type . ' ' . (fx_doc($nid, false)['number'] ?? ''));
+            $nid = (int)db()->lastInsertId(); fx_save_items($nid, $items); fx_save_extra($nid, $b); log_act($uid, 'fin_created', $type . ' ' . (fx_doc($nid, false)['number'] ?? ''));
             out(['id' => $nid, 'number' => fx_doc($nid, false)['number']], 201);
         }
         if (!$sid) fail('Not found', 404);
@@ -97,7 +123,7 @@ if ($seg[0] === 'finance') {
                array_key_exists('currency', $b) ? fx_cur($b['currency']) : $d['currency'], fx_date($b['issue_date'] ?? null) ?: $d['issue_date'], array_key_exists('due_date', $b) ? fx_date($b['due_date']) : $d['due_date'], array_key_exists('valid_until', $b) ? fx_date($b['valid_until']) : $d['valid_until'],
                array_key_exists('tax_label', $b) ? (fx_s($b['tax_label'], 30) ?: 'VAT') : $d['tax_label'], array_key_exists('tax_rate', $b) ? max(0, min(100, fx_num($b['tax_rate']))) : $d['tax_rate'], array_key_exists('discount', $b) ? max(0, fx_num($b['discount'])) : $d['discount'],
                array_key_exists('notes', $b) ? fx_s($b['notes'], 3000) : $d['notes'], array_key_exists('terms', $b) ? fx_s($b['terms'], 3000) : $d['terms'], $sid]);
-            if ($items !== null) fx_save_items($sid, $items); out(['ok' => true]);
+            if ($items !== null) fx_save_items($sid, $items); fx_save_extra($sid, $b); out(['ok' => true]);
         }
         if ($method === 'POST' && $act === 'status') { $ns = in((string)($b['status'] ?? ''), ['draft', 'sent', 'void'], ''); if ($ns === '') fail('Bad status'); if ($d['status'] === 'paid' && $ns !== 'void') fail('This invoice is already paid'); q('UPDATE fin_docs SET status=? WHERE id=?', [$ns, $sid]);
             if ($ns === 'void' && $d['doc_type'] === 'receipt' && $d['parent_id']) { $paid = (float)one("SELECT COALESCE(SUM(amount_paid),0) s FROM fin_docs WHERE doc_type='receipt' AND parent_id=? AND status<>'void'", [$d['parent_id']])['s']; $par = fx_doc((int)$d['parent_id']); if ($par && $par['status'] === 'paid' && $paid < $par['totals']['total'] - 0.005) q("UPDATE fin_docs SET status='sent' WHERE id=?", [$d['parent_id']]); }
@@ -108,7 +134,13 @@ if ($seg[0] === 'finance') {
             for ($try = 0; $try < 5; $try++) { try {
                 q('INSERT INTO fin_docs (doc_type,number,task_id,company_id,po_number,rfq_ref,client_name,client_address,client_email,currency,issue_date,due_date,tax_label,tax_rate,discount,notes,terms,parent_id,created_by) SELECT ?,?,task_id,company_id,po_number,rfq_ref,client_name,client_address,client_email,currency,?,?,tax_label,tax_rate,discount,notes,terms,id,? FROM fin_docs WHERE id=?',
                   [$to, fx_number($to), date('Y-m-d'), $to === 'invoice' ? date('Y-m-d', strtotime('+30 days')) : null, $uid, $sid]); break; } catch (PDOException $e) { if ($try === 4 || strpos($e->getMessage(), 'uq_number') === false) throw $e; } }
-            $nid = (int)db()->lastInsertId(); q('INSERT INTO fin_items (doc_id,position,description,qty,unit,unit_price) SELECT ?,position,description,qty,unit,unit_price FROM fin_items WHERE doc_id=?', [$nid, $sid]);
+            $nid = (int)db()->lastInsertId();
+            q('UPDATE fin_docs SET subject=?, attention=?, customer_id=?, sales_rep=?, terms_instr=?, payment_terms=?, ship_to=?, shipping_method=?, delivery_leadtime=?, valid_until=? WHERE id=?', [$d['subject'], $d['attention'], $d['customer_id'], $d['sales_rep'], $d['terms_instr'], $d['payment_terms'], $d['ship_to'], $d['shipping_method'], $d['delivery_leadtime'], $d['valid_until'], $nid]);
+            if ($d['doc_type'] === 'commercial') { // an invoice bills what is counted: day-rate lines become qty x days, "as incurred / optional" lines are left out
+                $pos = 0; foreach ($d['items'] as $i) { if (trim((string)$i['amount_note']) !== '') continue;
+                    $mult = in_array(strtolower(trim((string)$i['freq'])), FX_DAILY, true) ? max(1, (int)$d['days']) : 1;
+                    q('INSERT INTO fin_items (doc_id,position,description,qty,unit,unit_price) VALUES (?,?,?,?,?,?)', [$nid, $pos++, $i['description'] . ($mult > 1 ? ' (' . $mult . ' days)' : ''), (float)$i['qty'] * $mult, $i['unit'], $i['unit_price']]); }
+            } else q('INSERT INTO fin_items (doc_id,position,description,qty,unit,unit_price) SELECT ?,position,description,qty,unit,unit_price FROM fin_items WHERE doc_id=?', [$nid, $sid]);
             log_act($uid, 'fin_converted', $d['number'] . ' → ' . $to); out(['id' => $nid, 'number' => fx_doc($nid, false)['number']], 201);
         }
         if ($method === 'POST' && $act === 'pay') {

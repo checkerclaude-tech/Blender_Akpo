@@ -178,6 +178,83 @@ if ($method === 'GET' && $sub === 'dashboard') {
          'totals' => ['reports' => count($reports), 'expected' => array_sum(array_column($people_rows, 'expected')), 'missing' => count($missing)]]);
 }
 
+/* ---------- weekly report (the ASL-HR-WR-001 "Team weekly report" sheet) ---------- */
+const RP_LEGEND = ['lost' => ['NIL/LOST', 'FF0000'], 'view' => ['IN VIEW/AWAITING/REVIEW STATE', 'FFC000'], 'done' => ['AWARDED/DELIVERED/CLOSED OUT', '92D050']];
+const RP_LEGEND_SHORT = ['lost' => 'Lost', 'view' => 'In view', 'done' => 'Delivered'];
+function rp_week_start(string $any): string { $t = strtotime($any) ?: time(); return date('Y-m-d', strtotime('monday this week', $t)); }
+function rp_can_see_person(array $u, int $pid): bool { return rp_global($u) || $pid === (int)$u['id'] || manages_user($u, $pid); }
+
+if ($method === 'GET' && $sub === 'weekly') {
+    $pid = (int)($_GET['user'] ?? $uid) ?: $uid; if (!rp_can_see_person($u, $pid)) fail('Not allowed', 403);
+    $emp = one('SELECT id,name,job_title FROM users WHERE id=?', [$pid]); if (!$emp) fail('Not found', 404);
+    $mon = rp_week_start((string)(d($_GET['week'] ?? null) ?: $today)); $fri = date('Y-m-d', strtotime($mon . ' +4 days')); $sun = date('Y-m-d', strtotime($mon . ' +6 days'));
+    $tasks = all("SELECT t.id,t.title,t.status,t.due_date,t.task_type,t.status_reason,co.name AS company,p.name AS project,d.name AS department
+                  FROM tasks t LEFT JOIN companies co ON co.id=t.company_id LEFT JOIN projects p ON p.id=t.project_id LEFT JOIN departments d ON d.id=t.department_id
+                  WHERE t.assignee_id=? AND (t.status IN ('in_progress','blocked') OR t.updated_at BETWEEN ? AND ? OR EXISTS (SELECT 1 FROM daily_reports r WHERE r.task_id=t.id AND r.user_id=? AND r.report_date BETWEEN ? AND ?))
+                  ORDER BY co.name IS NULL, co.name, t.id LIMIT 80", [$pid, $mon . ' 00:00:00', $sun . ' 23:59:59', $pid, $mon, $fri]);
+    $reps = []; foreach (all('SELECT task_id,report_date,status,progress,summary,blockers FROM daily_reports WHERE user_id=? AND report_date BETWEEN ? AND ? ORDER BY report_date', [$pid, $mon, $fri]) as $x) $reps[(int)$x['task_id']][] = $x;
+    $rows = [];
+    foreach ($tasks as $i => $t) {
+        $rs = $reps[(int)$t['id']] ?? []; $last = $rs ? end($rs) : null; $st = $t['status'];
+        $cls = $st === 'done' ? 'done' : ($st === 'canceled' ? 'lost' : 'view');
+        $out_ = [];
+        if (!in_array($st, ['done', 'canceled', 'transferred'], true)) {
+            if ($last) $out_[] = (int)$last['progress'] . '% complete';
+            if ($t['due_date']) $out_[] = 'due ' . date('j M', strtotime($t['due_date']));
+            if ($last && $last['blockers']) $out_[] = 'blocker: ' . $last['blockers'];
+            if ($st === 'deferred') $out_[] = 'deferred';
+        } elseif ($st === 'transferred') $out_[] = 'Transferred' . ($t['status_reason'] ? ': ' . $t['status_reason'] : '');
+        elseif ($st === 'canceled' && $t['status_reason']) $out_[] = 'Canceled: ' . $t['status_reason'];
+        $cm = array_map(fn($x) => date('D', strtotime($x['report_date'])) . ': ' . $x['summary'], $rs);
+        $rows[] = ['sn' => $i + 1, 'client' => $t['company'] ?: ($t['department'] ?: ''), 'project' => (string)$t['project'], 'task' => $t['title'], 'status' => $cls,
+                   'outstanding' => mb_substr(implode(' · ', $out_), 0, 600), 'comment' => mb_substr(implode("\n", $cm), 0, 1500), 'review' => ''];
+    }
+    out(['code' => 'ASL-HR-WR-001', 'rev' => 'Rev 01', 'employee' => $emp['name'], 'designation' => (string)$emp['job_title'], 'week_start' => $mon, 'week_end' => $fri, 'date' => $fri, 'rows' => $rows,
+         'people' => rp_global($u) ? all("SELECT id,name FROM users WHERE active=1 AND role<>'founder' ORDER BY name") : (managed_dept_ids($u) ? all('SELECT id,name FROM users WHERE active=1 AND id IN ' . rp_member_sql(managed_dept_ids($u)) . ' ORDER BY name') : [['id' => $uid, 'name' => $u['name']]]),
+         'legend' => array_map(fn($k) => ['key' => $k, 'label' => RP_LEGEND[$k][0], 'short' => RP_LEGEND_SHORT[$k], 'color' => RP_LEGEND[$k][1]], array_keys(RP_LEGEND))]);
+}
+
+if ($method === 'POST' && $sub === 'weekly-xlsx') { // the edited sheet comes back from the page and is written out in the template's layout
+    require_once __DIR__ . '/xlsx.php'; $b = body();
+    $T = fn($v, $n) => mb_substr(trim((string)($v ?? '')), 0, $n);
+    $rows = []; foreach (array_slice((array)($b['rows'] ?? []), 0, 120) as $r) { if (!is_array($r)) continue;
+        $cls = array_key_exists((string)($r['status'] ?? ''), RP_LEGEND) ? $r['status'] : 'view';
+        $rows[] = ['client' => $T($r['client'] ?? '', 200), 'project' => $T($r['project'] ?? '', 200), 'task' => $T($r['task'] ?? '', 400), 'status' => $cls, 'outstanding' => $T($r['outstanding'] ?? '', 800), 'comment' => $T($r['comment'] ?? '', 2000), 'review' => $T($r['review'] ?? '', 800)]; }
+    $emp = $T($b['employee'] ?? '', 120); $des = $T($b['designation'] ?? '', 120); $code = $T($b['code'] ?? 'ASL-HR-WR-001', 40); $rev = $T($b['rev'] ?? 'Rev 01', 20); $dateTxt = $T($b['date_text'] ?? '', 40);
+    $gray = 'BFBFBF'; $thin = ['border' => 'thin', 'wrap' => true];
+    $W = [3.2, 5.3, 31.7, 35, 41.2, 14, 24.1, 30.9, 31.5]; $cells = []; $R = [];
+    // header band with the logo
+    for ($c = 2; $c <= 9; $c++) $R[1]['cells'][$c] = ['v' => null, 's' => ['fill' => $gray, 'border' => 'thin']];
+    $R[1]['cells'][8] = ['v' => $code, 's' => ['b' => true, 'fill' => $gray, 'border' => 'thin', 'h' => 'right']]; $R[1]['cells'][9] = ['v' => $rev, 's' => ['fill' => $gray, 'border' => 'thin', 'h' => 'right']]; $R[1]['h'] = 54;
+    for ($r = 2; $r <= 3; $r++) for ($c = 2; $c <= 9; $c++) $R[$r]['cells'][$c] = ['v' => null, 's' => ['border' => 'thin', 'sz' => 12]];
+    $R[2]['cells'][2] = ['v' => 'TEAM WEEKLY REPORT', 's' => ['b' => true, 'sz' => 16, 'h' => 'center', 'border' => 'thin']];
+    $R[2]['cells'][8] = ['v' => 'Employee name', 's' => ['b' => true, 'sz' => 12, 'border' => 'thin', 'fill' => $gray]]; $R[2]['cells'][9] = ['v' => $emp, 's' => ['b' => true, 'sz' => 12, 'border' => 'thin', 'wrap' => true]];
+    $R[3]['cells'][8] = ['v' => 'Date', 's' => ['b' => true, 'sz' => 12, 'border' => 'thin', 'fill' => $gray]]; $R[3]['cells'][9] = ['v' => $dateTxt, 's' => ['b' => true, 'sz' => 12, 'border' => 'thin', 'h' => 'left']];
+    $R[2]['h'] = $R[3]['h'] = 22.9;
+    $heads = ['SN', 'Client/Category', 'Project', 'Task', 'Status', 'Outstanding', 'Suggestion/Comment', 'Management review'];
+    foreach ($heads as $i => $h) $R[5]['cells'][$i + 2] = ['v' => $h, 's' => ['b' => true, 'sz' => 13, 'fill' => $gray, 'border' => 'thin', 'h' => $i === 0 || $i === 4 ? 'center' : 'left', 'wrap' => true]];
+    $R[5]['h'] = 26.65;
+    $n = max(12, count($rows)); $est = function (string $t, float $w): int { $lines = 0; foreach (explode("\n", $t) as $ln) $lines += max(1, (int)ceil(mb_strlen($ln) / max(4, $w * 0.95))); return $lines; };
+    for ($i = 0; $i < $n; $i++) {
+        $rn = 6 + $i; $row = $rows[$i] ?? null; $lines = 1;
+        $R[$rn]['cells'][2] = ['v' => $row ? $i + 1 : ($i < 8 ? $i + 1 : null), 's' => $thin + ['h' => 'center']];
+        foreach (['client' => 3, 'project' => 4, 'task' => 5] as $k => $col) { $R[$rn]['cells'][$col] = ['v' => $row[$k] ?? null, 's' => $thin + ['h' => 'left']]; if ($row) $lines = max($lines, $est($row[$k], $W[$col - 1])); }
+        $R[$rn]['cells'][6] = $row ? ['v' => RP_LEGEND_SHORT[$row['status']], 's' => $thin + ['fill' => RP_LEGEND[$row['status']][1], 'h' => 'center', 'b' => true]] : ['v' => null, 's' => $thin];
+        foreach (['outstanding' => 7, 'comment' => 8, 'review' => 9] as $k => $col) { $R[$rn]['cells'][$col] = ['v' => $row[$k] ?? null, 's' => $thin + ['h' => 'left']]; if ($row) $lines = max($lines, $est($row[$k], $W[$col - 1])); }
+        $R[$rn]['h'] = max(21, min(300, 17 * $lines + 4));
+    }
+    $lr = 6 + $n + 1; $R[$lr]['cells'][3] = ['v' => '**LEGEND**', 's' => ['b' => true, 'border' => 'medium']]; $R[$lr]['cells'][4] = ['v' => null, 's' => ['border' => 'medium']];
+    $k = 1; foreach (RP_LEGEND as $key => [$label, $col]) { $R[$lr + $k]['cells'][3] = ['v' => null, 's' => ['fill' => $col, 'border' => 'thin']]; $R[$lr + $k]['cells'][4] = ['v' => $label, 's' => ['border' => 'thin', 'wrap' => true]]; $k++; }
+    $rb = $lr + 5; $R[$rb]['cells'][3] = ['v' => 'Reported by:', 's' => ['border' => 'medium']]; $R[$rb]['cells'][4] = ['v' => $emp, 's' => ['border' => 'medium']];
+    $R[$rb + 1]['cells'][3] = ['v' => 'Designation:', 's' => ['border' => 'medium']]; $R[$rb + 1]['cells'][4] = ['v' => $des, 's' => ['border' => 'medium', 'wrap' => true]];
+    $logo = (string)@file_get_contents(__DIR__ . '/../../assets/img/aerosub-logo.png'); $dim = @getimagesizefromstring($logo);
+    $sheet = ['name' => 'Weekly report', 'cols' => $W, 'rows' => $R, 'merges' => ['B2:G3'], 'landscape' => true];
+    if ($logo !== '' && $dim) $sheet['image'] = ['data' => $logo, 'col' => 1, 'row' => 0, 'w' => 190, 'h' => (int)round(190 * $dim[1] / $dim[0])];
+    try { $bin = xlsx_write($sheet); } catch (RuntimeException $e) { fail($e->getMessage(), 501); }
+    $fn = 'Weekly_Report_' . (preg_replace('/[^A-Za-z0-9]+/', '_', $emp) ?: 'Team') . '_' . date('d-M-Y', strtotime((string)(d($b['date'] ?? null) ?: $today))) . '.xlsx';
+    header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'); header('Content-Disposition: attachment; filename="' . $fn . '"'); header('Content-Length: ' . strlen($bin)); header('Cache-Control: no-store'); echo $bin; exit;
+}
+
 /* ---------- history ---------- */
 if ($method === 'GET' && $id === null && $sub === null) {
     [$rs, $rp] = rp_scope($u); $w = [$rs]; $p = $rp;

@@ -24,7 +24,7 @@ try { if (col_exists('agent_chats', 'updated_at')) { $x = q("DELETE FROM agent_c
 "; }
 // Tasks due today or tomorrow, and newly overdue — one reminder per task per day.
 $rows = all("SELECT t.id,t.title,t.due_date,t.assignee_id FROM tasks t
-             WHERE t.status<>'done' AND t.assignee_id IS NOT NULL AND t.due_date IS NOT NULL AND t.due_date <= (CURDATE() + INTERVAL 1 DAY)");
+             WHERE t.status IN ('todo','in_progress','blocked') AND t.assignee_id IS NOT NULL AND t.due_date IS NOT NULL AND t.due_date <= (CURDATE() + INTERVAL 1 DAY)");
 foreach ($rows as $t) {
     $kind = $t['due_date'] < date('Y-m-d') ? 'overdue' : ($t['due_date'] === date('Y-m-d') ? 'due today' : 'due tomorrow');
     $link = '#/tasks/' . $t['id'];
@@ -55,6 +55,8 @@ if (col_exists('contacts', 'followup_date')) {
         $made++;
     }
 }
+// Archived users are deleted for good 60 days after they were archived
+try { if (col_exists('users', 'archived_at')) { require_once __DIR__ . '/api/lib/accounts.php'; echo 'Archive: ' . purge_archived_users() . " account(s) deleted.\n"; } } catch (Throwable $e) { echo 'Archive cleanup skipped: ' . $e->getMessage() . "\n"; }
 q('DELETE FROM login_attempts WHERE created_at < (NOW() - INTERVAL 1 DAY)');
 q('DELETE FROM notifications WHERE read_at IS NOT NULL AND created_at < (NOW() - INTERVAL 90 DAY)');
 echo "OK, $made notifications created.\n";
