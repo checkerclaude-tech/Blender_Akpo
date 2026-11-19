@@ -431,16 +431,25 @@ if ($method === 'GET' && $sub === 'performance') {
     $rep = []; foreach (all("SELECT user_id, COUNT(*) n, COUNT(DISTINCT report_date) dd, COALESCE(SUM(hours),0) h, COALESCE(AVG(progress),0) pr FROM daily_reports WHERE user_id IN ($in) AND report_date BETWEEN ? AND ? GROUP BY user_id", [$from, $to]) as $r) $rep[(int)$r['user_id']] = $r;
     $dn = []; foreach (all("SELECT assignee_id, COUNT(*) n, SUM(due_date IS NULL OR DATE(completed_at) <= due_date) ontime FROM tasks WHERE status='done' AND assignee_id IN ($in) AND DATE(completed_at) BETWEEN ? AND ? GROUP BY assignee_id", [$from, $to]) as $r) $dn[(int)$r['assignee_id']] = $r;
     $op = []; foreach (all("SELECT assignee_id, SUM(status='todo') todo, SUM(status='in_progress') prog, SUM(status='blocked') blk, SUM(status='deferred') def, SUM(status IN ('todo','in_progress','blocked') AND due_date < CURDATE()) late FROM tasks WHERE assignee_id IN ($in) GROUP BY assignee_id") as $r) $op[(int)$r['assignee_id']] = $r;
+    // Items people entered in their weekly reports count alongside tasks: a row with status Delivered counts as completed, In view as in progress, Nil/Lost as lost.
+    // Rows that are just a task from the task list are skipped (the task itself is already counted), and the same item repeated in several weeks counts once.
+    $titles = []; foreach (all("SELECT assignee_id, LOWER(TRIM(title)) t FROM tasks WHERE assignee_id IN ($in)") as $r) $titles[(int)$r['assignee_id']][$r['t']] = 1;
+    $seen = []; foreach (all("SELECT user_id,data FROM weekly_reports WHERE kind='personal' AND user_id IN ($in) AND week_start BETWEEN ? AND ? ORDER BY week_start", [date('Y-m-d', strtotime($from . ' -6 days')), $to]) as $r) {
+        $c = json_decode((string)$r['data'], true); foreach ((array)($c['rows'] ?? []) as $x) { $tt = mb_strtolower(trim((string)($x['task'] ?? ''))); if ($tt === '' || isset($titles[(int)$r['user_id']][$tt])) continue; $seen[(int)$r['user_id']][$tt] = (string)($x['status'] ?? 'view'); } }
+    $wk = []; foreach ($seen as $uid2 => $items) { $w = ['done' => 0, 'view' => 0, 'lost' => 0]; foreach ($items as $st) { $k = array_key_exists($st, $w) ? $st : 'view'; $w[$k]++; } $wk[$uid2] = $w; }
     $work = 0; for ($t = strtotime($from); $t <= strtotime($to); $t += 86400) if ((int)date('N', $t) <= 5) $work++; $work = max(1, $work);
-    $rows = []; $tot = ['reports' => 0, 'done' => 0, 'hours' => 0.0, 'blocked' => 0, 'late' => 0];
+    $rows = []; $tot = ['reports' => 0, 'done' => 0, 'hours' => 0.0, 'blocked' => 0, 'late' => 0, 'wk_done' => 0, 'wk_view' => 0, 'wk_lost' => 0];
     foreach ($people as $p) { $i = (int)$p['id']; $r = $rep[$i] ?? null; $d = $dn[$i] ?? null; $o = $op[$i] ?? null;
         $row = ['id' => $i, 'name' => $p['name'], 'reports' => (int)($r['n'] ?? 0), 'days_reported' => (int)($r['dd'] ?? 0), 'consistency' => round(min(1, (int)($r['dd'] ?? 0) / $work) * 100), 'hours' => round((float)($r['h'] ?? 0), 1), 'avg_progress' => (int)round((float)($r['pr'] ?? 0)),
                 'done' => (int)($d['n'] ?? 0), 'on_time' => isset($d['n']) && (int)$d['n'] ? (int)round(((int)$d['ontime']) * 100 / (int)$d['n']) : null, 'todo' => (int)($o['todo'] ?? 0), 'in_progress' => (int)($o['prog'] ?? 0), 'blocked' => (int)($o['blk'] ?? 0), 'deferred' => (int)($o['def'] ?? 0), 'late' => (int)($o['late'] ?? 0)];
+        $w = $wk[$i] ?? ['done' => 0, 'view' => 0, 'lost' => 0]; $row['wk'] = $w; $row['wk_total'] = $w['done'] + $w['view'] + $w['lost']; $row['done'] += $w['done']; $row['in_progress'] += $w['view'];
+        $tot['wk_done'] += $w['done']; $tot['wk_view'] += $w['view']; $tot['wk_lost'] += $w['lost'];
         $tot['reports'] += $row['reports']; $tot['done'] += $row['done']; $tot['hours'] += $row['hours']; $tot['blocked'] += $row['blocked']; $tot['late'] += $row['late']; $rows[] = $row; }
     $byDay = array_column(all("SELECT report_date dte, COUNT(*) c FROM daily_reports WHERE user_id IN ($in) AND report_date BETWEEN ? AND ? GROUP BY report_date", [$from, $to]), 'c', 'dte');
     $dDay = array_column(all("SELECT DATE(completed_at) dte, COUNT(*) c FROM tasks WHERE status='done' AND assignee_id IN ($in) AND DATE(completed_at) BETWEEN ? AND ? GROUP BY DATE(completed_at)", [$from, $to]), 'c', 'dte');
     $series = []; for ($t = strtotime($from); $t <= strtotime($to); $t += 86400) { $k = date('Y-m-d', $t); $series[] = ['date' => $k, 'reports' => (int)($byDay[$k] ?? 0), 'done' => (int)($dDay[$k] ?? 0)]; }
     $status = array_map('intval', one("SELECT COALESCE(SUM(status='todo'),0) todo, COALESCE(SUM(status='in_progress'),0) in_progress, COALESCE(SUM(status='blocked'),0) blocked, COALESCE(SUM(status='deferred'),0) deferred, COALESCE(SUM(status='canceled' AND updated_at >= ?),0) canceled, COALESCE(SUM(status='done' AND completed_at >= ?),0) done, COALESCE(SUM(status='transferred' AND updated_at >= ?),0) transferred FROM tasks WHERE assignee_id IN ($in)", [$from . ' 00:00:00', $from . ' 00:00:00', $from . ' 00:00:00']) ?: []);
+    $status['done'] += $tot['wk_done']; $status['in_progress'] += $tot['wk_view']; $status['canceled'] += $tot['wk_lost'];
     out(['days' => $days, 'from' => $from, 'to' => $to, 'workdays' => $work, 'departments' => $depts, 'department' => $fd, 'people' => $rows, 'series' => $series, 'status' => $status, 'totals' => $tot]);
 }
 

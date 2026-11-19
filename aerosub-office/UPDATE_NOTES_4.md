@@ -41,3 +41,7 @@ Check its output: it must say `Root Admin account: dev.aaerosub@…`. If it says
 * On Reports → Weekly report, a head chooses a member's name from the person list and sees what that member has filled in for the week (draft or submitted).
 * **Combine team reports…** (heads/administrators): tick the members and press Create. Their reports (or, for people who have not saved one, their tasks) are merged into ONE weekly report, each row starting with the person's name. The head can edit it (auto-saved), **share** it (notification + email with the Excel file) and download or print it as one sheet. It is stored separately, so it never overwrites anyone's own weekly report. Lists: "Combined by me", "My team's reports".
 * A head can share a member's own report only once the member has submitted it.
+
+## Team performance now counts weekly-report entries
+* Items people enter in their weekly reports are counted alongside tasks: **Delivered** = completed, **In view** = in progress, **Nil/Lost** = lost. Rows that are simply a task from the task list are not counted twice, and an item repeated in several weeks counts once. The leaderboard has a new "From weekly reports" column, and a note shows how many were added. Drafts count too.
+* Fixed: the "‹ Reports" button on the weekly report page now goes back to Reports.
