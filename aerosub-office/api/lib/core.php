@@ -114,7 +114,7 @@ function games_access(array $u): array {
 const TAB_DEFS = [
     'reports' => ['Reports', 1], 'performance' => ['Team performance', 1], 'pipeline' => ['Pipeline', 1], 'documents' => ['Documents (document checks)', 1], 'mail' => ['Mail', 1], 'schedule' => ['Schedule', 1],
     'games' => ['Games', 1], 'campaigns' => ['Campaigns', 1], 'team' => ['Team / Snapshot', 1], 'finance' => ['Finance', 1], 'learn' => ['Learn', 1], 'competition' => ['Competition', 1], 'events' => ['Events', 1],
-    'research' => ['Research', 1], 'projects' => ['Projects', 1], 'products' => ['Products & services', 1], 'news' => ['News', 1], 'myfiles' => ['My Documents', 1],
+    'research' => ['Research', 1], 'projects' => ['Projects', 1], 'products' => ['Products & services', 1], 'news' => ['News', 1], 'myfiles' => ['My Documents', 1], 'executive' => ['Executive dashboard (C-suite)', 1],
     'admin' => ['Admin (users)', 0], 'departments' => ['Departments', 0], 'logs' => ['Logs', 0], 'access' => ['Access control', 0],
 ];
 function tab_overrides(array $u): array {
@@ -127,6 +127,7 @@ function tab_override(array $u, string $tab): ?bool { $m = tab_overrides($u); re
 function tab_default(array $u, string $tab): bool {
     $role = $u['role'] ?? '';
     return match ($tab) {
+        'executive' => $role === 'founder',                             // the C-suite view: the Founder / CEO, and anyone the Root Admin adds
         'performance' => false,                                        // only people the Root Admin picks
         'documents' => $role === 'super_admin',
         'myfiles' => $role !== 'super_admin',                          // personal files: never for administrators

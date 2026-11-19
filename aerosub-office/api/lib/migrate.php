@@ -391,3 +391,18 @@ function migrate_privileges(): array {
     $log[] = 'Privileges and personal documents ready.';
     return $log;
 }
+
+// Executive dashboard (numbers from other apps such as Insight). Safe to run repeatedly.
+function migrate_exec(): array {
+    foreach ([
+    "CREATE TABLE IF NOT EXISTS exec_sources (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, name VARCHAR(80) NOT NULL, slug VARCHAR(60) NOT NULL UNIQUE, mode ENUM('pull','push') NOT NULL DEFAULT 'pull', base_url VARCHAR(300) NULL,
+        auth_header VARCHAR(60) NOT NULL DEFAULT 'Authorization', auth_value TEXT NULL, ingest_hash CHAR(64) NULL, ingest_hint VARCHAR(24) NULL, refresh_min INT NOT NULL DEFAULT 30, active TINYINT(1) NOT NULL DEFAULT 1,
+        last_fetch DATETIME NULL, last_status VARCHAR(200) NULL, position INT NOT NULL DEFAULT 100, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, KEY (ingest_hash)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    "CREATE TABLE IF NOT EXISTS exec_metrics (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, source_id INT UNSIGNED NOT NULL, mkey VARCHAR(60) NOT NULL, label VARCHAR(80) NOT NULL, kind ENUM('number','money','percent') NOT NULL DEFAULT 'number',
+        currency VARCHAR(8) NULL, endpoint VARCHAR(300) NULL, list_path VARCHAR(200) NULL, org_path VARCHAR(100) NULL, path VARCHAR(200) NULL, agg ENUM('sum','avg','max') NOT NULL DEFAULT 'sum', good ENUM('up','down') NOT NULL DEFAULT 'up',
+        position INT NOT NULL DEFAULT 100, UNIQUE KEY (source_id,mkey), FOREIGN KEY (source_id) REFERENCES exec_sources(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    "CREATE TABLE IF NOT EXISTS exec_points (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, metric_id INT UNSIGNED NOT NULL, org VARCHAR(120) NOT NULL DEFAULT '', value DOUBLE NOT NULL, at DATETIME NOT NULL, KEY (metric_id,org,at),
+        FOREIGN KEY (metric_id) REFERENCES exec_metrics(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    ] as $q) db()->exec($q);
+    return ['Executive dashboard ready (add sources under Executive → Manage sources).'];
+}

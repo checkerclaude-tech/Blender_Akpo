@@ -57,6 +57,7 @@ if (col_exists('contacts', 'followup_date')) {
 }
 // Archived users are deleted for good 60 days after they were archived
 try { if (col_exists('users', 'archived_at')) { require_once __DIR__ . '/api/lib/accounts.php'; echo 'Archive: ' . purge_archived_users() . " account(s) deleted.\n"; } } catch (Throwable $e) { echo 'Archive cleanup skipped: ' . $e->getMessage() . "\n"; }
+try { if (col_exists('exec_sources', 'id')) { require_once __DIR__ . '/api/lib/exec.php'; echo 'Executive sources refreshed: ' . ex_refresh_due() . "\n"; } } catch (Throwable $e) { echo 'Executive refresh skipped: ' . $e->getMessage() . "\n"; }
 q('DELETE FROM login_attempts WHERE created_at < (NOW() - INTERVAL 1 DAY)');
 q('DELETE FROM notifications WHERE read_at IS NOT NULL AND created_at < (NOW() - INTERVAL 90 DAY)');
 echo "OK, $made notifications created.\n";

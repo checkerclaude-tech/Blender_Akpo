@@ -13,7 +13,7 @@ $sub = $seg[2] ?? ($id === null ? ($seg[1] ?? null) : null);
 
 // Only 'agent' (the laptop) skips the office session check: it authenticates with its own token (agent_token.php).
 // agent-owner and agent-auth use the office session and this CSRF check like any other route.
-if ($method !== 'GET' && $method !== 'OPTIONS' && !($r === 'login' || $r === 'invite' || $r === 'agent' || $r === 'agent-personal' || $r === 'csp-report' || $r === 'forgot' || $r === 'reset')) { cfg(); check_csrf(); }
+if ($method !== 'GET' && $method !== 'OPTIONS' && !($r === 'login' || $r === 'invite' || $r === 'agent' || $r === 'agent-personal' || $r === 'csp-report' || ($r === 'exec' && ($seg[1] ?? '') === 'ingest') || $r === 'forgot' || $r === 'reset')) { cfg(); check_csrf(); }
 
 // Sections the Root Admin can switch off per person are refused here as well as hidden in the menu.
 $GATED = ['campaigns' => 'campaigns', 'mail' => 'mail', 'learn' => 'learn', 'courses' => 'learn', 'companies' => 'pipeline', 'contacts' => 'pipeline', 'pipeline' => 'pipeline', 'competitors' => 'competition', 'trade-events' => 'events',
@@ -496,6 +496,10 @@ case 'access':
 
 case 'push':
     require __DIR__ . '/lib/push.php';
+    break;
+
+case 'exec':
+    require __DIR__ . '/lib/exec.php';
     break;
 
 case 'myfiles':

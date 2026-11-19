@@ -20,3 +20,13 @@ Check its output: it must say `Root Admin account: dev.aaerosub@…`. If it says
 
 ## Fix: question spreadsheet import
 * Importing the "ROV Essentials 50 Questions" sheet only added 2: in 48 rows the correct answer was typed in the *Correct Answer* column but was not repeated under Answer A–E, so the import could not tell which choice was right. The import now adds such an answer as one of the choices (spread over A–E; if all five were already full, the last wrong choice is dropped) and tells you how many questions it adjusted. 50/50 import.
+
+## Executive dashboard (new: C-suite view of the other Aerosub platforms)
+* **Who sees it:** the Founder/CEO by default, plus anyone the Root Admin switches on in Access → "Executive dashboard (C-suite)" (for example the CFO, COO). Super Admins can set it up (menu: "Executive setup") but see no numbers unless the Root Admin also gives them the tab.
+* **What it shows:** anonymous totals only (for example users and earnings), **per organization** and **combined** for each platform, and **all platforms combined**. 30-day trend lines and change against a week ago.
+* **Privacy:** only numbers and organization names are ever stored. Fields that look personal (e-mail, phone, name, address, password, card, salary…) are refused when you set up a number; organization names that look like an e-mail or phone number are shown as "Unnamed organization"; the connection test never shows the raw answer of the other platform; the access token is stored encrypted and is never sent to a browser.
+* **Connect Insight:** Executive → Manage sources → Connect Insight (https://insight.aerosub.co). Two ways, pick what Insight supports:
+  1. *We fetch:* give the address, token and where the numbers are in Insight's JSON answer (address, list of organizations, name field, number field). "Test connection" lists the numbers it can see.
+  2. *Insight sends:* Insight posts `{"organizations": {"Acme Ltd": {"users": 120, "earnings": 5600.5}}}` to `/api/exec/ingest` with the key shown once when you save.
+  Insight needs a small read-only summary endpoint (or the push call) that returns counts per organization and no personal records. If cron.php runs on your site, sources also refresh on schedule.
+* Needs HTTPS to the other platform. Run `/upgrade.php` once after unzipping.
