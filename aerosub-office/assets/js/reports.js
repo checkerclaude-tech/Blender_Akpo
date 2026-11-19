@@ -261,15 +261,16 @@
     let W;
     if (saved) W = await api('reports/weekly/' + sid);
     else { const q = new URLSearchParams(); if (WK.week) q.set('week', WK.week); if (WK.user) q.set('user', WK.user); W = await api('reports/weekly?' + q.toString()); WK.week = W.week_start; WK.user = String(W.people.find(p => p.name === W.employee)?.id || WK.user || ''); }
-    const ed = !saved, legend = W.legend, col = k => '#' + (legend.find(l => l.key === k) || legend[1]).color;
+    const mode = W.mode || 'view', ed = mode === 'owner', rvOk = mode === 'review' && !!(W.state && W.state.status === 'submitted'), legend = W.legend, col = k => '#' + (legend.find(l => l.key === k) || legend[1]).color;
     const dateTxt = W.date_text || dayOf(W.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-    const cell = (k, val) => '<td class="wr-edit"' + (ed ? ' contenteditable="true" spellcheck="true"' : '') + ' data-k="' + k + '">' + esc(val || '') + '</td>';
+    const subm = !!(W.state && W.state.status === 'submitted'), canEd = k => ed ? (k !== 'review' || !subm) : (rvOk && (k === 'comment' || k === 'review'));
+    const cell = (k, val) => '<td class="wr-edit"' + (canEd(k) ? ' contenteditable="true" spellcheck="true"' : '') + ' data-k="' + k + '">' + esc(val || '') + '</td>';
     const rowHtml = (r, n) => '<td class="wr-sn">' + (n + 1) + '</td>' + cell('client', r.client) + cell('project', r.project) + cell('task', r.task) +
       '<td class="wr-st" style="background:' + col(r.status) + '"><select data-k="status" aria-label="Status"' + (ed ? '' : ' disabled') + '>' + legend.map(l => opt(l.key, l.short, r.status)).join('') + '</select></td>' + cell('outstanding', r.outstanding) + cell('comment', r.comment) + cell('review', r.review) +
       (ed ? '<td class="wr-x noprint"><button type="button" class="btn ghost sm" data-del aria-label="Remove row">✕</button></td>' : '');
     const info = saved ? '<div class="banner noprint" style="background:var(--mist);color:var(--ink);border:1px solid var(--line)"><span>' + (W.saved.shared_by ? 'Shared with you by <b>' + esc(W.saved.shared_by) + '</b>' : 'Saved weekly report') + ' · updated ' + esc(ago(W.saved.updated_at)) + (W.saved.note ? ' — “' + esc(W.saved.note) + '”' : '') + (W.saved.recipients.length ? '<br><span class="small muted">Shared with: ' + W.saved.recipients.map(r => esc(r.name)).join(', ') + '</span>' : '') + '</span></div>' : '';
-    v.innerHTML = '<div class="top noprint"><div><h1>Weekly report</h1><div class="muted">' + (saved ? 'Week of ' + esc(fmtShort(W.week_start)) + ' · ' + esc(W.employee) : 'Week of ' + esc(fmtShort(W.week_start)) + ' to ' + esc(fmtShort(W.week_end)) + '. Filled in from tasks and daily reports. Change anything, then share, download or print.') + '</div></div><span class="right row"><a class="btn ghost" href="#/reports/weekly">' + (saved ? '‹ My weekly report' : '‹ Reports') + '</a>' + (ed && !readOnly() ? '<button class="btn" id="wsh">Share…</button>' : '') + '<button class="btn' + (ed && !readOnly() ? ' ghost' : '') + '" id="wxl">Download Excel</button><button class="btn ghost" id="wpr">Print / PDF</button></span></div>' + info +
-      (ed ? '<div class="rp-filters noprint"><div class="row"><button class="btn ghost sm" id="wprev" aria-label="Previous week">‹</button><input type="date" id="wdate" value="' + esc(W.week_start) + '" aria-label="Any day in the week"><button class="btn ghost sm" id="wnext" aria-label="Next week">›</button></div>' + (W.people.length > 1 ? '<select id="wuser" aria-label="Person">' + W.people.map(p => opt(p.id, p.name, WK.user)).join('') + '</select>' : '') + '</div>' : '') +
+    v.innerHTML = '<div class="top noprint"><div><h1>Weekly report</h1><div class="muted">' + (saved ? 'Week of ' + esc(fmtShort(W.week_start)) + ' · ' + esc(W.employee) : 'Week of ' + esc(fmtShort(W.week_start)) + ' to ' + esc(fmtShort(W.week_end)) + (mode === 'review' ? '. ' + (rvOk ? 'Add your comments and management review; they save automatically.' : esc(W.employee) + ' has not submitted this week yet, so this is only a preview built from their tasks.') : '. Filled in from tasks and daily reports. Changes save automatically; press Submit when it is done.')) + '</div></div><span class="right row"><span class="small muted" id="wst" aria-live="polite"></span><a class="btn ghost" href="#/reports/weekly">' + (saved ? '‹ My weekly report' : '‹ Reports') + '</a>' + (ed && !readOnly() ? '<button class="btn" id="wsub">Submit report</button>' : '') + (rvOk && !readOnly() ? '<button class="btn" id="wsv">Save</button>' : '') + (mode !== 'view' && !readOnly() ? '<button class="btn ghost" id="wsh">Share…</button>' : '') + '<button class="btn ghost" id="wxl">Download Excel</button><button class="btn ghost" id="wpr">Print / PDF</button></span></div>' + info +
+      (!saved ? '<div class="rp-filters noprint"><div class="row"><button class="btn ghost sm" id="wprev" aria-label="Previous week">‹</button><input type="date" id="wdate" value="' + esc(W.week_start) + '" aria-label="Any day in the week"><button class="btn ghost sm" id="wnext" aria-label="Next week">›</button></div>' + (W.people.length > 1 ? '<select id="wuser" aria-label="Person">' + W.people.map(p => opt(p.id, p.name, WK.user)).join('') + '</select>' : '') + '</div>' : '') +
       '<div class="wr-sheet print-ok"><div class="wr-band"><img src="assets/img/aerosub-logo.png" alt="Aerosub" data-rm="1"><span class="wr-code"><b>' + esc(W.code) + '</b><span>' + esc(W.rev) + '</span></span></div>' +
       '<div class="wr-head"><div class="wr-title">TEAM WEEKLY REPORT</div><div class="wr-meta"><div><b>Employee name</b><span class="wr-edit"' + (ed ? ' contenteditable="true"' : '') + ' id="wname">' + esc(W.employee) + '</span></div><div><b>Date</b><span class="wr-edit"' + (ed ? ' contenteditable="true"' : '') + ' id="wdt">' + esc(dateTxt) + '</span></div></div></div>' +
       '<table class="wr-t"><thead><tr><th>SN</th><th>Client/Category</th><th>Project</th><th>Task</th><th>Status</th><th>Outstanding</th><th>Suggestion/Comment</th><th>Management review</th>' + (ed ? '<th class="noprint"></th>' : '') + '</tr></thead><tbody id="wbody">' + W.rows.map((r, n) => '<tr>' + rowHtml(r, n) + '</tr>').join('') + '</tbody></table>' +
@@ -278,10 +279,10 @@
       '<table class="wr-leg"><tr><td>Reported by:</td><td class="wr-edit"' + (ed ? ' contenteditable="true"' : '') + ' id="wby">' + esc(W.employee) + '</td></tr><tr><td>Designation:</td><td class="wr-edit"' + (ed ? ' contenteditable="true"' : '') + ' id="wdes">' + esc(W.designation) + '</td></tr></table></div></div>' +
       '<div id="wlists" class="noprint"></div>';
     const body = $('#wbody'); const renum = () => $$('#wbody tr').forEach((tr, i) => { $('.wr-sn', tr).textContent = i + 1; });
-    const wire = tr => { const del = $('[data-del]', tr); if (del) del.onclick = () => { tr.remove(); renum(); }; const sel = $('select', tr); sel.onchange = () => { $('.wr-st', tr).style.background = col(sel.value); };
-      if (ed) $$('.wr-edit', tr).forEach(c => c.onpaste = e => { e.preventDefault(); document.execCommand('insertText', false, (e.clipboardData || window.clipboardData).getData('text/plain')); }); };
+    const wire = tr => { const del = $('[data-del]', tr); if (del) del.onclick = () => { tr.remove(); renum(); schedule(); }; const sel = $('select', tr); sel.onchange = () => { $('.wr-st', tr).style.background = col(sel.value); };
+      $$('.wr-edit[contenteditable]', tr).forEach(c => c.onpaste = e => { e.preventDefault(); document.execCommand('insertText', false, (e.clipboardData || window.clipboardData).getData('text/plain')); }); };
     $$('#wbody tr').forEach(wire);
-    const add = $('#wadd'); if (add) add.onclick = () => { const tr = document.createElement('tr'); tr.innerHTML = rowHtml({ status: 'view' }, body.children.length); body.appendChild(tr); wire(tr); tr.querySelector('.wr-edit').focus(); };
+    const add = $('#wadd'); if (add) add.onclick = () => { const tr = document.createElement('tr'); tr.innerHTML = rowHtml({ status: 'view' }, body.children.length); body.appendChild(tr); wire(tr); tr.querySelector('.wr-edit').focus(); schedule(); };
     const T = c => c.innerText.replace(/ /g, ' ').trim();
     const collect = () => ({ code: W.code, rev: W.rev, employee: T($('#wname')), designation: T($('#wdes')), date: W.date, date_text: T($('#wdt')), week_start: W.week_start,
       rows: $$('#wbody tr').map(tr => { const o = {}; $$('[data-k]', tr).forEach(c => { o[c.dataset.k] = c.tagName === 'SELECT' ? c.value : T(c); }); return o; }).filter(r => r.client || r.project || r.task || r.outstanding || r.comment || r.review) });
@@ -292,13 +293,39 @@
         const blob = await res.blob(), a = document.createElement('a'), fn = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || ''); a.href = URL.createObjectURL(blob); a.download = fn ? fn[1] : 'Weekly_Report.xlsx'; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); toast('Excel file downloaded'); }
       catch (er) { toast(er.message); } b.disabled = false; };
     $('#wpr').onclick = () => window.print();
-    const sh = $('#wsh'); if (sh) sh.onclick = () => weeklyShare(W, collect);
-    if (ed) { const go = () => X.render();
+    const sh = $('#wsh'); if (sh) sh.onclick = async () => { if (dirty) await save(false).catch(() => {}); weeklyShare(W, collect); };
+    // ---- save automatically while typing; Submit when done; department heads save their comments the same way ----
+    let ST = W.state || null, timer = 0, dirty = false, last = null;
+    const canSave = () => !readOnly() && (ed || rvOk);
+    const stat = (t, bad) => { const e = $('#wst'); if (e) { e.textContent = t; e.style.color = bad ? 'var(--bad)' : ''; } };
+    const paintState = () => {
+      if (!canSave()) { stat(mode === 'review' && !rvOk ? 'Not submitted yet' : ''); return; }
+      stat(!ST ? 'Not saved yet' : ST.status === 'submitted' ? (ed ? 'Submitted ' + ago(ST.submitted_at || ST.updated_at) + ' · saved ' + ago(ST.updated_at) : 'Saved ' + ago(ST.updated_at)) : 'Draft saved ' + ago(ST.updated_at));
+      const b = $('#wsub'); if (b) { b.textContent = ST && ST.status === 'submitted' ? 'Submitted ✓' : 'Submit report'; b.disabled = !!(ST && ST.status === 'submitted'); } };
+    const payload = submit => ({ ...(last || collect()), user_id: +(W.owner_id || WK.user) || undefined, submit: !!submit });
+    async function save(submit) {
+      clearTimeout(timer); if (!canSave()) return null; const body = payload(submit); if (!body.rows.length && !submit && !ST) { dirty = false; paintState(); return null; }
+      stat('Saving…');
+      try { const r = await api('reports/weekly-save', { method: 'POST', data: body }); if (r.queued) { stat('Saved on this device, will sync when you are online'); dirty = false; return r; } ST = r.state; dirty = false; W.state = ST; paintState(); return r; }
+      catch (er) { stat('Not saved: ' + er.message, true); throw er; }
+    }
+    function schedule() { if (!canSave()) return; last = collect(); dirty = true; stat('Unsaved changes…'); clearTimeout(timer); timer = setTimeout(() => save(false).catch(() => {}), 1500); }
+    const sheet = $('.wr-sheet'); if (sheet && canSave()) { sheet.addEventListener('input', schedule); sheet.addEventListener('change', schedule); }
+    const bye = () => { if (dirty && canSave() && last) { try { fetch('api/reports/weekly-save', { method: 'POST', keepalive: true, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': S.csrf }, body: JSON.stringify(payload(false)) }); dirty = false; } catch {} } };
+    const vis = () => { if (document.hidden) bye(); };
+    if (WK.off) WK.off(); window.addEventListener('pagehide', bye); window.addEventListener('hashchange', bye, { once: true }); document.addEventListener('visibilitychange', vis);
+    WK.off = () => { window.removeEventListener('pagehide', bye); window.removeEventListener('hashchange', bye); document.removeEventListener('visibilitychange', vis); clearTimeout(timer); };
+    paintState();
+    const sbm = $('#wsub'); if (sbm) sbm.onclick = async () => {
+      if (!confirm('Submit this weekly report? Your department head will be notified. You can keep editing; changes are saved automatically.')) return; sbm.disabled = true;
+      try { last = collect(); if (!last.rows.length) { toast('Add at least one row before submitting'); paintState(); return; } const r = await save(true); if (r) toast(r.notified ? 'Submitted. ' + r.notified + ' department head' + (r.notified === 1 ? '' : 's') + ' notified.' : 'Submitted'); } catch (er) { toast(er.message); } paintState(); };
+    const svb = $('#wsv'); if (svb) svb.onclick = async () => { try { last = collect(); await save(false); toast('Comments saved'); } catch (er) { toast(er.message); } };
+    if (!saved) { const go = async () => { if (dirty) await save(false).catch(() => {}); X.render(); };
       $('#wdate').onchange = e => { WK.week = e.target.value; go(); }; $('#wprev').onclick = () => { WK.week = shiftWeek(W.week_start, -1); go(); }; $('#wnext').onclick = () => { WK.week = shiftWeek(W.week_start, 1); go(); };
       const wu = $('#wuser'); if (wu) wu.onchange = () => { WK.user = wu.value; go(); };
       // shared reports (kept off the sheet itself so they never print)
       try { const L = await api('reports/weekly-shared'); const row = (x, who) => '<a class="item" href="#/reports/weekly/' + x.id + '" style="color:inherit"><div class="grow"><b>' + esc(who) + '</b><div class="muted small">Week of ' + esc(fmtShort(x.week_start)) + (x.shared_by ? ' · shared by ' + esc(x.shared_by) : '') + (x.note ? ' — ' + esc(x.note) : '') + (x.shares != null ? ' · shared with ' + x.shares : '') + '</div></div><span class="muted">›</span></a>';
-        const blocks = [['Shared with me', L.with_me.map(x => row(x, x.employee))], ['Reports I shared', L.mine.filter(x => +x.shares).map(x => row(x, 'My report'))], ['Team reports', L.team.map(x => row(x, x.employee))]].filter(b => b[1].length);
+        const blocks = [['My weekly reports', L.mine.map(x => row(x, x.status === 'submitted' ? 'Submitted' : 'Draft'))], ['Shared with me', L.with_me.map(x => row(x, x.employee))], ['Submitted by my team', L.team.map(x => row(x, x.employee))]].filter(b => b[1].length);
         if (blocks.length) $('#wlists').innerHTML = '<div class="two" style="margin-top:18px">' + blocks.map(b => '<div class="card"><h2 style="margin-bottom:6px">' + b[0] + '</h2><div class="list">' + b[1].join('') + '</div></div>').join('') + '</div>'; } catch {}
     }
   }
@@ -320,7 +347,7 @@
     $$('[data-q]', m).forEach(c => c.onclick = () => { const set = c.dataset.q === 'heads' ? heads : c.dataset.q === 'top' ? top : team; c.classList.toggle('on'); $$('#shl input', m).forEach(i => { if (set.has(+i.value)) i.checked = c.classList.contains('on'); }); });
     $('#shgo', m).onclick = async e => {
       const ids = $$('#shl input:checked', m).map(i => +i.value); if (!ids.length) { $('#er', m).textContent = 'Choose at least one person'; return; } const b = e.target; b.disabled = true; $('#er', m).textContent = '';
-      try { const r = await api('reports/weekly-share', { method: 'POST', data: { ...collect(), user_id: +WK.user || undefined, user_ids: ids, note: $('#shn', m).value, email: $('#she', m).checked } }); m.close();
+      try { const r = await api('reports/weekly-share', { method: 'POST', data: { ...collect(), user_id: +(W.owner_id || WK.user) || undefined, user_ids: ids, note: $('#shn', m).value, email: $('#she', m).checked } }); m.close();
         toast('Shared with ' + r.shared.length + (r.shared.length === 1 ? ' person' : ' people') + ($('#she') === null && r.emailed ? ' · ' + r.emailed + ' emailed' : '') + (r.email_failed ? ' · ' + r.email_failed + ' email(s) could not be sent (check Campaigns → Settings)' : '')); X.render(); }
       catch (er) { $('#er', m).textContent = er.message; b.disabled = false; } };
   }

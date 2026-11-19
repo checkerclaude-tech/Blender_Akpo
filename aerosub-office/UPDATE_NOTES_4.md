@@ -30,3 +30,9 @@ Check its output: it must say `Root Admin account: dev.aaerosub@…`. If it says
   2. *Insight sends:* Insight posts `{"organizations": {"Acme Ltd": {"users": 120, "earnings": 5600.5}}}` to `/api/exec/ingest` with the key shown once when you save.
   Insight needs a small read-only summary endpoint (or the push call) that returns counts per organization and no personal records. If cron.php runs on your site, sources also refresh on schedule.
 * Needs HTTPS to the other platform. Run `/upgrade.php` once after unzipping.
+
+## Weekly reports: auto-save, Submit, and department-head review
+* **Auto-save:** everything typed on the weekly sheet is saved automatically (about 1.5 seconds after you stop, when you change week, and when you leave the page). Reopening the week brings back exactly what you wrote ("Rebuild from tasks" is available with `?fresh=1`). A status line shows "Draft saved…", "Submitted…" or "Unsaved changes…".
+* **Submit report:** when the week is done, press **Submit report**. The department head(s) of the person's department(s) get a notification with a link. After submitting you can still fix things; changes keep saving. Sharing a report also counts as submitting it.
+* **Department heads:** open "Submitted by my team" (or the notification), read the report, write **comments and the Management review** column (auto-saved, with a Save button), **share** it with others and download Excel/print. They cannot change the person's tasks, status or other cells, and the person is notified of the comments. The person's later edits never erase a management review.
+* **Privacy:** a draft is private to its owner. Heads and administrators see a report only after it is submitted (or shared with them). Founder accounts stay read-only.

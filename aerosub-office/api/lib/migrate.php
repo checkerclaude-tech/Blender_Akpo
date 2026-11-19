@@ -345,7 +345,8 @@ function migrate_weekly(): array {
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (weekly_id,user_id), KEY (user_id),
         FOREIGN KEY (weekly_id) REFERENCES weekly_reports(id) ON DELETE CASCADE, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
     ] as $q) db()->exec($q);
-    return ['Weekly report sharing ready.'];
+    if (!col_exists('weekly_reports', 'status')) { db()->exec("ALTER TABLE weekly_reports ADD COLUMN status ENUM('draft','submitted') NOT NULL DEFAULT 'draft', ADD COLUMN submitted_at DATETIME NULL"); db()->exec("UPDATE weekly_reports SET status='submitted', submitted_at=updated_at WHERE id IN (SELECT weekly_id FROM weekly_shares)"); }
+    return ['Weekly report sharing ready (drafts, submit, department-head review).'];
 }
 
 // Games: admin settings (who sees them, when they are open), matches and players. Safe to run repeatedly.
