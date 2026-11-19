@@ -36,5 +36,5 @@ if (one('SELECT id FROM users WHERE email=?', [$inv['email']])) fail('An account
 q('INSERT INTO users (name,email,password_hash,role,job_title,must_change_password) VALUES (?,?,?,?,?,0)', [$name, $inv['email'], password_hash($pw, PASSWORD_DEFAULT), $inv['role'], $inv['job_title']]);
 $nid = (int)db()->lastInsertId(); sync_user_depts($nid, ['department_ids' => array_filter(explode(',', (string)$inv['department_ids']))]);
 q('UPDATE invites SET used_at=NOW() WHERE id=?', [$inv['id']]); log_act($nid, 'joined_by_invite', $inv['email']);
-start_session(); session_regenerate_id(true); $_SESSION['uid'] = $nid; unset($_SESSION['csrf']); q('UPDATE users SET last_seen_at=NOW() WHERE id=?', [$nid]);
+start_session(); session_regenerate_id(true); $_SESSION['uid'] = $nid; unset($_SESSION['csrf']); remember_issue($nid); q('UPDATE users SET last_seen_at=NOW() WHERE id=?', [$nid]);
 out(['user' => me(), 'csrf' => csrf_token()], 201);

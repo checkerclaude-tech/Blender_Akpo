@@ -63,3 +63,9 @@ Check its output: it must say `Root Admin account: dev.aaerosub@…`. If it says
 
 ## Access: Edit or Read only
 * On the Root Admin's **Access** page each tab is now Default / **Edit** / **Read only** / Off. Read only means the person can open and use the tab (look, search, print, download, take courses, play games) but creating, changing or deleting is refused by the server, and a note is shown at the top of the tab.
+
+## Staying signed in (web and installed app)
+* People stay signed in for **48 hours after they last used the app**, and are asked to sign in again only after 48 hours of not opening it. Each use renews the 48 hours. The setting `'session_hours' => 48` can go in `api/config.php`; add `'session_absolute' => true` to count 48 hours from the moment of sign-in instead.
+* Two things carry it: a persistent session cookie and a remember-me token (stored hashed in the database, `HttpOnly`, `Secure` on https, `SameSite=Lax`, replaced with a new value every time it is used). If the phone or browser drops the session when the app is closed, the token signs the person straight back in.
+* Signing out removes it. Changing or resetting a password signs out every other device (the one you are on stays). A deactivated or archived account cannot be restored. A token that is replayed after it was already used wipes that person's tokens.
+* Run `/upgrade.php` once (adds the `remember_tokens` table).

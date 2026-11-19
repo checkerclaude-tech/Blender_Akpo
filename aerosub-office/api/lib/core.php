@@ -45,12 +45,52 @@ function body(): array {
     return $b;
 }
 
+/* ---- staying signed in (web and installed app) ----
+ * People stay signed in for 48 hours after they last used the app (config 'session_hours' changes it; 'session_absolute' => true counts from sign-in instead).
+ * Two things carry this: a persistent session cookie, and a "remember me" token (hashed in the database) that restores the session if the
+ * server dropped it or the phone/browser forgot the session cookie. The token is rotated on every restore and is removed on sign-out,
+ * on a password change or reset, and when the account is deactivated. */
+function remember_seconds(): int { return max(1, (int)(cfg('session_hours') ?: 48)) * 3600; }
+function remember_https(): bool { return (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https'; }
+function remember_cookie(?string $val): void {
+    if (headers_sent()) return;
+    setcookie('aero_rm', (string)$val, ['expires' => $val === null ? time() - 3600 : time() + remember_seconds(), 'path' => '/', 'secure' => remember_https(), 'httponly' => true, 'samesite' => 'Lax']);
+}
+function remember_issue(int $uid): void {
+    try {
+        $sel = bin2hex(random_bytes(12)); $val = bin2hex(random_bytes(32)); if (mt_rand(1, 20) === 1) q('DELETE FROM remember_tokens WHERE expires_at < ?', [date('Y-m-d H:i:s')]);
+        q('INSERT INTO remember_tokens (user_id,selector,validator_hash,expires_at,last_used,ua) VALUES (?,?,?,?,?,?)', [$uid, $sel, hash('sha256', $val), date('Y-m-d H:i:s', time() + remember_seconds()), date('Y-m-d H:i:s'), mb_substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 200)]);
+        remember_cookie($sel . '.' . $val);
+    } catch (Throwable $e) {}
+}
+/** Signs the person back in from the token, if it is valid. Returns the user id or null. */
+function remember_restore(): ?int {
+    $c = (string)($_COOKIE['aero_rm'] ?? ''); if (!preg_match('/^([a-f0-9]{24})\.([a-f0-9]{64})$/', $c, $m)) return null;
+    try {
+        $t = one('SELECT t.*,u.active FROM remember_tokens t JOIN users u ON u.id=t.user_id WHERE t.selector=?', [$m[1]]);
+        if (!$t || !hash_equals((string)$t['validator_hash'], hash('sha256', $m[2])) || strtotime((string)$t['expires_at']) < time() || !(int)$t['active']) { if ($t && !hash_equals((string)$t['validator_hash'], hash('sha256', $m[2]))) q('DELETE FROM remember_tokens WHERE user_id=?', [$t['user_id']]); remember_cookie(null); return null; }
+        $val = bin2hex(random_bytes(32)); q('UPDATE remember_tokens SET validator_hash=?, expires_at=?, last_used=? WHERE id=?', [hash('sha256', $val), date('Y-m-d H:i:s', time() + remember_seconds()), date('Y-m-d H:i:s'), $t['id']]); remember_cookie($m[1] . '.' . $val);
+        session_regenerate_id(true); $_SESSION['uid'] = (int)$t['user_id']; unset($_SESSION['csrf']); return (int)$t['user_id'];
+    } catch (Throwable $e) { return null; }
+}
+/** Keeps the 48 hours counting from the last use (at most once every 10 minutes). */
+function remember_touch(): void {
+    if (cfg('session_absolute')) return; $c = (string)($_COOKIE['aero_rm'] ?? ''); if (!preg_match('/^([a-f0-9]{24})\.([a-f0-9]{64})$/', $c, $m)) return;
+    try { $t = one('SELECT id,validator_hash,last_used FROM remember_tokens WHERE selector=?', [$m[1]]); if (!$t || !hash_equals((string)$t['validator_hash'], hash('sha256', $m[2])) || strtotime((string)$t['last_used']) > time() - 600) return;
+        q('UPDATE remember_tokens SET expires_at=?, last_used=? WHERE id=?', [date('Y-m-d H:i:s', time() + remember_seconds()), date('Y-m-d H:i:s'), $t['id']]); remember_cookie($c); } catch (Throwable $e) {}
+}
+/** This device only (sign-out), or every device of a person (password change, reset). */
+function remember_forget(?int $allOfUser = null): void {
+    try { if ($allOfUser) q('DELETE FROM remember_tokens WHERE user_id=?', [$allOfUser]); elseif (preg_match('/^([a-f0-9]{24})\./', (string)($_COOKIE['aero_rm'] ?? ''), $m)) q('DELETE FROM remember_tokens WHERE selector=?', [$m[1]]); } catch (Throwable $e) {}
+    remember_cookie(null);
+}
+
 function start_session(): void {
     if (session_status() === PHP_SESSION_ACTIVE) return;
     $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https';
     session_name('aeroffice');
-    session_set_cookie_params(['lifetime' => 0, 'path' => '/', 'secure' => $https, 'httponly' => true, 'samesite' => 'Lax']);
-    ini_set('session.gc_maxlifetime', (string)(60 * 60 * 24 * 14));
+    session_set_cookie_params(['lifetime' => remember_seconds(), 'path' => '/', 'secure' => $https, 'httponly' => true, 'samesite' => 'Lax']);   // a persistent cookie, renewed on every request
+    ini_set('session.gc_maxlifetime', (string)max(60 * 60 * 24 * 14, remember_seconds() * 2));
     session_start();
 }
 
@@ -166,13 +206,13 @@ function me(): ?array {
     static $u = false;
     if ($u !== false) return $u;
     start_session();
-    $id = $_SESSION['uid'] ?? null;
+    $id = $_SESSION['uid'] ?? null; if (!$id) $id = remember_restore();   // the server forgot the session (or the app was closed): the remember-me token brings the person back
     $u = $id ? one('SELECT u.id,u.name,u.email,u.role,u.department_id,u.job_title,u.must_change_password,d.name AS department
                     FROM users u LEFT JOIN departments d ON d.id=u.department_id WHERE u.id=? AND u.active=1', [$id]) : null;
     if ($u) { $u['department_ids'] = user_dept_ids((int)$u['id'], (int)($u['department_id'] ?? 0));
         $u['head_of'] = head_dept_ids((int)$u['id']); try { $u['is_root'] = (int)(one('SELECT is_root FROM users WHERE id=?', [$u['id']])['is_root'] ?? 0); } catch (Throwable $e) { $u['is_root'] = 0; } try { $ga = games_access($u); $u['games'] = $ga['visible']; $u['games_open'] = $ga['open']; } catch (Throwable $e) { $u['games'] = false; $u['games_open'] = false; } $u['campaigns'] = can_campaigns($u); $u['finance'] = can_finance($u); $u['tabs'] = tab_map($u); try { require_once __DIR__ . '/approvals.php'; $u['approvals'] = ap_pending_count((int)$u['id']); } catch (Throwable $e) { $u['approvals'] = 0; } $u['ro_tabs'] = array_values(array_filter(array_keys(tab_ro_map($u)), fn($k) => !empty($u['tabs'][$k])));
         $u['av'] = 0; try { $r0 = one('SELECT UNIX_TIMESTAMP(updated_at) t FROM user_avatars WHERE user_id=?', [$u['id']]); $u['av'] = $r0 ? (int)$r0['t'] : 0; } catch (Throwable $e) {} }
-    if ($id && !$u) { session_destroy(); }
+    if ($id && !$u) { session_destroy(); remember_forget(); } elseif ($u) remember_touch();
     return $u;
 }
 function need_user(): array { $u = me(); if (!$u) fail('Not signed in', 401); return $u; }

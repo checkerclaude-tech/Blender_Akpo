@@ -398,6 +398,13 @@ function migrate_privileges(): array {
     return $log;
 }
 
+// Staying signed in for 48 hours (web and installed app). Safe to run repeatedly.
+function migrate_remember(): array {
+    db()->exec("CREATE TABLE IF NOT EXISTS remember_tokens (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, user_id INT UNSIGNED NOT NULL, selector CHAR(24) NOT NULL, validator_hash CHAR(64) NOT NULL, expires_at DATETIME NOT NULL, last_used DATETIME NOT NULL,
+        ua VARCHAR(200) NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE KEY (selector), KEY (user_id), KEY (expires_at), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    return ['Staying signed in ready (48 hours after last use).'];
+}
+
 // Approval and signature chain for finance documents. Safe to run repeatedly.
 function migrate_approvals(): array {
     foreach ([

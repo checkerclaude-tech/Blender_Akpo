@@ -88,7 +88,7 @@ case 'login':
         fail('Incorrect email or password', 401);
     }
     start_session(); session_regenerate_id(true);
-    $_SESSION['uid'] = (int)$u['id']; unset($_SESSION['csrf']);
+    $_SESSION['uid'] = (int)$u['id']; unset($_SESSION['csrf']); remember_forget(); remember_issue((int)$u['id']);
     q('UPDATE users SET last_seen_at=NOW() WHERE id=?', [$u['id']]);
     log_act((int)$u['id'], 'login');
     out(['user' => me(), 'csrf' => csrf_token()]);
@@ -126,13 +126,13 @@ case 'reset':
     if ($method !== 'POST') fail('Not found', 404);
     $pw = (string)(body()['password'] ?? ''); if (strlen($pw) < 10) fail('Choose a password of at least 10 characters');
     q('UPDATE users SET password_hash=?, must_change_password=0 WHERE id=?', [password_hash($pw, PASSWORD_DEFAULT), $pr['user_id']]);
-    q('UPDATE password_resets SET used_at=NOW() WHERE user_id=?', [$pr['user_id']]);
+    q('UPDATE password_resets SET used_at=NOW() WHERE user_id=?', [$pr['user_id']]); remember_forget((int)$pr['user_id']);
     q('DELETE FROM login_attempts WHERE email=?', [strtolower($pr['email'])]);
     log_act((int)$pr['user_id'], 'password_reset_done');
     out(['ok' => true]);
 
 case 'logout':
-    start_session(); session_destroy(); out(['ok' => true]);
+    start_session(); remember_forget(); session_destroy(); out(['ok' => true]);
 
 case 'me':
     $u = me();
@@ -149,6 +149,7 @@ case 'password':
     $new = (string)($b['new'] ?? '');
     if (strlen($new) < 10) fail('New password must be at least 10 characters');
     q('UPDATE users SET password_hash=?, must_change_password=0 WHERE id=?', [password_hash($new, PASSWORD_DEFAULT), $u['id']]);
+    remember_forget((int)$u['id']); remember_issue((int)$u['id']);   // other devices are signed out; this one stays
     log_act((int)$u['id'], 'password_changed');
     out(['ok' => true]);
 
