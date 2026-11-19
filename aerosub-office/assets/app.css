@@ -192,3 +192,6 @@ html.nav-min .nav a .badge{position:absolute;top:0;right:-2px;margin:0;font-size
 html.nav-min .side .me{padding:6px;background:transparent}
 html.nav-min .side .me>span:not(.avatar){display:none}
 @media(max-width:860px){.side-toggle{display:none}}
+/* Sidebar menu: still scrolls (wheel, touch, keyboard) but the scrollbar is invisible, and scrolling is smooth */
+.nav{overflow-y:auto;scrollbar-width:none;-ms-overflow-style:none;scroll-behavior:smooth;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+.nav::-webkit-scrollbar{display:none;width:0;height:0}

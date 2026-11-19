@@ -1,7 +1,7 @@
 // Aerosub Office service worker: makes the app shell load offline. API calls are never cached here
 // (the app keeps its own per-user offline cache in the browser).
-const V = 'aero-office-v25';
-const SHELL = ['./', 'index.html', 'assets/app.css?v=21', 'assets/app.js?v=26', 'assets/icon.svg', 'assets/icon-192.png', 'manifest.webmanifest'];
+const V = 'aero-office-v26';
+const SHELL = ['./', 'index.html', 'assets/app.css?v=22', 'assets/app.js?v=26', 'assets/icon.svg', 'assets/icon-192.png', 'manifest.webmanifest'];
 
 self.addEventListener('install', e => { e.waitUntil(caches.open(V).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {
