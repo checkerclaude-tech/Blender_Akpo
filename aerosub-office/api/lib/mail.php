@@ -376,7 +376,7 @@ function build_message(array $o): string { // from, to[], cc[], subject, html, t
     $mix = 'mix_' . bin2hex(random_bytes(8));
     $body = "--$mix\r\nContent-Type: multipart/alternative; boundary=\"$alt\"\r\n\r\n" . $altBody;
     foreach ($o['attachments'] as $a) {
-        $fn = preg_replace('/[\r\n"\\\\\/]+/', '_', $a['name']) ?: 'attachment'; $type = preg_match('~^[a-z0-9.+-]+/[a-z0-9.+-]+$~i', $a['type']) ? $a['type'] : 'application/octet-stream';
+        $fn = preg_replace('/[\r\n"\\\\\/]+/', '_', $a['name']) ?: 'attachment'; $type = preg_match('~^[a-z0-9.+-]+/[a-z0-9.+-]+(;\s*[a-z0-9._-]+="?[a-z0-9._-]+"?)*$~i', $a['type']) ? $a['type'] : 'application/octet-stream';
         $body .= "--$mix\r\nContent-Type: $type; name=\"" . addcslashes(preg_replace('/[^\x20-\x7e]/', '_', $fn), '"\\') . "\"\r\nContent-Transfer-Encoding: base64\r\nContent-Disposition: attachment; filename=\"" . addcslashes(preg_replace('/[^\x20-\x7e]/', '_', $fn), '"\\') . "\"; filename*=UTF-8''" . rawurlencode($fn) . "\r\n\r\n" . $b64($a['data']);
     }
     $body .= "--$mix--\r\n";

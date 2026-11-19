@@ -398,6 +398,12 @@ function migrate_privileges(): array {
     return $log;
 }
 
+// Meetings: where they are, and a version number so calendar invites can be updated. Safe to run repeatedly.
+function migrate_meetings(): array {
+    foreach (['meeting_place' => 'VARCHAR(190) NULL', 'ics_seq' => 'INT UNSIGNED NOT NULL DEFAULT 0'] as $c => $def) if (!col_exists('tasks', $c)) db()->exec("ALTER TABLE tasks ADD COLUMN $c $def");
+    return ['Meetings ready (calendar invites).'];
+}
+
 // The work week: start day, end day, working days (set by the Super Admin). Safe to run repeatedly.
 function migrate_workweek(): array {
     db()->exec("CREATE TABLE IF NOT EXISTS work_settings (id TINYINT UNSIGNED PRIMARY KEY, week_start TINYINT UNSIGNED NOT NULL DEFAULT 1, week_end TINYINT UNSIGNED NOT NULL DEFAULT 5, work_days VARCHAR(20) NOT NULL DEFAULT '1,2,3,4,5') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");

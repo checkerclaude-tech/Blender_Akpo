@@ -8,5 +8,5 @@ require __DIR__ . '/api/lib/migrate_agent.php';
 header('Content-Type: text/plain; charset=utf-8');
 $u = me();
 if (!$u || $u['role'] !== 'super_admin') { http_response_code(403); exit("Sign in to the app as Super Admin first, then reload this page.\n"); }
-try { foreach (array_merge(migrate_pipeline(), migrate_mail(), migrate_depts(), migrate_campaigns(), migrate_learn(), migrate_market(), migrate_invites(), migrate_tasks2(), migrate_finance(), migrate_agent(), migrate_reports(), migrate_accounts(), migrate_templates(), migrate_courses(), migrate_weekly(), migrate_games(), migrate_privileges(), migrate_exec(), migrate_approvals(), migrate_remember(), migrate_workweek()) as $l) echo $l . "\n"; echo "\nUpgrade complete.\n"; }
+try { foreach (array_merge(migrate_pipeline(), migrate_mail(), migrate_depts(), migrate_campaigns(), migrate_learn(), migrate_market(), migrate_invites(), migrate_tasks2(), migrate_finance(), migrate_agent(), migrate_reports(), migrate_accounts(), migrate_templates(), migrate_courses(), migrate_weekly(), migrate_games(), migrate_privileges(), migrate_exec(), migrate_approvals(), migrate_remember(), migrate_workweek(), migrate_meetings()) as $l) echo $l . "\n"; echo "\nUpgrade complete.\n"; }
 catch (Throwable $e) { http_response_code(500); echo 'Upgrade failed: ' . $e->getMessage() . "\n"; }

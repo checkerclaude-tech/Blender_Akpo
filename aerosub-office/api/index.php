@@ -308,7 +308,7 @@ case 'tasks':
         if (!empty($_GET['meetings'])) { $where[] = "t.task_type='meeting' AND (t.assignee_id=? OR t.creator_id=? OR EXISTS(SELECT 1 FROM task_shares tm WHERE tm.task_id=t.id AND tm.user_id=?))"; array_push($p, $uid, $uid, $uid); }
         out(all("$sel WHERE " . implode(' AND ', $where) . " ORDER BY t.status='done', t.due_date IS NULL, t.due_date, FIELD(t.priority,'urgent','high','medium','low') LIMIT 500", $p));
     }
-    if ($method === 'GET' && $id && !in_array($sub, ['files', 'share', 'defer', 'updates', 'report', 'transfer'], true)) {
+    if ($method === 'GET' && $id && !in_array($sub, ['files', 'share', 'defer', 'updates', 'report', 'transfer', 'ics', 'ics-links'], true)) {
         [$w, $p] = $vis($u); $t = one("$sel WHERE t.id=? AND $w", array_merge([$id], $p)); if (!$t) fail('Not found', 404);
         $t['comments'] = all('SELECT c.id,c.body,c.created_at,u.name FROM task_comments c JOIN users u ON u.id=c.user_id WHERE c.task_id=? ORDER BY c.id', [$id]);
         $t['can_edit'] = $canEdit($t);
@@ -336,6 +336,10 @@ case 'tasks':
         $tid = (int)db()->lastInsertId();
         if ($assignee !== $uid) notify($assignee, 'task_assigned', 'New task: ' . $title, 'Assigned by ' . $u['name'], '#/tasks/' . $tid);
         log_act($uid, 'task_created', $title);
+        if ($ttype === 'meeting') {   // invite the people chosen (a whole department, heads included) and send calendar invites
+            require_once __DIR__ . '/lib/ics.php'; if (!empty($b['meeting_place'])) q('UPDATE tasks SET meeting_place=? WHERE id=?', [s($b['meeting_place'], 190), $tid]);
+            $mt = ics_task($tid); if ($mt) { ics_invite_people($mt, (array)($b['attendees'] ?? []), $u); $sent = ics_send($mt, ics_people($tid), $u, 'invite'); log_act($uid, 'meeting_invited', $title . ' (' . count(ics_people($tid)) . ' people)'); out(['ok' => true, 'id' => $tid, 'invited' => count(ics_people($tid)), 'emailed' => $sent], 201); }
+        }
         out(['ok' => true, 'id' => $tid], 201);
     }
     if ($id) {
@@ -348,6 +352,11 @@ case 'tasks':
             foreach (array_unique(array_filter([$t['assignee_id'], $t['creator_id']])) as $nid) if ((int)$nid !== $uid)
                 notify((int)$nid, 'task_comment', $u['name'] . ' commented on: ' . $t['title'], mb_substr($c, 0, 140), '#/tasks/' . $id);
             out(['ok' => true], 201);
+        }
+        if ($sub === 'ics' || $sub === 'ics-links') {
+            require_once __DIR__ . '/lib/ics.php'; $mt = ics_task($id); if (!$mt) fail('This is not a meeting', 400);
+            if ($sub === 'ics-links') out(ics_urls($id, $uid) + ['place' => $mt['meeting_place']]);
+            header('Content-Type: text/calendar; charset=utf-8'); header('Content-Disposition: attachment; filename="meeting-' . $id . '.ics"'); header('Cache-Control: no-store'); echo ics_for_task($mt, 'PUBLISH'); exit;
         }
         if ($method === 'PATCH') {
             $b = body(); $isAssignee = (int)$t['assignee_id'] === $uid; $full = $canEdit($t);
@@ -375,6 +384,7 @@ case 'tasks':
                 if (array_key_exists('task_type', $b)) $new['task_type'] = in((string)$b['task_type'], ['general', 'research', 'build', 'operations', 'field', 'rfq', 'meeting'], $t['task_type']);
                 if (array_key_exists('starts_at', $b)) { $new['starts_at'] = dt($b['starts_at']); $new['remind_sent'] = 0; }
                 if (array_key_exists('ends_at', $b)) $new['ends_at'] = dt($b['ends_at']);
+                if (array_key_exists('meeting_place', $b)) $new['meeting_place'] = s($b['meeting_place'], 190) ?: null;
                 if ($u['role'] === 'employee' && $new['assignee_id'] && (int)$new['assignee_id'] !== $uid && !manages_user($u, (int)$new['assignee_id'])) fail('Employees can only keep tasks assigned to themselves', 403);
             }
             $sets = []; $vals = [];
@@ -388,9 +398,18 @@ case 'tasks':
             }
             if (isset($new['assignee_id']) && (int)$new['assignee_id'] && (int)$new['assignee_id'] !== (int)$t['assignee_id'] && (int)$new['assignee_id'] !== $uid)
                 notify((int)$new['assignee_id'], 'task_assigned', 'Task assigned to you: ' . $t['title'], 'By ' . $u['name'], '#/tasks/' . $id);
+            // meetings: new people are invited, and a change of time, place or title (or cancelling) goes out as an updated calendar invite
+            $wasMeet = $t['task_type'] === 'meeting'; $isMeet = ($new['task_type'] ?? $t['task_type']) === 'meeting';
+            if ($isMeet) { require_once __DIR__ . '/lib/ics.php'; $mt = ics_task($id);
+                if ($mt) { $added = ics_invite_people($mt, (array)($b['attendees'] ?? []), $u); $cancel = $status === 'canceled' && $t['status'] !== 'canceled'; $moved = !$wasMeet || $mt['starts_at'] !== $t['starts_at'] || $mt['ends_at'] !== $t['ends_at'] || $mt['title'] !== $t['title'] || ($mt['meeting_place'] ?? null) !== ($t['meeting_place'] ?? null);
+                    if ($cancel || $moved || $added) { if ($cancel || $moved) { q('UPDATE tasks SET ics_seq=ics_seq+1 WHERE id=?', [$id]); $mt['ics_seq'] = (int)$mt['ics_seq'] + 1; }
+                        $to = ($moved || $cancel) ? ics_people($id) : $added; ics_send($mt, $to, $u, $cancel ? 'cancel' : (!$wasMeet ? 'invite' : ($moved ? 'update' : 'invite')));
+                        foreach ($to as $r) if ((int)$r['id'] !== $uid && ($moved || $cancel)) notify((int)$r['id'], 'meeting_update', ($cancel ? 'Meeting cancelled: ' : 'Meeting changed: ') . $mt['title'], 'Starts ' . date('D j M, H:i', strtotime($mt['starts_at'])), '#/tasks/' . $id); } } }
             out(['ok' => true]);
         }
-        if ($method === 'DELETE') { if (!$canEdit($t)) fail('Not allowed', 403); q('DELETE FROM tasks WHERE id=?', [$id]); log_act($uid, 'task_deleted', $t['title']); out(['ok' => true]); }
+        if ($method === 'DELETE') { if (!$canEdit($t)) fail('Not allowed', 403);
+            if ($t['task_type'] === 'meeting' && $t['starts_at'] && !in_array($t['status'], ['canceled', 'done', 'transferred'], true) && strtotime((string)$t['starts_at']) > time() - 3600) { require_once __DIR__ . '/lib/ics.php'; $mt = ics_task($id); if ($mt) { $mt['ics_seq'] = (int)$mt['ics_seq'] + 1; ics_send($mt, ics_people($id), $u, 'cancel'); } }   // tell everyone it is off
+            q('DELETE FROM tasks WHERE id=?', [$id]); log_act($uid, 'task_deleted', $t['title']); out(['ok' => true]); }
     }
     fail('Bad request', 404);
 
@@ -501,6 +520,10 @@ case 'access':
         out(['user' => ['id' => $id, 'name' => $t['name'], 'email' => $t['email'], 'role' => $t['role']], 'tabs' => $rows]);
     }
     fail('Bad request', 404);
+
+case 'ics':
+    require __DIR__ . '/lib/ics.php';   // personal calendar links: no sign-in (the calendar app cannot sign in); the link itself is the secret
+    break;
 
 case 'workweek':
     require __DIR__ . '/lib/workweek.php';
