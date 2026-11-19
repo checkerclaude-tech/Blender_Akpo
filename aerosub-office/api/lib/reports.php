@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__ . '/workweek.php';   // the Super Admin's work week: week start/end and working days
 // Daily task reports.
 //   GET    /api/reports/dashboard?date=&department=&user=   the report dashboard (scoped to what the signed-in person may see)
 //   GET    /api/reports?task=&user=&department=&from=&to=   report history
@@ -201,23 +202,27 @@ if ($method === 'GET' && $sub === 'dashboard') {
                    FROM report_shares rs JOIN daily_reports r ON r.id=rs.report_id JOIN tasks t ON t.id=r.task_id JOIN users u ON u.id=r.user_id LEFT JOIN users sb ON sb.id=rs.shared_by
                    WHERE rs.user_id=? ORDER BY rs.created_at DESC LIMIT 15', [$uid]);
 
-    $mine = 0; foreach ($tasks as $t) if ((int)$t['assignee_id'] === $uid && in_array($t['status'], RP_WORKING, true) && !isset($reported[(int)$t['id'] . ':' . $uid])) $mine++;
+    $isWork = ww_is_workday($date); if (!$isWork) { $missing = []; foreach ($people_rows as &$pr) $pr['expected'] = $pr['reported'] = 0; unset($pr); }   // nobody is expected to report on a day off
+    $wkFrom2 = $rangeMode ? $rfrom : date('Y-m-d', strtotime($date . ' -30 days')); $weeksIn = ww_weeks($wkFrom2, $date); $wsub = [];
+    $scopeIds = array_map('intval', array_column($people_rows, 'id')); if ($scopeIds && $weeksIn) foreach (all('SELECT user_id, SUM(status=\'submitted\') s, COUNT(*) n FROM weekly_reports WHERE kind=\'personal\' AND user_id IN (' . implode(',', $scopeIds) . ') AND week_start IN (' . implode(',', array_fill(0, count($weeksIn), '?')) . ') GROUP BY user_id', $weeksIn) as $r0) $wsub[(int)$r0['user_id']] = $r0;
+    foreach ($people_rows as &$pr) { $pr['weeks'] = ['submitted' => (int)($wsub[$pr['id']]['s'] ?? 0), 'saved' => (int)($wsub[$pr['id']]['n'] ?? 0)]; } unset($pr);
+    $mine = 0; foreach ($tasks as $t) if ((int)$t['assignee_id'] === $uid && in_array($t['status'], RP_WORKING, true) && !isset($reported[(int)$t['id'] . ':' . $uid])) $mine++; if (!$isWork) $mine = 0;
     out(['date' => $date, 'today' => $today, 'scope' => $global ? 'all' : ($managed ? 'department' : 'own'), 'review' => $review, 'read_only' => $ro,
          'departments' => $depts, 'people' => $people, 'filter' => ['department' => $fd, 'user' => $fu],
          'perf' => tab_access($u, 'performance'), 'counts' => $counts, 'reports' => $reports, 'missing' => array_slice($missing, 0, 100), 'missing_total' => count($missing), 'people_rows' => $people_rows,
          'trend' => $trend, 'shared' => $shared, 'my_missing' => $mine, 'weekly_items' => $wkItems, 'range' => ['mode' => $rangeMode, 'from' => $rangeMode ? $rfrom : date('Y-m-d', strtotime($date . ' -30 days')), 'to' => $date],
-         'filter_more' => ['q' => $qs, 'priority' => $prio, 'source' => $source],
+         'filter_more' => ['q' => $qs, 'priority' => $prio, 'source' => $source], 'week' => ww_out(), 'work_day' => $isWork, 'weeks' => count($weeksIn),
          'totals' => ['reports' => count($reports), 'expected' => array_sum(array_column($people_rows, 'expected')), 'missing' => count($missing)]]);
 }
 
 /* ---------- weekly report (the ASL-HR-WR-001 "Team weekly report" sheet) ---------- */
 const RP_LEGEND = ['lost' => ['NIL/LOST', 'FF0000'], 'view' => ['IN VIEW/AWAITING/REVIEW STATE', 'FFC000'], 'done' => ['AWARDED/DELIVERED/CLOSED OUT', '92D050']];
 const RP_LEGEND_SHORT = ['lost' => 'Lost', 'view' => 'In view', 'done' => 'Delivered'];
-function rp_week_start(string $any): string { $t = strtotime($any) ?: time(); return date('Y-m-d', strtotime('monday this week', $t)); }
+require_once __DIR__ . '/workweek.php';   // rp_week_start(), rp_week_end(), working days: the Super Admin sets the work week
 function rp_can_see_person(array $u, int $pid): bool { return rp_global($u) || $pid === (int)$u['id'] || rp_heads_user($u, $pid); }
 
 function rp_weekly_rows(int $pid, string $mon): array {
-    $fri = date('Y-m-d', strtotime($mon . ' +4 days')); $sun = date('Y-m-d', strtotime($mon . ' +6 days'));
+    $fri = rp_week_end($mon); $sun = date('Y-m-d', strtotime($mon . ' +6 days'));
     $tasks = all("SELECT t.id,t.title,t.status,t.due_date,t.task_type,t.status_reason,t.updated_at,t.completed_at,co.name AS company,p.name AS project,d.name AS department
                   FROM tasks t LEFT JOIN companies co ON co.id=t.company_id LEFT JOIN projects p ON p.id=t.project_id LEFT JOIN departments d ON d.id=t.department_id
                   WHERE t.assignee_id=? AND (t.status IN ('in_progress','blocked') OR t.updated_at BETWEEN ? AND ? OR t.completed_at BETWEEN ? AND ? OR EXISTS (SELECT 1 FROM daily_reports r WHERE r.task_id=t.id AND r.user_id=? AND r.report_date BETWEEN ? AND ?))
@@ -253,7 +258,7 @@ function rp_weekly_rows(int $pid, string $mon): array {
 if ($method === 'GET' && $sub === 'weekly' && !(isset($seg[2]) && ctype_digit($seg[2]))) {
     $pid = (int)($_GET['user'] ?? $uid) ?: $uid; if (!rp_can_see_person($u, $pid)) fail('Not allowed', 403);
     $emp = one('SELECT id,name,job_title FROM users WHERE id=?', [$pid]); if (!$emp) fail('Not found', 404);
-    $mon = rp_week_start((string)(d($_GET['week'] ?? null) ?: $today)); $fri = date('Y-m-d', strtotime($mon . ' +4 days')); $sun = date('Y-m-d', strtotime($mon . ' +6 days'));
+    $mon = rp_week_start((string)(d($_GET['week'] ?? null) ?: $today)); $fri = rp_week_end($mon); $sun = date('Y-m-d', strtotime($mon . ' +6 days'));
     $rows = rp_weekly_rows($pid, $mon);
     $Wout = (['code' => 'ASL-HR-WR-001', 'rev' => 'Rev 01', 'employee' => $emp['name'], 'designation' => (string)$emp['job_title'], 'week_start' => $mon, 'week_end' => $fri, 'date' => $fri, 'rows' => array_map(function ($r) { unset($r['changed']); return $r; }, $rows),
          'people' => rp_global($u) ? all("SELECT id,name FROM users WHERE active=1 AND role<>'founder' ORDER BY name") : (rp_heads($u) ? all('SELECT id,name FROM users WHERE active=1 AND id IN ' . rp_member_sql(rp_heads($u)) . ' ORDER BY name') : [['id' => $uid, 'name' => $u['name']]]),
@@ -336,7 +341,7 @@ if ($method === 'GET' && ($seg[1] ?? '') === 'weekly' && isset($seg[2]) && ctype
     $row = one('SELECT * FROM weekly_reports WHERE id=?', [(int)$seg[2]]); if (!$row || !rp_weekly_access($u, $row)) fail('Not found', 404);
     $c = json_decode((string)$row['data'], true) ?: [];
     $sh = one('SELECT s.note,s.created_at,sb.name AS shared_by FROM weekly_shares s LEFT JOIN users sb ON sb.id=s.shared_by WHERE s.weekly_id=? AND s.user_id=?', [$row['id'], $uid]);
-    out($c + ['kind' => $row['kind'], 'people' => [], 'legend' => rp_legend_out(), 'week_end' => date('Y-m-d', strtotime($row['week_start'] . ' +4 days')), 'mode' => $ro ? 'view' : ((int)$row['user_id'] === $uid ? 'owner' : ((rp_global($u) || rp_heads_user($u, (int)$row['user_id'])) ? 'review' : 'view')), 'owner_id' => (int)$row['user_id'], 'state' => ['id' => (int)$row['id'], 'status' => $row['status'], 'updated_at' => $row['updated_at'], 'submitted_at' => $row['submitted_at']],
+    out($c + ['kind' => $row['kind'], 'people' => [], 'legend' => rp_legend_out(), 'week_end' => rp_week_end($row['week_start']), 'mode' => $ro ? 'view' : ((int)$row['user_id'] === $uid ? 'owner' : ((rp_global($u) || rp_heads_user($u, (int)$row['user_id'])) ? 'review' : 'view')), 'owner_id' => (int)$row['user_id'], 'state' => ['id' => (int)$row['id'], 'status' => $row['status'], 'updated_at' => $row['updated_at'], 'submitted_at' => $row['submitted_at']],
         'saved' => ['id' => (int)$row['id'], 'owner_id' => (int)$row['user_id'], 'status' => $row['status'], 'submitted_at' => $row['submitted_at'], 'updated_at' => $row['updated_at'], 'shared_by' => $sh['shared_by'] ?? null, 'note' => $sh['note'] ?? null,
         'recipients' => all('SELECT u.name FROM weekly_shares s JOIN users u ON u.id=s.user_id WHERE s.weekly_id=? ORDER BY u.name', [$row['id']])]]);
 }
@@ -363,7 +368,7 @@ if ($method === 'POST' && $sub === 'weekly-combine') {
     $b = body(); $week = rp_week_start((string)(d($b['week'] ?? null) ?: $today)); $ids = array_values(array_unique(array_filter(array_map('intval', (array)($b['user_ids'] ?? [])))));
     if (!$ids) fail('Choose at least one person'); if (count($ids) > 40) fail('Choose 40 people or fewer');
     $allowed = array_column(rp_combine_people($u, $week), 'id'); foreach ($ids as $x) if (!in_array($x, $allowed, true)) fail('You can only combine reports of people in your departments', 403);
-    $mon = $week; $fri = date('Y-m-d', strtotime($mon . ' +4 days')); $rows = []; $names = [];
+    $mon = $week; $fri = rp_week_end($mon); $rows = []; $names = [];
     foreach (all('SELECT id,name FROM users WHERE id IN (' . implode(',', $ids) . ') ORDER BY name') as $m) {
         $sv = one("SELECT data FROM weekly_reports WHERE user_id=? AND week_start=? AND kind='personal'", [$m['id'], $mon]); $mr = null;
         if ($sv) { $cc = json_decode((string)$sv['data'], true); if (is_array($cc) && !empty($cc['rows'])) $mr = $cc['rows']; }
@@ -502,11 +507,13 @@ if ($method === 'GET' && $sub === 'performance') {
     $seen = []; foreach (all("SELECT user_id,data FROM weekly_reports WHERE kind='personal' AND user_id IN ($in) AND week_start BETWEEN ? AND ? ORDER BY week_start", [date('Y-m-d', strtotime($from . ' -6 days')), $to]) as $r) {
         $c = json_decode((string)$r['data'], true); foreach ((array)($c['rows'] ?? []) as $x) { $tt = mb_strtolower(trim((string)($x['task'] ?? ''))); if ($tt === '' || isset($titles[(int)$r['user_id']][$tt])) continue; $seen[(int)$r['user_id']][$tt] = (string)($x['status'] ?? 'view'); } }
     $wk = []; foreach ($seen as $uid2 => $items) { $w = ['done' => 0, 'view' => 0, 'lost' => 0]; foreach ($items as $st) { $k = array_key_exists($st, $w) ? $st : 'view'; $w[$k]++; } $wk[$uid2] = $w; }
-    $work = 0; for ($t = strtotime($from); $t <= strtotime($to); $t += 86400) if ((int)date('N', $t) <= 5) $work++; $work = max(1, $work);
-    $rows = []; $tot = ['reports' => 0, 'done' => 0, 'hours' => 0.0, 'blocked' => 0, 'late' => 0, 'wk_done' => 0, 'wk_view' => 0, 'wk_lost' => 0];
+    $work = max(1, ww_workdays($from, $to)); $weeksIn = ww_weeks($from, $to);   // working days and weeks in the period (set by the Super Admin)
+    $wkSub = []; if ($ids && $weeksIn) foreach (all("SELECT user_id, SUM(status='submitted') s, COUNT(*) n FROM weekly_reports WHERE kind='personal' AND user_id IN ($in) AND week_start IN (" . implode(',', array_fill(0, count($weeksIn), '?')) . ') GROUP BY user_id', $weeksIn) as $r0) $wkSub[(int)$r0['user_id']] = $r0;
+    $rows = []; $tot = ['reports' => 0, 'done' => 0, 'hours' => 0.0, 'blocked' => 0, 'late' => 0, 'wk_done' => 0, 'wk_view' => 0, 'wk_lost' => 0, 'weeks_submitted' => 0];
     foreach ($people as $p) { $i = (int)$p['id']; $r = $rep[$i] ?? null; $d = $dn[$i] ?? null; $o = $op[$i] ?? null;
         $row = ['id' => $i, 'name' => $p['name'], 'reports' => (int)($r['n'] ?? 0), 'days_reported' => (int)($r['dd'] ?? 0), 'consistency' => round(min(1, (int)($r['dd'] ?? 0) / $work) * 100), 'hours' => round((float)($r['h'] ?? 0), 1), 'avg_progress' => (int)round((float)($r['pr'] ?? 0)),
                 'done' => (int)($d['n'] ?? 0), 'on_time' => isset($d['n']) && (int)$d['n'] ? (int)round(((int)$d['ontime']) * 100 / (int)$d['n']) : null, 'todo' => (int)($o['todo'] ?? 0), 'in_progress' => (int)($o['prog'] ?? 0), 'blocked' => (int)($o['blk'] ?? 0), 'deferred' => (int)($o['def'] ?? 0), 'late' => (int)($o['late'] ?? 0)];
+        $row['weeks_submitted'] = (int)($wkSub[$i]['s'] ?? 0); $row['weeks_saved'] = (int)($wkSub[$i]['n'] ?? 0); $tot['weeks_submitted'] += $row['weeks_submitted'];
         $w = $wk[$i] ?? ['done' => 0, 'view' => 0, 'lost' => 0]; $row['wk'] = $w; $row['wk_total'] = $w['done'] + $w['view'] + $w['lost']; $row['done'] += $w['done']; $row['in_progress'] += $w['view'];
         $tot['wk_done'] += $w['done']; $tot['wk_view'] += $w['view']; $tot['wk_lost'] += $w['lost'];
         $tot['reports'] += $row['reports']; $tot['done'] += $row['done']; $tot['hours'] += $row['hours']; $tot['blocked'] += $row['blocked']; $tot['late'] += $row['late']; $rows[] = $row; }
@@ -515,7 +522,7 @@ if ($method === 'GET' && $sub === 'performance') {
     $series = []; for ($t = strtotime($from); $t <= strtotime($to); $t += 86400) { $k = date('Y-m-d', $t); $series[] = ['date' => $k, 'reports' => (int)($byDay[$k] ?? 0), 'done' => (int)($dDay[$k] ?? 0)]; }
     $status = array_map('intval', one("SELECT COALESCE(SUM(status='todo'),0) todo, COALESCE(SUM(status='in_progress'),0) in_progress, COALESCE(SUM(status='blocked'),0) blocked, COALESCE(SUM(status='deferred'),0) deferred, COALESCE(SUM(status='canceled' AND updated_at >= ?),0) canceled, COALESCE(SUM(status='done' AND completed_at >= ?),0) done, COALESCE(SUM(status='transferred' AND updated_at >= ?),0) transferred FROM tasks WHERE assignee_id IN ($in)", [$from . ' 00:00:00', $from . ' 00:00:00', $from . ' 00:00:00']) ?: []);
     $status['done'] += $tot['wk_done']; $status['in_progress'] += $tot['wk_view']; $status['canceled'] += $tot['wk_lost'];
-    out(['days' => $days, 'from' => $from, 'to' => $to, 'workdays' => $work, 'departments' => $depts, 'department' => $fd, 'people' => $rows, 'series' => $series, 'status' => $status, 'totals' => $tot]);
+    out(['days' => $days, 'from' => $from, 'to' => $to, 'workdays' => $work, 'weeks' => count($weeksIn), 'week' => ww_out(), 'departments' => $depts, 'department' => $fd, 'people' => $rows, 'series' => $series, 'status' => $status, 'totals' => $tot]);
 }
 
 /* ---------- history ---------- */

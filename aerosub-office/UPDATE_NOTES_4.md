@@ -75,3 +75,9 @@ Check its output: it must say `Root Admin account: dev.aaerosub@…`. If it says
 * **Department heads see it per member:** the People table has a new "Weekly" column (delivered ✓ / in view ⏳ / lost ✗) for every member, and the person filter shows one member's tasks, daily reports and weekly items. Heads can see members' saved weekly reports, including drafts. Staff see only their own.
 * **New controls on Reports:** time range (a single day, last 7 or 30 days, this week, this month, or a custom from–to range), a **search** box (tasks, reports, people, weekly items), and filters for department, person, priority and "Tasks only / Weekly report items only", with a "Clear filters" button. The daily activity chart follows the range.
 * **Team performance** also has a custom date range (up to a year) and a people search.
+
+## Work week (set by the Super Admin) and counting weeks
+* **Admin → Work week** (Super Admin or Root Admin): choose the day a week **starts**, the day it **ends**, and which days are **working days** (for example Sunday to Thursday with Sun–Thu as working days). Until it is changed it is Monday to Friday.
+* It drives: the weekly report's week (start and end dates), "This week" in the Reports range selector, combined team reports, the number of working days used for reporting consistency, and who is expected to report on a given day (nobody is expected, and nothing is listed as "not reported", on a day off).
+* **Weeks are counted:** Reports and Team performance show the number of weeks in the chosen period, and for every member how many weekly reports they submitted ("Weeks": 3 / 4). 
+* Reports already saved keep the week they were written for; the new week applies from now on. Run `/upgrade.php` once (adds the setting).

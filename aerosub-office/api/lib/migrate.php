@@ -398,6 +398,13 @@ function migrate_privileges(): array {
     return $log;
 }
 
+// The work week: start day, end day, working days (set by the Super Admin). Safe to run repeatedly.
+function migrate_workweek(): array {
+    db()->exec("CREATE TABLE IF NOT EXISTS work_settings (id TINYINT UNSIGNED PRIMARY KEY, week_start TINYINT UNSIGNED NOT NULL DEFAULT 1, week_end TINYINT UNSIGNED NOT NULL DEFAULT 5, work_days VARCHAR(20) NOT NULL DEFAULT '1,2,3,4,5') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    db()->exec("INSERT IGNORE INTO work_settings (id,week_start,week_end,work_days) VALUES (1,1,5,'1,2,3,4,5')");
+    return ['Work week ready (Monday to Friday until a Super Admin changes it in Admin).'];
+}
+
 // Staying signed in for 48 hours (web and installed app). Safe to run repeatedly.
 function migrate_remember(): array {
     db()->exec("CREATE TABLE IF NOT EXISTS remember_tokens (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, user_id INT UNSIGNED NOT NULL, selector CHAR(24) NOT NULL, validator_hash CHAR(64) NOT NULL, expires_at DATETIME NOT NULL, last_used DATETIME NOT NULL,

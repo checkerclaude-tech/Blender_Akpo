@@ -53,7 +53,7 @@
   const RANGES = [['day', 'A single day'], ['7', 'Last 7 days'], ['30', 'Last 30 days'], ['week', 'This week'], ['month', 'This month'], ['custom', 'Custom range']];
   const isoD = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   function rangeFor(mode, t0) { const t = dayOf(t0); if (mode === '7') return { from: shiftDay(t0, -6), to: t0 }; if (mode === '30') return { from: shiftDay(t0, -29), to: t0 };
-    if (mode === 'week') { const k = (t.getDay() + 6) % 7; return { from: shiftDay(t0, -k), to: t0 }; } if (mode === 'month') return { from: isoD(new Date(t.getFullYear(), t.getMonth(), 1)), to: t0 };
+    if (mode === 'week') { const k = ((t.getDay() || 7) - ((RP.weekCfg && RP.weekCfg.week_start) || 1) + 7) % 7; return { from: shiftDay(t0, -k), to: t0 }; } if (mode === 'month') return { from: isoD(new Date(t.getFullYear(), t.getMonth(), 1)), to: t0 };
     return { from: RP.from || shiftDay(t0, -6), to: RP.to || t0 }; }
 
   views.reports = async () => {
@@ -65,7 +65,7 @@
     if (RP.mode === 'day') { if (RP.date) q.set('date', RP.date); } else { const rg = rangeFor(RP.mode, t0); q.set('date', rg.to); q.set('from', rg.from); }
     if (RP.dept) q.set('department', RP.dept); if (RP.user) q.set('user', RP.user); if (RP.q) q.set('q', RP.q); if (RP.pri) q.set('priority', RP.pri); if (RP.src) q.set('source', RP.src);
     const D = await api('reports/dashboard?' + q.toString());
-    RP.today = D.today; if (RP.mode === 'day') RP.date = D.date === D.today ? '' : D.date; RP.dept = D.filter.department || ''; RP.user = D.filter.user || '';
+    RP.weekCfg = D.week; RP.today = D.today; if (RP.mode === 'day') RP.date = D.date === D.today ? '' : D.date; RP.dept = D.filter.department || ''; RP.user = D.filter.user || '';
     const isToday = D.date === D.today && RP.mode === 'day', ro = readOnly(), inRange = RP.mode !== 'day', anyFilter = !!(RP.q || RP.dept || RP.user || RP.pri || RP.src);
     const scopeTxt = D.scope === 'all' ? 'Every department' : D.scope === 'department' ? (D.departments.map(d => d.name).join(', ') || 'Your department') : 'Your own tasks and reports shared with you';
     const people = D.people || [];
@@ -86,14 +86,14 @@
       (D.my_missing && isToday && !ro ? '<div class="banner" style="background:#fff4dd;color:#8a5a00"><span>You have <b>' + D.my_missing + '</b> task' + (D.my_missing > 1 ? 's' : '') + ' in progress with no report today.</span><button class="btn sm right" id="rpnew2">Report now</button></div>' : '') +
       '<div class="rp-cards" id="rpcards">' + CARD_ORDER.map(k => '<button class="rp-card ' + k + (RP.status === k ? ' on' : '') + '" data-st="' + k + '"><span class="small">' + SL[k] + '</span><b>' + (D.counts[k] || 0) + '</b></button>').join('') +
       (D.counts.blocked ? '<button class="rp-card blocked' + (RP.status === 'blocked' ? ' on' : '') + '" data-st="blocked"><span class="small">Blocked</span><b>' + D.counts.blocked + '</b></button>' : '') + '</div>' +
-      '<div class="muted small rp-note">Open and not-yet-started counts show tasks as they stand now. Completed, canceled and transferred cover ' + esc(fmtShort(D.range.from)) + ' to ' + esc(fmtShort(D.range.to)) + '. Items written in weekly reports (Delivered, In view, Lost) are counted too' + (D.weekly_items.length ? ' (' + D.weekly_items.length + ' item' + (D.weekly_items.length === 1 ? '' : 's') + ')' : '') + '. Tap a card to list them.</div>' +
+      '<div class="muted small rp-note">Open and not-yet-started counts show tasks as they stand now. Completed, canceled and transferred cover ' + esc(fmtShort(D.range.from)) + ' to ' + esc(fmtShort(D.range.to)) + '. ' + D.weeks + ' week' + (D.weeks === 1 ? '' : 's') + ' in this period (a week runs ' + esc(D.week.labels.start) + ' to ' + esc(D.week.labels.end) + '). Items written in weekly reports (Delivered, In view, Lost) are counted too' + (D.weekly_items.length ? ' (' + D.weekly_items.length + ' item' + (D.weekly_items.length === 1 ? '' : 's') + ')' : '') + '. Tap a card to list them.</div>' +
       '<div id="rptasks"></div>' +
       '<div class="two rp-main"><div class="col">' +
       '<div class="card"><div class="row"><h2>' + (inRange ? 'Reports from ' + esc(fmtShort(D.range.from)) + ' to ' + esc(fmtShort(D.range.to)) : isToday ? "Today's reports" : 'Reports for ' + esc(fmtDay(D.date))) + '</h2><span class="muted small right">' + D.totals.reports + ' report' + (D.totals.reports === 1 ? '' : 's') + '</span></div><div class="rp-feed" id="rpfeed"></div></div>' +
-      '<div class="card"><h2>Not reported yet</h2><div class="muted small">Tasks marked Open / ongoing or Blocked that have no report on ' + esc(fmtShort(D.date)) + '.</div><div class="list" id="rpmiss"></div></div>' +
+      '<div class="card"><h2>Not reported yet</h2><div class="muted small">Tasks marked Open / ongoing or Blocked that have no report on ' + esc(fmtShort(D.date)) + '.' + (D.work_day ? '' : ' <b>' + esc(fmtShort(D.date)) + ' is not a working day, so nobody is expected to report.</b>') + '</div><div class="list" id="rpmiss"></div></div>' +
       '</div><div class="col">' +
       '<div class="card"><h2>' + (inRange ? 'Daily activity' : 'Last 7 days') + '</h2><div class="rp-trend" id="rptrend"></div><div class="rp-legend"><span><i class="a"></i>Reports</span><span><i class="b"></i>Tasks completed</span></div></div>' +
-      (D.review ? '<div class="card"><h2>People</h2><div class="tablewrap"><table class="rp-people"><thead><tr><th>Name</th><th title="Open / ongoing">Open</th><th title="Not yet started">New</th><th title="Completed in the chosen range">Done</th><th title="Items in weekly reports: delivered / in view / lost">Weekly</th><th title="Reports received / reports expected">Reported</th></tr></thead><tbody id="rppeople"></tbody></table></div></div>' : '') +
+      (D.review ? '<div class="card"><h2>People</h2><div class="tablewrap"><table class="rp-people"><thead><tr><th>Name</th><th title="Open / ongoing">Open</th><th title="Not yet started">New</th><th title="Completed in the chosen range">Done</th><th title="Items in weekly reports: delivered / in view / lost">Weekly</th><th title="Weekly reports submitted / weeks in the period">Weeks</th><th title="Reports received / reports expected">Reported</th></tr></thead><tbody id="rppeople"></tbody></table></div></div>' : '') +
       (D.shared.length ? '<div class="card"><h2>Shared with me</h2><div class="list" id="rpshared"></div></div>' : '') +
       '</div></div>';
 
@@ -121,9 +121,9 @@
 
     // people
     if (D.review) $('#rppeople').innerHTML = D.people_rows.length ? D.people_rows.map(p =>
-      '<tr class="rp-prow" data-user="' + p.id + '"><td><b>' + esc(p.name) + '</b></td><td>' + p.counts.in_progress + (p.counts.blocked ? ' <span class="tag blocked">' + p.counts.blocked + ' blocked</span>' : '') + '</td><td>' + p.counts.todo + '</td><td>' + p.counts.done + '</td><td>' + ((p.wk && (p.wk.done + p.wk.view + p.wk.lost)) ? '<span title="Delivered / in view / lost">' + p.wk.done + ' ✓ · ' + p.wk.view + ' ⏳ · ' + p.wk.lost + ' ✗</span>' : '<span class="muted">—</span>') + '</td><td>' +
+      '<tr class="rp-prow" data-user="' + p.id + '"><td><b>' + esc(p.name) + '</b></td><td>' + p.counts.in_progress + (p.counts.blocked ? ' <span class="tag blocked">' + p.counts.blocked + ' blocked</span>' : '') + '</td><td>' + p.counts.todo + '</td><td>' + p.counts.done + '</td><td>' + ((p.wk && (p.wk.done + p.wk.view + p.wk.lost)) ? '<span title="Delivered / in view / lost">' + p.wk.done + ' ✓ · ' + p.wk.view + ' ⏳ · ' + p.wk.lost + ' ✗</span>' : '<span class="muted">—</span>') + '</td><td>' + (p.weeks ? '<span class="tag ' + (p.weeks.submitted >= D.weeks ? 'done' : p.weeks.submitted ? 'deferred' : 'blocked') + '">' + p.weeks.submitted + ' / ' + D.weeks + '</span>' : '<span class="muted">—</span>') + '</td><td>' +
       (p.expected ? '<span class="tag ' + (p.reported >= p.expected ? 'done' : p.reported ? 'deferred' : 'blocked') + '">' + p.reported + ' / ' + p.expected + '</span>' : '<span class="muted">—</span>') + '</td></tr>').join('')
-      : '<tr><td colspan="6" class="muted">Nothing here.</td></tr>';
+      : '<tr><td colspan="7" class="muted">Nothing here.</td></tr>';
 
     // shared
     if (D.shared.length) $('#rpshared').innerHTML = D.shared.map(s => '<div class="item" data-rep="' + s.id + '"><div class="grow"><b>' + esc(s.task_title) + '</b><div class="muted small">' + esc(s.user_name) + ' · ' + esc(fmtShort(s.report_date)) + ' · shared by ' + esc(s.shared_by || '—') + (s.note ? ' — ' + esc(s.note) : '') + '</div></div>' + tag(s.status) + '</div>').join('');

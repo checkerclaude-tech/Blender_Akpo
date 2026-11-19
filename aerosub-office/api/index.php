@@ -502,6 +502,10 @@ case 'access':
     }
     fail('Bad request', 404);
 
+case 'workweek':
+    require __DIR__ . '/lib/workweek.php';
+    break;
+
 case 'push':
     require __DIR__ . '/lib/push.php';
     break;
