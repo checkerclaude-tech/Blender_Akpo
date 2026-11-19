@@ -16,6 +16,7 @@ function tx_save_file(int $tid, int $uid, array $a): int {
     try { return task_store_file($tid, $uid, (string)($a['name'] ?? 'file'), (string)($a['type'] ?? ''), $data); } catch (RuntimeException $e) { fail($e->getMessage()); }
 }
 
+require_once __DIR__ . '/accounts.php';
 /* ======== sub-resources of one task ======== */
 if (isset($t) && isset($id) && $seg[0] === 'tasks') {
     $b = $method === 'GET' ? [] : body(); $fid = isset($seg[3]) && ctype_digit($seg[3]) ? (int)$seg[3] : 0;
@@ -35,13 +36,29 @@ if (isset($t) && isset($id) && $seg[0] === 'tasks') {
     }
     if ($sub === 'share') {
         if ($ro) fail('Founder accounts are read-only', 403);
-        if ($method === 'POST') { $ids = array_values(array_unique(array_filter(array_map('intval', (array)($b['user_ids'] ?? []))))); if (!$ids) fail('Choose at least one person'); $names = []; $emails = [];
+        if ($method === 'POST') { $ids = array_values(array_unique(array_filter(array_map('intval', (array)($b['user_ids'] ?? []))))); if (!$ids) fail('Choose at least one person'); $names = []; $people = [];
+            $note = tx_str($b['note'] ?? '', 8000); $links = []; foreach (array_slice((array)($b['links'] ?? []), 0, 10) as $l) { $l = tx_url($l); if ($l !== '') $links[] = $l; }
+            $fileIds = []; $mailFiles = []; $bytes = 0;     // pictures and documents attached to the message are also kept on the task
+            foreach (array_slice((array)($b['files'] ?? []), 0, 8) as $f) { if (!is_array($f)) continue; $raw = base64_decode((string)($f['data'] ?? ''), true); if ($raw === false) continue; $bytes += strlen($raw); if ($bytes > 14 * 1048576) fail('The attachments are larger than 14 MB together');
+                $fileIds[] = tx_save_file($id, $uid, $f); $mailFiles[] = ['name' => (string)($f['name'] ?? 'file'), 'type' => (string)($f['type'] ?? 'application/octet-stream'), 'data' => $raw]; }
+            $link = (function () use ($id) { require_once __DIR__ . '/campcore.php'; return camp_base() . '/#/tasks/' . $id; })();
             foreach ($ids as $x) { if ($x === $uid) continue; $r = one('SELECT id,name,email FROM users WHERE id=? AND active=1', [$x]); if (!$r) continue;
                 $new = q('INSERT IGNORE INTO task_shares (task_id,user_id,shared_by) VALUES (?,?,?)', [$id, $x, $uid])->rowCount();
-                if ($new) notify($x, $t['task_type'] === 'meeting' ? 'meeting_invite' : 'task_shared', ($t['task_type'] === 'meeting' ? 'Meeting invitation: ' : $u['name'] . ' shared a task with you: ') . $t['title'], $t['starts_at'] ? 'Starts ' . date('D j M, H:i', strtotime($t['starts_at'])) : tx_str($b['note'] ?? '', 140), '#/tasks/' . $id);
-                $names[] = $r['name']; $emails[$x] = $r['email']; }
-            q('INSERT INTO task_updates (task_id,user_id,kind,data) VALUES (?,?,?,?)', [$id, $uid, 'share', tx_json(['with' => $names, 'note' => tx_str($b['note'] ?? '', 500)])]);
-            out(['ok' => true, 'shared' => $names, 'emails' => (object)$emails]); }
+                if ($new || $note !== '' || $links || $fileIds) notify($x, $t['task_type'] === 'meeting' ? 'meeting_invite' : 'task_shared', ($t['task_type'] === 'meeting' ? 'Meeting invitation: ' : $u['name'] . ' shared a task with you: ') . $t['title'], $t['starts_at'] ? 'Starts ' . date('D j M, H:i', strtotime($t['starts_at'])) : mb_substr(preg_replace('/\s+/', ' ', $note), 0, 140), '#/tasks/' . $id);
+                $names[] = $r['name']; $people[] = $r; }
+            q('INSERT INTO task_updates (task_id,user_id,kind,data) VALUES (?,?,?,?)', [$id, $uid, 'share', tx_json(['with' => $names, 'note' => $note, 'links' => $links, 'files' => $fileIds])]);
+            $emailed = 0;
+            if (!empty($b['email'])) {      // e-mail shows the sender's real name (the address is the office no-reply one; replying goes to the sender) and links to the task. They also get the notification above.
+                $e = fn($v) => htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8'); $meet = $t['task_type'] === 'meeting';
+                $rows = ''; foreach ([['Status', $t['status']], ['Priority', $t['priority']], ['Due', $t['due_date']], ['Starts', $t['starts_at']]] as [$k, $v]) if ($v) $rows .= '<tr><td style="padding:2px 14px 2px 0;color:#667"><b>' . $k . '</b></td><td>' . $e($v) . '</td></tr>';
+                $ls = $links ? '<p><b>Links</b></p><ul>' . implode('', array_map(fn($l) => '<li><a href="' . $e($l) . '">' . $e($l) . '</a></li>', $links)) . '</ul>' : '';
+                $fs = $mailFiles ? '<p><b>Attached</b>: ' . implode(', ', array_map(fn($f) => $e($f['name']), $mailFiles)) . '</p>' : '';
+                foreach ($people as $r) { if (!filter_var($r['email'], FILTER_VALIDATE_EMAIL)) continue;
+                    $html = '<p>Hello ' . $e($r['name']) . ',</p><p><b>' . $e($u['name']) . '</b> shared ' . ($meet ? 'a meeting' : 'a task') . ' with you on Aerosub Office:</p><p style="font-size:16px"><b>' . $e($t['title']) . '</b></p>' . ($note !== '' ? '<div style="white-space:pre-wrap;border-left:3px solid #ccd;padding:6px 12px;margin:10px 0">' . $e($note) . '</div>' : '') . $ls . $fs . ($rows ? '<table>' . $rows . '</table>' : '') .
+                            '<p><a href="' . $e($link) . '" style="background:#0A6EA8;color:#fff;padding:9px 16px;border-radius:6px;text-decoration:none">Open it in Aerosub Office</a></p><p style="color:#778;font-size:12px">' . $e($u['name']) . ' used Aerosub Office to send this. Replies go to them. You also have a notification in the app.</p>';
+                    $text = 'Hello ' . $r['name'] . ",\n\n" . $u['name'] . ' shared ' . ($meet ? 'a meeting' : 'a task') . " with you: " . $t['title'] . "\n\n" . ($note !== '' ? $note . "\n\n" : '') . ($links ? "Links:\n" . implode("\n", $links) . "\n\n" : '') . 'Open it: ' . $link . "\n";
+                    if (acct_send_mail($r['email'], ($meet ? 'Meeting: ' : 'Task: ') . $t['title'], $html, $text, $mailFiles, ['from_name' => $u['name'], 'reply_to' => $u['email']])) $emailed++; } }
+            out(['ok' => true, 'shared' => $names, 'emailed' => $emailed, 'files' => count($fileIds)]); }
         if ($method === 'DELETE' && $fid) { if (!$full && $fid !== $uid) fail('Not allowed', 403); q('DELETE FROM task_shares WHERE task_id=? AND user_id=?', [$id, $fid]); out(['ok' => true]); }
         fail('Bad request', 400);
     }

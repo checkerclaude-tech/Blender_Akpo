@@ -374,9 +374,10 @@ function migrate_games(): array {
 // Root Admin, per-person tab privileges, personal documents. Safe to run repeatedly.
 function migrate_privileges(): array {
     $log = [];
+    if (!col_exists('user_access', 'readonly') && one("SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='user_access'")) { db()->exec('ALTER TABLE user_access ADD COLUMN readonly TINYINT(1) NOT NULL DEFAULT 0'); $log[] = 'Access: Edit / Read only added.'; }
     if (!col_exists('users', 'is_root')) { db()->exec('ALTER TABLE users ADD COLUMN is_root TINYINT(1) NOT NULL DEFAULT 0'); $log[] = 'Users: Root Admin flag added.'; }
     foreach ([
-    "CREATE TABLE IF NOT EXISTS user_access (user_id INT UNSIGNED NOT NULL, tab VARCHAR(30) NOT NULL, allowed TINYINT(1) NOT NULL, set_by INT UNSIGNED NULL, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    "CREATE TABLE IF NOT EXISTS user_access (user_id INT UNSIGNED NOT NULL, tab VARCHAR(30) NOT NULL, allowed TINYINT(1) NOT NULL, readonly TINYINT(1) NOT NULL DEFAULT 0, set_by INT UNSIGNED NULL, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         PRIMARY KEY (user_id,tab), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
     "CREATE TABLE IF NOT EXISTS vault_items (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, user_id INT UNSIGNED NOT NULL, kind ENUM('file','note','link') NOT NULL, title VARCHAR(200) NOT NULL, folder VARCHAR(80) NULL,
         name VARCHAR(190) NULL, mime VARCHAR(100) NULL, size INT UNSIGNED NOT NULL DEFAULT 0, path VARCHAR(64) NULL, body TEXT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -395,6 +396,22 @@ function migrate_privileges(): array {
     } else $log[] = 'Root Admin: ' . one('SELECT email FROM users WHERE is_root=1 LIMIT 1')['email'];
     $log[] = 'Privileges and personal documents ready.';
     return $log;
+}
+
+// Approval and signature chain for finance documents. Safe to run repeatedly.
+function migrate_approvals(): array {
+    foreach ([
+    "CREATE TABLE IF NOT EXISTS user_signatures (user_id INT UNSIGNED PRIMARY KEY, image MEDIUMTEXT NOT NULL, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    "CREATE TABLE IF NOT EXISTS doc_approvals (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, doc_id INT UNSIGNED NOT NULL, status ENUM('in_review','awaiting_sign','signed','reverted','canceled') NOT NULL, created_by INT UNSIGNED NOT NULL, content_hash CHAR(64) NOT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, closed_at DATETIME NULL, KEY (doc_id), FOREIGN KEY (doc_id) REFERENCES fin_docs(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    "CREATE TABLE IF NOT EXISTS doc_approval_steps (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, approval_id INT UNSIGNED NOT NULL, position TINYINT UNSIGNED NOT NULL, kind ENUM('review','sign') NOT NULL, user_id INT UNSIGNED NOT NULL,
+        status ENUM('pending','approved','signed','reverted') NOT NULL DEFAULT 'pending', acted_at DATETIME NULL, comment VARCHAR(1000) NULL, signature MEDIUMTEXT NULL, sig_hash CHAR(64) NULL, KEY (approval_id), KEY (user_id,status),
+        FOREIGN KEY (approval_id) REFERENCES doc_approvals(id) ON DELETE CASCADE, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    "CREATE TABLE IF NOT EXISTS doc_approval_events (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, approval_id INT UNSIGNED NOT NULL, user_id INT UNSIGNED NULL, action VARCHAR(30) NOT NULL, comment VARCHAR(1000) NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        KEY (approval_id), FOREIGN KEY (approval_id) REFERENCES doc_approvals(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    ] as $q) db()->exec($q);
+    foreach (['approval_status' => 'VARCHAR(20) NULL', 'approval_id' => 'INT UNSIGNED NULL', 'signed_at' => 'DATETIME NULL'] as $c => $def) if (!col_exists('fin_docs', $c)) db()->exec("ALTER TABLE fin_docs ADD COLUMN $c $def");
+    return ['Approvals and signatures ready (Review > Request signature > Sign).'];
 }
 
 // Executive dashboard (numbers from other apps such as Insight). Safe to run repeatedly.

@@ -273,7 +273,7 @@
       (!saved ? '<div class="rp-filters noprint"><div class="row"><button class="btn ghost sm" id="wprev" aria-label="Previous week">‹</button><input type="date" id="wdate" value="' + esc(W.week_start) + '" aria-label="Any day in the week"><button class="btn ghost sm" id="wnext" aria-label="Next week">›</button></div>' + (W.people.length > 1 ? '<select id="wuser" aria-label="Person">' + W.people.map(p => opt(p.id, p.name, WK.user)).join('') + '</select>' : '') + '</div>' : '') +
       '<div class="wr-sheet print-ok"><div class="wr-band"><img src="assets/img/aerosub-logo.png" alt="Aerosub" data-rm="1"><span class="wr-code"><b>' + esc(W.code) + '</b><span>' + esc(W.rev) + '</span></span></div>' +
       '<div class="wr-head"><div class="wr-title">TEAM WEEKLY REPORT</div><div class="wr-meta"><div><b>Employee name</b><span class="wr-edit"' + (ed ? ' contenteditable="true"' : '') + ' id="wname">' + esc(W.employee) + '</span></div><div><b>Date</b><span class="wr-edit"' + (ed ? ' contenteditable="true"' : '') + ' id="wdt">' + esc(dateTxt) + '</span></div></div></div>' +
-      '<table class="wr-t"><thead><tr><th>SN</th><th>Client/Category</th><th>Project</th><th>Task</th><th>Status</th><th>Outstanding</th><th>Suggestion/Comment</th><th>Management review</th>' + (ed ? '<th class="noprint"></th>' : '') + '</tr></thead><tbody id="wbody">' + W.rows.map((r, n) => '<tr>' + rowHtml(r, n) + '</tr>').join('') + '</tbody></table>' +
+      '<table class="wr-t"><thead><tr><th>SN</th><th>Client/Category</th><th>Project</th><th>Task</th><th>Status</th><th>Outstanding</th><th>Suggestion/Comment</th><th>Management review</th>' + (ed ? '<th class="noprint"></th>' : '') + '</tr></thead><tbody id="wbody">' + W.rows.map((r, n) => '<tr data-tid="' + (+r.task_id || 0) + '">' + rowHtml(r, n) + '</tr>').join('') + '</tbody></table>' +
       (ed ? '<div class="row noprint" style="margin:8px 0"><button class="btn ghost sm" id="wadd">+ Add row</button></div>' : '') +
       '<div class="wr-foot"><table class="wr-leg"><tr><th colspan="2">**LEGEND**</th></tr>' + legend.map(l => '<tr><td style="background:#' + l.color + '"></td><td>' + esc(l.label) + '</td></tr>').join('') + '</table>' +
       '<table class="wr-leg"><tr><td>Reported by:</td><td class="wr-edit"' + (ed ? ' contenteditable="true"' : '') + ' id="wby">' + esc(W.employee) + '</td></tr><tr><td>Designation:</td><td class="wr-edit"' + (ed ? ' contenteditable="true"' : '') + ' id="wdes">' + esc(W.designation) + '</td></tr></table></div></div>' +
@@ -284,8 +284,9 @@
     $$('#wbody tr').forEach(wire);
     const add = $('#wadd'); if (add) add.onclick = () => { const tr = document.createElement('tr'); tr.innerHTML = rowHtml({ status: 'view' }, body.children.length); body.appendChild(tr); wire(tr); tr.querySelector('.wr-edit').focus(); schedule(); };
     const T = c => c.innerText.replace(/ /g, ' ').trim();
+    const rowObj = tr => { const o = { task_id: +tr.dataset.tid || 0 }; $$('[data-k]', tr).forEach(c => { o[c.dataset.k] = c.tagName === 'SELECT' ? c.value : T(c); }); return o; }, hasRow = r => r.client || r.project || r.task || r.outstanding || r.comment || r.review;
     const collect = () => ({ code: W.code, rev: W.rev, employee: T($('#wname')), designation: T($('#wdes')), date: W.date, date_text: T($('#wdt')), week_start: W.week_start,
-      rows: $$('#wbody tr').map(tr => { const o = {}; $$('[data-k]', tr).forEach(c => { o[c.dataset.k] = c.tagName === 'SELECT' ? c.value : T(c); }); return o; }).filter(r => r.client || r.project || r.task || r.outstanding || r.comment || r.review) });
+      rows: $$('#wbody tr').map(rowObj).filter(hasRow) });
     const by = $('#wby'); if (by && ed) by.oninput = () => { $('#wname').textContent = T(by); };
     $('#wxl').onclick = async e => { const b = e.target; b.disabled = true;
       try { const res = await fetch('api/reports/weekly-xlsx', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': S.csrf }, body: JSON.stringify(collect()) });
@@ -317,7 +318,7 @@
     async function save(submit) {
       clearTimeout(timer); if (!canSave()) return null; const body = payload(submit); if (!body.rows.length && !submit && !ST) { dirty = false; paintState(); return null; }
       stat('Saving…');
-      try { const r = await api('reports/weekly-save', { method: 'POST', data: body }); if (r.queued) { stat('Saved on this device, will sync when you are online'); dirty = false; return r; } ST = r.state; dirty = false; W.state = ST; paintState(); return r; }
+      try { const r = await api('reports/weekly-save', { method: 'POST', data: body }); if (r.queued) { stat('Saved on this device, will sync when you are online'); dirty = false; return r; } ST = r.state; dirty = false; W.state = ST; if (r.row_task_ids) $$('#wbody tr').filter(tr => hasRow(rowObj(tr))).forEach((tr, i) => { if (r.row_task_ids[i]) tr.dataset.tid = r.row_task_ids[i]; }); paintState(); if (r.tasks_created) toast(r.tasks_created + ' new task' + (r.tasks_created === 1 ? '' : 's') + ' added to your task list'); return r; }
       catch (er) { stat('Not saved: ' + er.message, true); throw er; }
     }
     function schedule() { if (!canSave()) return; last = collect(); dirty = true; stat('Unsaved changes…'); clearTimeout(timer); timer = setTimeout(() => save(false).catch(() => {}), 1500); }
@@ -329,7 +330,7 @@
     paintState();
     const sbm = $('#wsub'); if (sbm) sbm.onclick = async () => {
       if (!confirm('Submit this weekly report? Your department head will be notified. You can keep editing; changes are saved automatically.')) return; sbm.disabled = true;
-      try { last = collect(); if (!last.rows.length) { toast('Add at least one row before submitting'); paintState(); return; } const r = await save(true); if (r) toast(r.notified ? 'Submitted. ' + r.notified + ' department head' + (r.notified === 1 ? '' : 's') + ' notified.' : 'Submitted'); } catch (er) { toast(er.message); } paintState(); };
+      try { last = collect(); if (!last.rows.length) { toast('Add at least one row before submitting'); paintState(); return; } const r = await save(true); if (r && r.tasks_created) toast(r.tasks_created + ' task' + (r.tasks_created === 1 ? '' : 's') + ' from this report added to your tasks'); if (r) toast(r.notified ? 'Submitted. ' + r.notified + ' department head' + (r.notified === 1 ? '' : 's') + ' notified.' : 'Submitted'); } catch (er) { toast(er.message); } paintState(); };
     const svb = $('#wsv'); if (svb) svb.onclick = async () => { try { last = collect(); await save(false); toast('Comments saved'); } catch (er) { toast(er.message); } };
     if (!saved) { const go = async () => { if (dirty) await save(false).catch(() => {}); X.render(); };
       $('#wdate').onchange = e => { WK.week = e.target.value; go(); }; $('#wprev').onclick = () => { WK.week = shiftWeek(W.week_start, -1); go(); }; $('#wnext').onclick = () => { WK.week = shiftWeek(W.week_start, 1); go(); };

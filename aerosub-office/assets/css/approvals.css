@@ -1,0 +1,19 @@
+/* Approvals and signatures */
+.ap-card{margin:0 0 14px}
+.ap-chain{display:grid;gap:6px}
+.ap-step{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line);border-radius:12px;background:var(--card)}
+.ap-step.cur{border-color:var(--fill,#0095D9);box-shadow:0 0 0 2px rgba(0,149,217,.15)}
+.ap-step.approved,.ap-step.signed{background:rgba(31,166,122,.08)}.ap-step.reverted{background:rgba(200,69,63,.08)}
+.ap-ic{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:var(--mist);font-size:14px;flex:none;color:var(--ink)}
+.ap-step.approved .ap-ic,.ap-step.signed .ap-ic{background:var(--ok);color:#fff}.ap-step.reverted .ap-ic{background:#C62840;color:#fff}.ap-step.cur .ap-ic{background:var(--fill,#0095D9);color:#fff}
+.sg-box{border:1px dashed var(--line);border-radius:12px;background:#fff;padding:6px;text-align:center}
+.sg-canvas{width:100%;height:auto;aspect-ratio:900/260;border:1px dashed var(--line);border-radius:12px;background:#fff;cursor:crosshair;display:block}
+.sg-box .sg-canvas{border:0}
+/* the signature on the printed document */
+.ap-line{position:relative}
+.ap-imgs{display:inline-flex;gap:3mm;align-items:flex-end}
+.ap-line .ap-imgs{position:absolute;left:2mm;bottom:.5mm}
+.ap-img{height:11mm;max-width:46mm;object-fit:contain;display:block}
+.ap-cap{font-size:8px;font-weight:400;line-height:1.35;color:#333;margin-top:1.5mm}
+.ap-block{margin:8mm 0 0;break-inside:avoid;border-top:1px solid #ccc;padding-top:3mm}
+@media print{.ap-card{display:none!important}.ap-imgs,.ap-img,.ap-cap,.ap-block{visibility:visible}}

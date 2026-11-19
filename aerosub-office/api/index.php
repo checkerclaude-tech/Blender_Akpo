@@ -19,6 +19,13 @@ if ($method !== 'GET' && $method !== 'OPTIONS' && !($r === 'login' || $r === 'in
 $GATED = ['campaigns' => 'campaigns', 'mail' => 'mail', 'learn' => 'learn', 'courses' => 'learn', 'companies' => 'pipeline', 'contacts' => 'pipeline', 'pipeline' => 'pipeline', 'competitors' => 'competition', 'trade-events' => 'events',
           'snapshot' => 'team', 'documents' => 'documents', 'reports' => 'reports', 'myfiles' => 'myfiles'];
 if (isset($GATED[$r])) { $gu = me(); if ($gu && !tab_access($gu, $GATED[$r])) fail('You do not have access to this section', 403); }
+// "Read only" (set by the Root Admin): the person may open and use the tab (look, search, print, take a course, play) but every change is refused here.
+$WRITE_TAB = ['campaigns' => 'campaigns', 'mail' => 'mail', 'learn' => 'learn', 'courses' => 'learn', 'companies' => 'pipeline', 'contacts' => 'pipeline', 'pipeline' => 'pipeline', 'competitors' => 'competition', 'trade-events' => 'events', 'events' => 'schedule',
+              'finance' => 'finance', 'catalog' => 'products', 'news' => 'news', 'research' => 'research', 'projects' => 'projects', 'reports' => 'reports', 'myfiles' => 'myfiles', 'games' => 'games', 'snapshot' => 'team', 'documents' => 'documents', 'exec' => 'executive'];
+if ($method !== 'GET' && $method !== 'OPTIONS' && isset($WRITE_TAB[$r])) { $wu = me();
+    if ($wu && tab_readonly($wu, $WRITE_TAB[$r])) {
+        $use = ($r === 'courses' && in_array($seg[2] ?? '', ['start', 'attempts'], true)) || ($r === 'games' && ($seg[1] ?? '') !== 'settings') || ($r === 'reports' && ($seg[1] ?? '') === 'weekly-xlsx') || ($r === 'finance' && ($seg[1] ?? '') === 'signature') || ($r === 'finance' && ($seg[3] ?? '') === 'approval' && ($seg[4] ?? '') === 'act');
+        if (!$use) fail('Your access to ' . TAB_DEFS[$WRITE_TAB[$r]][0] . ' is read-only: you can open and use it but not change it', 403); } }
 try {
 switch ($r) {
 
@@ -482,14 +489,14 @@ case 'access':
             if ($t['is_root']) fail('The Root Admin can always open everything', 400); $b = body(); $in = (array)($b['tabs'] ?? []);
             foreach ($in as $k => $v) { if (!isset(TAB_DEFS[$k]) || !TAB_DEFS[$k][1]) continue;
                 if ($v === null || $v === '' || $v === 'default') q('DELETE FROM user_access WHERE user_id=? AND tab=?', [$id, $k]);
-                else q('INSERT INTO user_access (user_id,tab,allowed,set_by) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE allowed=VALUES(allowed), set_by=VALUES(set_by)', [$id, $k, $v ? 1 : 0, $ru['id']]); }
-            log_act((int)$ru['id'], 'access_changed', $t['email'] . ': ' . implode(', ', array_map(fn($k) => $k . '=' . (($in[$k] === null || $in[$k] === 'default') ? 'default' : ($in[$k] ? 'on' : 'off')), array_keys($in))));
+                else q('INSERT INTO user_access (user_id,tab,allowed,readonly,set_by) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE allowed=VALUES(allowed), readonly=VALUES(readonly), set_by=VALUES(set_by)', [$id, $k, $v ? 1 : 0, $v === 'view' ? 1 : 0, $ru['id']]); }
+            log_act((int)$ru['id'], 'access_changed', $t['email'] . ': ' . implode(', ', array_map(fn($k) => $k . '=' . (($in[$k] === null || $in[$k] === 'default') ? 'default' : ($in[$k] === 'view' ? 'read only' : ($in[$k] ? 'edit' : 'off'))), array_keys($in))));
             notify($id, 'access', 'Your access was updated', 'The Root Admin changed which sections you can open. Refresh the page to see the new menu.', '#/home');
             out(['ok' => true]);
         }
-        $target = $t; $ov = tab_overrides($t); $rows = [];
+        $target = $t; $ov = tab_overrides($t); $rom = tab_ro_map($t); $rows = [];
         foreach (TAB_DEFS as $k => [$label, $grant]) { if (!$grant) continue; $def = tab_default($t, $k); if ($k === 'myfiles' && $t['role'] === 'super_admin') $def = false;
-            $rows[] = ['key' => $k, 'label' => $label, 'default' => $def, 'override' => array_key_exists($k, $ov) ? $ov[$k] : null, 'effective' => tab_access($t, $k), 'locked' => $k === 'myfiles' && $t['role'] === 'super_admin']; }
+            $rows[] = ['key' => $k, 'label' => $label, 'default' => $def, 'override' => array_key_exists($k, $ov) ? (!empty($rom[$k]) ? 'view' : $ov[$k]) : null, 'effective' => tab_access($t, $k), 'read_only' => tab_access($t, $k) && !empty($rom[$k]), 'locked' => $k === 'myfiles' && $t['role'] === 'super_admin']; }
         out(['user' => ['id' => $id, 'name' => $t['name'], 'email' => $t['email'], 'role' => $t['role']], 'tabs' => $rows]);
     }
     fail('Bad request', 404);

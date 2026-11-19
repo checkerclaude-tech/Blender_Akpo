@@ -192,10 +192,10 @@ function rp_can_see_person(array $u, int $pid): bool { return rp_global($u) || $
 
 function rp_weekly_rows(int $pid, string $mon): array {
     $fri = date('Y-m-d', strtotime($mon . ' +4 days')); $sun = date('Y-m-d', strtotime($mon . ' +6 days'));
-    $tasks = all("SELECT t.id,t.title,t.status,t.due_date,t.task_type,t.status_reason,co.name AS company,p.name AS project,d.name AS department
+    $tasks = all("SELECT t.id,t.title,t.status,t.due_date,t.task_type,t.status_reason,t.updated_at,t.completed_at,co.name AS company,p.name AS project,d.name AS department
                   FROM tasks t LEFT JOIN companies co ON co.id=t.company_id LEFT JOIN projects p ON p.id=t.project_id LEFT JOIN departments d ON d.id=t.department_id
-                  WHERE t.assignee_id=? AND (t.status IN ('in_progress','blocked') OR t.updated_at BETWEEN ? AND ? OR EXISTS (SELECT 1 FROM daily_reports r WHERE r.task_id=t.id AND r.user_id=? AND r.report_date BETWEEN ? AND ?))
-                  ORDER BY co.name IS NULL, co.name, t.id LIMIT 80", [$pid, $mon . ' 00:00:00', $sun . ' 23:59:59', $pid, $mon, $fri]);
+                  WHERE t.assignee_id=? AND (t.status IN ('in_progress','blocked') OR t.updated_at BETWEEN ? AND ? OR t.completed_at BETWEEN ? AND ? OR EXISTS (SELECT 1 FROM daily_reports r WHERE r.task_id=t.id AND r.user_id=? AND r.report_date BETWEEN ? AND ?))
+                  ORDER BY co.name IS NULL, co.name, t.id LIMIT 80", [$pid, $mon . ' 00:00:00', $sun . ' 23:59:59', $mon . ' 00:00:00', $sun . ' 23:59:59', $pid, $mon, $fri]);
     $reps = []; foreach (all('SELECT task_id,report_date,status,progress,summary,blockers FROM daily_reports WHERE user_id=? AND report_date BETWEEN ? AND ? ORDER BY report_date', [$pid, $mon, $fri]) as $x) $reps[(int)$x['task_id']][] = $x;
     $rows = [];
     foreach ($tasks as $i => $t) {
@@ -210,8 +210,16 @@ function rp_weekly_rows(int $pid, string $mon): array {
         } elseif ($st === 'transferred') $out_[] = 'Transferred' . ($t['status_reason'] ? ': ' . $t['status_reason'] : '');
         elseif ($st === 'canceled' && $t['status_reason']) $out_[] = 'Canceled: ' . $t['status_reason'];
         $cm = array_map(fn($x) => date('D', strtotime($x['report_date'])) . ': ' . $x['summary'], $rs);
-        $rows[] = ['sn' => $i + 1, 'client' => $t['company'] ?: ($t['department'] ?: ''), 'project' => (string)$t['project'], 'task' => $t['title'], 'status' => $cls,
+        $rows[] = ['sn' => $i + 1, 'task_id' => (int)$t['id'], 'changed' => (string)($t['completed_at'] ?: $t['updated_at']), 'client' => $t['company'] ?: ($t['department'] ?: ''), 'project' => (string)$t['project'], 'task' => $t['title'], 'status' => $cls,
                    'outstanding' => mb_substr(implode(' · ', $out_), 0, 600), 'comment' => mb_substr(implode("\n", $cm), 0, 1500), 'review' => ''];
+    }
+    // tasks this person gave to other people that were completed this week are part of the week too
+    $have = array_column($rows, 'task_id');
+    foreach (all("SELECT t.id,t.title,t.completed_at,co.name AS company,p.name AS project,d.name AS department,a.name AS assignee FROM tasks t LEFT JOIN companies co ON co.id=t.company_id LEFT JOIN projects p ON p.id=t.project_id LEFT JOIN departments d ON d.id=t.department_id LEFT JOIN users a ON a.id=t.assignee_id
+                  WHERE t.creator_id=? AND t.assignee_id<>? AND t.status='done' AND t.completed_at BETWEEN ? AND ? ORDER BY t.completed_at LIMIT 40", [$pid, $pid, $mon . ' 00:00:00', $sun . ' 23:59:59']) as $t) {
+        if (in_array((int)$t['id'], $have, true)) continue;
+        $rows[] = ['sn' => count($rows) + 1, 'task_id' => (int)$t['id'], 'changed' => (string)$t['completed_at'], 'client' => $t['company'] ?: ($t['department'] ?: ''), 'project' => (string)$t['project'], 'task' => $t['title'], 'status' => 'done',
+                   'outstanding' => 'Assigned to ' . $t['assignee'] . ' · delivered ' . date('j M', strtotime($t['completed_at'])), 'comment' => '', 'review' => ''];
     }
     return $rows;
 }
@@ -221,7 +229,7 @@ if ($method === 'GET' && $sub === 'weekly' && !(isset($seg[2]) && ctype_digit($s
     $emp = one('SELECT id,name,job_title FROM users WHERE id=?', [$pid]); if (!$emp) fail('Not found', 404);
     $mon = rp_week_start((string)(d($_GET['week'] ?? null) ?: $today)); $fri = date('Y-m-d', strtotime($mon . ' +4 days')); $sun = date('Y-m-d', strtotime($mon . ' +6 days'));
     $rows = rp_weekly_rows($pid, $mon);
-    $Wout = (['code' => 'ASL-HR-WR-001', 'rev' => 'Rev 01', 'employee' => $emp['name'], 'designation' => (string)$emp['job_title'], 'week_start' => $mon, 'week_end' => $fri, 'date' => $fri, 'rows' => $rows,
+    $Wout = (['code' => 'ASL-HR-WR-001', 'rev' => 'Rev 01', 'employee' => $emp['name'], 'designation' => (string)$emp['job_title'], 'week_start' => $mon, 'week_end' => $fri, 'date' => $fri, 'rows' => array_map(function ($r) { unset($r['changed']); return $r; }, $rows),
          'people' => rp_global($u) ? all("SELECT id,name FROM users WHERE active=1 AND role<>'founder' ORDER BY name") : (rp_heads($u) ? all('SELECT id,name FROM users WHERE active=1 AND id IN ' . rp_member_sql(rp_heads($u)) . ' ORDER BY name') : [['id' => $uid, 'name' => $u['name']]]),
          'legend' => array_map(fn($k) => ['key' => $k, 'label' => RP_LEGEND[$k][0], 'short' => RP_LEGEND_SHORT[$k], 'color' => RP_LEGEND[$k][1]], array_keys(RP_LEGEND))]);
     // what the person already wrote for this week (auto-saved draft or submitted report) replaces the freshly built sheet; ?fresh=1 rebuilds it from the tasks
@@ -229,7 +237,13 @@ if ($method === 'GET' && $sub === 'weekly' && !(isset($seg[2]) && ctype_digit($s
     $mode = $ro ? 'view' : ($pid === $uid ? 'owner' : ((rp_global($u) || rp_heads_user($u, $pid)) ? 'review' : 'view'));
     if ($saved) { $state = ['id' => (int)$saved['id'], 'status' => $saved['status'], 'updated_at' => $saved['updated_at'], 'submitted_at' => $saved['submitted_at']];
         if (empty($_GET['fresh']) && ($pid === $uid || $mode === 'review')) { $c = json_decode((string)$saved['data'], true);
-            if (is_array($c) && isset($c['rows'])) foreach (['code', 'rev', 'employee', 'designation', 'date', 'date_text', 'rows'] as $k) if (array_key_exists($k, $c)) $Wout[$k] = $c[$k]; $Wout['restored'] = true; }
+            if (is_array($c) && isset($c['rows'])) { foreach (['code', 'rev', 'employee', 'designation', 'date', 'date_text', 'rows'] as $k) if (array_key_exists($k, $c)) $Wout[$k] = $c[$k]; $Wout['restored'] = true;
+                if ($pid === $uid) {   // tasks that changed or were completed after the sheet was last saved are brought in: known rows get the new status, new ones are appended (rows the person deleted stay deleted)
+                    $pos = []; foreach ($Wout['rows'] as $ix => $r0) if (!empty($r0['task_id'])) $pos[(int)$r0['task_id']] = $ix; $names = array_map(fn($r) => mb_strtolower(trim((string)($r['task'] ?? ''))), $Wout['rows']); $new = 0;
+                    foreach ($rows as $fr) { if ((string)($fr['changed'] ?? '') <= (string)$saved['updated_at']) continue; $tid = (int)$fr['task_id'];
+                        if (isset($pos[$tid])) { if (($Wout['rows'][$pos[$tid]]['status'] ?? '') !== $fr['status']) { $Wout['rows'][$pos[$tid]]['status'] = $fr['status']; $Wout['rows'][$pos[$tid]]['outstanding'] = $fr['outstanding']; $new++; } continue; }
+                        if (in_array(mb_strtolower(trim($fr['task'])), $names, true)) continue; unset($fr['changed']); $Wout['rows'][] = $fr; $new++; }
+                    if ($new) $Wout['added_from_tasks'] = $new; } } }
     }
     out($Wout + ['state' => $state, 'mode' => $mode, 'owner_id' => $pid, 'can_combine' => !$ro && (rp_global($u) || (bool)rp_heads($u))]);
 }
@@ -238,7 +252,7 @@ function rp_weekly_clean(array $b, string $today): array {
     $T = fn($v, $n) => mb_substr(trim((string)($v ?? '')), 0, $n);
     $rows = []; foreach (array_slice((array)($b['rows'] ?? []), 0, 120) as $r) { if (!is_array($r)) continue;
         $cls = array_key_exists((string)($r['status'] ?? ''), RP_LEGEND) ? $r['status'] : 'view';
-        $rows[] = ['client' => $T($r['client'] ?? '', 200), 'project' => $T($r['project'] ?? '', 200), 'task' => $T($r['task'] ?? '', 400), 'status' => $cls, 'outstanding' => $T($r['outstanding'] ?? '', 800), 'comment' => $T($r['comment'] ?? '', 2000), 'review' => $T($r['review'] ?? '', 800)]; }
+        $rows[] = ['task_id' => max(0, (int)($r['task_id'] ?? 0)), 'client' => $T($r['client'] ?? '', 200), 'project' => $T($r['project'] ?? '', 200), 'task' => $T($r['task'] ?? '', 400), 'status' => $cls, 'outstanding' => $T($r['outstanding'] ?? '', 800), 'comment' => $T($r['comment'] ?? '', 2000), 'review' => $T($r['review'] ?? '', 800)]; }
     $emp = $T($b['employee'] ?? '', 120); $des = $T($b['designation'] ?? '', 120); $code = $T($b['code'] ?? 'ASL-HR-WR-001', 40); $rev = $T($b['rev'] ?? 'Rev 01', 20); $dateTxt = $T($b['date_text'] ?? '', 40);
     $date = d($b['date'] ?? null) ?: $today;
     return ['code' => $code, 'rev' => $rev, 'employee' => $emp, 'designation' => $des, 'date' => $date, 'date_text' => $dateTxt, 'week_start' => (string)(d($b['week_start'] ?? null) ?: ''), 'rows' => $rows];
@@ -335,6 +349,27 @@ if ($method === 'POST' && $sub === 'weekly-combine') {
     for ($try = 0; $try < 5; $try++) { try { q("INSERT INTO weekly_reports (user_id,week_start,data,status,submitted_at,kind,ukey) VALUES (?,?,?,'submitted',NOW(),'combined',?)", [$uid, $week, json_encode($c, JSON_UNESCAPED_UNICODE), mt_rand(1, 2000000000)]); break; } catch (PDOException $e) { if ($try === 4) throw $e; } }
     $wid = (int)db()->lastInsertId(); log_act($uid, 'weekly_combined', count($names) . ' people ' . $week); out(['id' => $wid, 'rows' => count($rows), 'members' => $names], 201);
 }
+/** Rows typed into a submitted weekly report that are not on the task list yet become tasks of the person (so they show in tasks, reports and analytics).
+ *  Rows that match one of the person's tasks are linked to it. Status changes made in the report follow only for tasks that came from a weekly report. */
+function rp_weekly_sync_tasks(int $uid, array &$rows, string $week, array $emp): array {
+    $created = 0; $map = ['done' => 'done', 'lost' => 'canceled', 'view' => 'in_progress'];
+    $mine = []; $byTitle = []; foreach (all('SELECT id,title,status,source FROM tasks WHERE assignee_id=?', [$uid]) as $t) { $mine[(int)$t['id']] = $t; $byTitle[mb_strtolower(trim($t['title']))] = (int)$t['id']; }
+    foreach ($rows as $i => $r) {
+        $title = trim((string)($r['task'] ?? '')); if ($title === '') continue; $tid = (int)($r['task_id'] ?? 0); $st = $map[$r['status'] ?? 'view'] ?? 'in_progress';
+        if ($tid && !isset($mine[$tid])) { $tid = 0; }                           // the id belongs to someone else's task: ignore it
+        if (!$tid && isset($byTitle[mb_strtolower($title)])) $tid = $byTitle[mb_strtolower($title)];
+        if (!$tid) {
+            $co = !empty($r['client']) ? one('SELECT id FROM companies WHERE LOWER(name)=LOWER(?) LIMIT 1', [$r['client']]) : null; $pr = !empty($r['project']) ? one('SELECT id FROM projects WHERE LOWER(name)=LOWER(?) LIMIT 1', [$r['project']]) : null;
+            q("INSERT INTO tasks (title,description,status,priority,assignee_id,creator_id,department_id,company_id,project_id,task_type,source,completed_at) VALUES (?,?,?,'medium',?,?,?,?,?,'general','weekly'," . ($st === 'done' ? 'NOW()' : 'NULL') . ')',
+              [mb_substr($title, 0, 200), 'Added from the weekly report for the week of ' . date('j M Y', strtotime($week)) . (!empty($r['outstanding']) ? "\n" . $r['outstanding'] : ''), $st, $uid, $uid, $emp['department_id'] ?: null, $co['id'] ?? null, $pr['id'] ?? null]);
+            $tid = (int)db()->lastInsertId(); $mine[$tid] = ['id' => $tid, 'title' => $title, 'status' => $st, 'source' => 'weekly']; $byTitle[mb_strtolower($title)] = $tid; $created++;
+        } elseif (($mine[$tid]['source'] ?? '') === 'weekly' && $mine[$tid]['status'] !== $st && in_array($mine[$tid]['status'], ['todo', 'in_progress', 'done', 'canceled'], true)) {
+            q('UPDATE tasks SET status=?, completed_at=' . ($st === 'done' ? 'COALESCE(completed_at,NOW())' : 'NULL') . ' WHERE id=?', [$st, $tid]); $mine[$tid]['status'] = $st; }
+        $rows[$i]['task_id'] = $tid;
+    }
+    if ($created) log_act($uid, 'weekly_tasks_created', $created . ' task(s) from the weekly report of ' . $week);
+    return ['created' => $created];
+}
 /** A reviewer (department head, administrator) may only write the Comment and Management review columns: everything else stays as the person wrote it. */
 function rp_weekly_review_merge(array $stored, array $incoming): array {
     $rows = $stored['rows'] ?? []; foreach ($rows as $i => $r) { $in = $incoming['rows'][$i] ?? null; if ($in) { $rows[$i]['comment'] = $in['comment'] ?? $r['comment']; $rows[$i]['review'] = $in['review'] ?? $r['review']; } }
@@ -371,7 +406,8 @@ if ($method === 'POST' && $sub === 'weekly-save') {
         foreach ($c['rows'] as $i => $r) if (isset($rv[$key($r)])) $c['rows'][$i]['review'] = $rv[$key($r)];
         foreach (['reviewed_by', 'reviewed_at'] as $k) if (isset($stored[$k])) $c[$k] = $stored[$k];
     }
-    $first = !($row && $row['status'] === 'submitted') && $submit;
+    $first = !($row && $row['status'] === 'submitted') && $submit; $sync = ['created' => 0];
+    if ($submit || ($row && $row['status'] === 'submitted')) $sync = rp_weekly_sync_tasks($uid, $c['rows'], $week, $emp);
     q("INSERT INTO weekly_reports (user_id,week_start,data,status,submitted_at) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE data=VALUES(data), status=IF(status='submitted' OR VALUES(status)='submitted','submitted','draft'), submitted_at=IF(VALUES(status)='submitted' AND submitted_at IS NULL, NOW(), submitted_at), updated_at=NOW()",
       [$pid, $week, json_encode($c, JSON_UNESCAPED_UNICODE), $submit ? 'submitted' : 'draft', $submit ? date('Y-m-d H:i:s') : null]);
     $r2 = one("SELECT id,status,updated_at,submitted_at FROM weekly_reports WHERE user_id=? AND week_start=? AND kind='personal'", [$pid, $week]); $told = 0;
@@ -379,7 +415,7 @@ if ($method === 'POST' && $sub === 'weekly-save') {
         $depts = user_dept_ids($pid, (int)($emp['department_id'] ?? 0)); $heads = $depts ? array_column(all('SELECT DISTINCT head_id FROM departments WHERE head_id IS NOT NULL AND id IN (' . implode(',', array_map('intval', $depts)) . ')'), 'head_id') : [];
         foreach (array_unique(array_map('intval', $heads)) as $h) { if ($h === $uid) continue; notify($h, 'weekly_submitted', $emp['name'] . ' submitted the weekly report', 'Week of ' . date('j M', strtotime($week)) . ' · ' . count($c['rows']) . ' item' . (count($c['rows']) === 1 ? '' : 's'), '#/reports/weekly/' . $r2['id']); $told++; }
         log_act($uid, 'weekly_submitted', $emp['name'] . ' ' . $week); }
-    out(['ok' => true, 'state' => $r2, 'notified' => $told]);
+    out(['ok' => true, 'state' => $r2, 'notified' => $told, 'tasks_created' => $sync['created'], 'row_task_ids' => array_map(fn($r) => (int)($r['task_id'] ?? 0), $c['rows'])]);
 }
 if ($method === 'POST' && $sub === 'weekly-share') {
     if ($ro) fail('Founder accounts are read-only', 403);
@@ -391,6 +427,7 @@ if ($method === 'POST' && $sub === 'weekly-share') {
     $ids = array_values(array_unique(array_filter(array_map('intval', (array)($b['user_ids'] ?? [])))));  $ids = array_values(array_diff($ids, [$uid, $pid])); if (!$ids) fail('Choose at least one person to share it with');
     $combinedId = 0; if (!empty($b['id'])) { $crow = one("SELECT id,data FROM weekly_reports WHERE id=? AND kind='combined' AND user_id=?", [(int)$b['id'], $uid]); if (!$crow) fail('Not found', 404); $combinedId = (int)$crow['id']; $old = json_decode((string)$crow['data'], true) ?: []; foreach (['members', 'member_ids'] as $k) if (isset($old[$k])) $c[$k] = $old[$k]; $c['kind'] = 'combined'; }
     if ($pid !== $uid && !$combinedId) { $st0 = one("SELECT data,status FROM weekly_reports WHERE user_id=? AND week_start=? AND kind='personal'", [$pid, $week]); if (!$st0 || $st0['status'] !== 'submitted') fail($emp['name'] . ' has not submitted this report yet. Wait until it is submitted, or use "Combine team reports" to build one from tasks.', 409); if ($st0) $c = rp_weekly_review_merge(json_decode((string)$st0['data'], true) ?: [], $c) + ['user_id' => $pid]; }
+    if (!$combinedId && $pid === $uid) rp_weekly_sync_tasks($uid, $c['rows'], $week, $emp);
     if ($combinedId) { q('UPDATE weekly_reports SET data=?, updated_at=NOW() WHERE id=?', [json_encode($c, JSON_UNESCAPED_UNICODE), $combinedId]); $wid = $combinedId; }
     else { q("INSERT INTO weekly_reports (user_id,week_start,data,status,submitted_at) VALUES (?,?,?,'submitted',NOW()) ON DUPLICATE KEY UPDATE data=VALUES(data), status='submitted', submitted_at=COALESCE(submitted_at,NOW()), updated_at=NOW()", [$pid, $week, json_encode($c, JSON_UNESCAPED_UNICODE)]);
         $wid = (int)one("SELECT id FROM weekly_reports WHERE user_id=? AND week_start=? AND kind='personal'", [$pid, $week])['id']; }
@@ -408,7 +445,7 @@ if ($method === 'POST' && $sub === 'weekly-share') {
             $subj = 'Weekly report: ' . $c['employee'] . ' · week of ' . date('j M Y', strtotime($week));
             $text = "Hello " . $r['name'] . ",\n\n" . $u['name'] . " shared the weekly report of " . $c['employee'] . " (week of " . date('j M Y', strtotime($week)) . ") with you.\n" . $total . " item(s), " . $done . " delivered/closed out, " . $lost . " lost/nil.\n" . ($note ? "\nNote: " . $note . "\n" : '') . "\nOpen it in Aerosub Office: " . $link . "\n" . ($bin ? "The Excel file is attached.\n" : '');
             $html = '<p>Hello ' . htmlspecialchars($r['name']) . ',</p><p><b>' . htmlspecialchars($u['name']) . '</b> shared the weekly report of <b>' . htmlspecialchars($c['employee']) . '</b> (week of ' . date('j M Y', strtotime($week)) . ') with you.</p><p>' . $total . ' item(s) · ' . $done . ' delivered / closed out · ' . $lost . ' lost / nil</p>' . ($note ? '<p style="border-left:3px solid #00A3DE;padding-left:10px;color:#444">' . nl2br(htmlspecialchars($note)) . '</p>' : '') . '<p><a href="' . htmlspecialchars($link) . '">Open the report in Aerosub Office</a>' . ($bin ? ' (the Excel file is attached)' : '') . '</p>';
-            if (acct_send_mail($r['email'], $subj, $html, $text, $bin ? [['name' => rp_weekly_filename($c), 'type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'data' => $bin]] : [])) { $sent++; q('UPDATE weekly_shares SET emailed=1 WHERE weekly_id=? AND user_id=?', [$wid, $x]); } else $failed++;
+            if (acct_send_mail($r['email'], $subj, $html, $text, $bin ? [['name' => rp_weekly_filename($c), 'type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'data' => $bin]] : [], ['from_name' => $u['name'], 'reply_to' => $u['email']])) { $sent++; q('UPDATE weekly_shares SET emailed=1 WHERE weekly_id=? AND user_id=?', [$wid, $x]); } else $failed++;
         }
     }
     if (!$names) fail('Choose at least one active person');
@@ -474,8 +511,8 @@ if ($method === 'POST' && $id === null && $sub === null) {
     if ((int)$t['assignee_id'] !== $uid) fail('You can only report on tasks assigned to you', 403);
     $date = d($b['report_date'] ?? null) ?: $today;
     if ($date > $today) fail('You cannot report on a future date');
-    if ($date < date('Y-m-d', strtotime('-3 days'))) fail('Reports can be added for today or the last 3 days only');
     $existing = one('SELECT id FROM daily_reports WHERE task_id=? AND user_id=? AND report_date=?', [$tid, $uid, $date]);
+    if ($date < date('Y-m-d', strtotime('-3 days')) && !$existing) fail('New reports can be added for today or the last 3 days only. You can still edit a report you already wrote.');
     if (in_array($t['status'], RP_CLOSED, true) && !$existing) fail('This task is ' . strtolower(rp_status_label($t['status'])) . ', so it no longer needs daily reports');
     $status = (string)($b['status'] ?? ''); if ($status === '') $status = $t['status'] === 'todo' ? 'in_progress' : $t['status'];
     if (!in_array($status, TASK_STATUSES, true) || $status === 'transferred') fail('Choose a valid status');

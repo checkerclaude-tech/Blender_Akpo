@@ -4,22 +4,27 @@ declare(strict_types=1);
 const ARCHIVE_DAYS = 60;
 
 /** Sends one e-mail. Uses the sending account set up under Campaigns → Settings; falls back to the server's own mail(). Returns false if neither worked. */
-function acct_send_mail(string $to, string $subject, string $html, string $text, array $attachments = []): bool {
+function acct_send_mail(string $to, string $subject, string $html, string $text, array $attachments = [], array $opts = []): bool {
+    $fn = trim((string)preg_replace('/[\x00-\x1f"<>]+/', ' ', (string)($opts['from_name'] ?? ''))); $rt = filter_var((string)($opts['reply_to'] ?? ''), FILTER_VALIDATE_EMAIL) ?: '';
     try {
         require_once __DIR__ . '/campcore.php';
         $st = camp_settings();
         if (!empty($st['smtp_host']) && !empty($st['smtp_user']) && !empty($st['secret_enc']) && !empty($st['from_email'])) {
             $sm = camp_smtp($st);
-            $raw = build_message(['from' => ['name' => (string)($st['from_name'] ?: 'Aerosub Office'), 'email' => $st['from_email']], 'to' => [['name' => '', 'email' => $to]], 'cc' => [],
-                'subject' => $subject, 'html' => $html, 'text' => $text, 'attachments' => $attachments]);
+            $raw = build_message(['from' => ['name' => $fn !== '' ? $fn : (string)($st['from_name'] ?: 'Aerosub Office'), 'email' => $st['from_email']], 'to' => [['name' => '', 'email' => $to]], 'cc' => [],
+                'subject' => $subject, 'html' => $html, 'text' => $text, 'attachments' => $attachments, 'extra_headers' => $rt !== '' ? ['Reply-To: ' . ($fn !== '' ? mime_hdr_encode($fn) . ' <' . $rt . '>' : $rt)] : []]);
             $sm->deliver($st['from_email'], [$to], $raw);
             return true;
         }
     } catch (Throwable $e) { error_log('Aerosub Office recovery mail (smtp): ' . $e->getMessage()); }
-    try {
+    try {      // no SMTP set up: PHP's own mail(), still as a proper multipart message (HTML, plain text and attachments) from the sender's name
+        require_once __DIR__ . '/campcore.php';
         $host = preg_replace('/^www\./', '', (string)parse_url((string)cfg('app_url'), PHP_URL_HOST)) ?: 'aerosub.co';
-        $h = "From: Aerosub Office <no-reply@$host>\r\nContent-Type: text/plain; charset=UTF-8\r\n";
-        return (bool)@mail($to, '=?UTF-8?B?' . base64_encode($subject) . '?=', $text, $h);
+        $raw = build_message(['from' => ['name' => $fn !== '' ? $fn : 'Aerosub Office', 'email' => "no-reply@$host"], 'to' => [['name' => '', 'email' => $to]], 'cc' => [], 'subject' => $subject, 'html' => $html, 'text' => $text, 'attachments' => $attachments,
+            'extra_headers' => $rt !== '' ? ['Reply-To: ' . ($fn !== '' ? mime_hdr_encode($fn) . ' <' . $rt . '>' : $rt)] : []]);
+        [$hdr, $body] = explode("\r\n\r\n", $raw, 2); $keep = []; $skip = false;
+        foreach (explode("\r\n", $hdr) as $line) { if ($line !== '' && ($line[0] === ' ' || $line[0] === "\t")) { if (!$skip) $keep[] = $line; continue; } $skip = (bool)preg_match('/^(To|Subject):/i', $line); if (!$skip) $keep[] = $line; }
+        return (bool)@mail($to, mime_hdr_encode(preg_replace('/[\r\n]+/', ' ', $subject)), $body, implode("\r\n", $keep));
     } catch (Throwable $e) { return false; }
 }
 

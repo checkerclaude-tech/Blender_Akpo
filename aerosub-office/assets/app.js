@@ -230,24 +230,29 @@ const taskUrl = id => location.origin + location.pathname + '#/tasks/' + id;
 
 async function shareTask(id) {
   let t; try { t = await api('tasks/' + id); } catch (e) { return toast(e.message); } await loadRefs();
-  if (!S.mail) { try { await mailLoadAccs(); } catch {} }
-  const us = S.users.filter(u => u.active == 1 && u.id != S.user.id), have = new Set(t.shares.map(s => +s.id));
-  const m = modal('<div class="row"><h2 class="grow">Share task</h2><button class="btn ghost sm" id="cx">✕</button></div><p class="muted small" style="margin:4px 0 10px">' + esc(t.title) + '</p><input id="shq" placeholder="Find a person…" style="margin-bottom:8px"><div id="shl" style="max-height:260px;overflow:auto;display:grid;gap:2px">' +
+  const us = S.users.filter(u => u.active == 1 && u.id != S.user.id), have = new Set(t.shares.map(s => +s.id)); const files = [], links = [];
+  const m = modal('<div class="row"><h2 class="grow">Share task</h2><button class="btn ghost sm" id="cx">✕</button></div><p class="muted small" style="margin:4px 0 10px">' + esc(t.title) + '</p><input id="shq" placeholder="Find a person…" style="margin-bottom:8px"><div id="shl" style="max-height:200px;overflow:auto;display:grid;gap:2px">' +
     us.map(u => '<label class="item" style="cursor:pointer" data-n="' + esc(u.name.toLowerCase()) + '"><input type="checkbox" value="' + u.id + '" style="width:auto"' + (have.has(+u.id) ? ' checked disabled' : '') + '><span class="grow"><b>' + esc(u.name) + '</b> <span class="muted small">' + esc(u.department || '') + '</span></span>' + (have.has(+u.id) ? '<span class="tag done">Shared</span>' : '') + '</label>').join('') + '</div>' +
-    '<div class="field" style="margin-top:10px"><label>Note (optional)</label><input id="shn" maxlength="300"></div>' + (S.mail ? '<label class="small" style="display:block;margin:6px 0"><input type="checkbox" id="shm" style="width:auto" checked> Also open an email to them with the task details' + (t.file_count > 0 ? ' and its files' : '') + '</label>' : '') +
+    '<div class="field" style="margin-top:12px"><label>Message (optional)</label><textarea id="shn" rows="7" maxlength="8000" placeholder="Write as much as you need: context, instructions, what you expect…" style="min-height:140px;resize:vertical"></textarea><div class="muted small" id="shc" style="text-align:right">0 / 8000</div></div>' +
+    '<div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:6px"><label class="btn ghost sm" style="cursor:pointer;margin:0">📎 Attach images or documents<input type="file" id="shf" multiple hidden accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip"></label><input id="shl2" placeholder="Paste a link and press Add" style="flex:1;min-width:180px"><button class="btn ghost sm" type="button" id="sha">Add link</button></div>' +
+    '<div id="shx" style="display:grid;gap:4px;margin-bottom:6px"></div>' +
+    '<label class="small" style="display:block;margin:6px 0"><input type="checkbox" id="shm" style="width:auto" checked> Also email them. It shows your name, includes the message and a link to the task (they get a notification too).</label>' +
     '<div class="err" id="er"></div><div class="row"><button class="btn" id="go">Share</button><button class="btn ghost" id="cx2">Cancel</button></div>');
   $('#cx', m).onclick = $('#cx2', m).onclick = () => m.close();
   $('#shq', m).oninput = e => { const q = e.target.value.toLowerCase(); m.querySelectorAll('[data-n]').forEach(l => l.style.display = l.dataset.n.includes(q) ? '' : 'none'); };
+  $('#shn', m).oninput = e => { $('#shc', m).textContent = e.target.value.length + ' / 8000'; };
+  const paint = () => { $('#shx', m).innerHTML = files.map((f, i) => '<div class="item" style="padding:6px 10px">' + (f.preview ? '<img src="' + f.preview + '" alt="" style="width:36px;height:36px;object-fit:cover;border-radius:6px;margin-right:8px">' : '<span style="margin-right:8px">📄</span>') + '<span class="grow">' + esc(f.name) + ' <span class="muted small">' + fsize(f.size) + '</span></span><button class="btn ghost sm" type="button" data-rf="' + i + '" aria-label="Remove">✕</button></div>').join('') +
+    links.map((l, i) => '<div class="item" style="padding:6px 10px"><span style="margin-right:8px">🔗</span><span class="grow" style="overflow-wrap:anywhere">' + esc(l) + '</span><button class="btn ghost sm" type="button" data-rl="' + i + '" aria-label="Remove">✕</button></div>').join('');
+    m.querySelectorAll('[data-rf]').forEach(b => b.onclick = () => { files.splice(+b.dataset.rf, 1); paint(); }); m.querySelectorAll('[data-rl]').forEach(b => b.onclick = () => { links.splice(+b.dataset.rl, 1); paint(); }); };
+  $('#shf', m).onchange = async e => { for (const f of e.target.files) { try { if (files.length >= 8) throw new Error('You can attach up to 8 files'); const b = await fileB64(f); b.size = f.size; if (/^image\//.test(f.type)) b.preview = URL.createObjectURL(f); files.push(b); } catch (er) { $('#er', m).textContent = er.message; } } e.target.value = ''; paint(); };
+  const addLink = () => { const v = $('#shl2', m).value.trim(); if (!v) return; if (links.length >= 10) { $('#er', m).textContent = 'Up to 10 links'; return; } links.push(/^https?:\/\//i.test(v) ? v : 'https://' + v); $('#shl2', m).value = ''; paint(); };
+  $('#sha', m).onclick = addLink; $('#shl2', m).onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); addLink(); } };
   $('#go', m).onclick = async () => {
     const ids = [...m.querySelectorAll('#shl input:checked:not(:disabled)')].map(i => +i.value); if (!ids.length) { $('#er', m).textContent = 'Choose at least one person'; return; }
-    const note = $('#shn', m).value, mail = $('#shm', m) && $('#shm', m).checked; $('#go', m).disabled = true;
-    try { const shr = await api('tasks/' + id + '/share', { method: 'POST', data: { user_ids: ids, note } }); m.close(); toast('Shared — they have been notified'); 
-      if (mail) { const to = Object.values(shr.emails || {}).join(', ');
-        if (!to) toast('Shared. No email address was found for them.'); else { await mailLoadAccs(); const files = [];
-          for (const f of t.files) { try { const r = await fetch('api/tasks/' + id + '/files/' + f.id, { credentials: 'same-origin' }); const bl = await r.blob(); files.push({ name: f.name, type: f.mime, size: f.size, data: await new Promise(res => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(',')[1] || ''); fr.readAsDataURL(bl); }) }); } catch {} }
-          const row = (k, v) => v ? '<tr><td style="padding:2px 12px 2px 0;color:#667"><b>' + k + '</b></td><td>' + esc(v) + '</td></tr>' : '';
-          compose({ to, subject: (t.task_type === 'meeting' ? 'Meeting: ' : 'Task: ') + t.title, files, html: '<div>Hi,</div><div>' + (note ? esc(note) + '<br>' : '') + 'I have shared this ' + (t.task_type === 'meeting' ? 'meeting' : 'task') + ' with you on Aerosub Office.</div><br><table>' + row('Task', t.title) + row('Type', TTYPE[t.task_type]) + row('Status', STATUS[t.status]) + row('Priority', PRI[t.priority]) + row('Due', t.due_date ? fmtDate(t.due_date) : '') + row('When', t.starts_at ? new Date(t.starts_at.replace(' ', 'T')).toLocaleString() : '') + row('Assigned to', t.assignee_name) + '</table>' + (t.description ? '<br><div style="white-space:pre-wrap">' + esc(t.description) + '</div>' : '') + '<br><div>Open it here: <a href="' + taskUrl(id) + '">' + taskUrl(id) + '</a></div>' + (files.length ? '<div>' + files.length + ' file' + (files.length > 1 ? 's' : '') + ' attached.</div>' : '') }); } }
-      render(); } catch (er) { console.error(er); $('#er', m).textContent = er.message; $('#go', m).disabled = false; }
+    addLink(); $('#go', m).disabled = true; $('#go', m).textContent = 'Sharing…';
+    try { const shr = await api('tasks/' + id + '/share', { method: 'POST', data: { user_ids: ids, note: $('#shn', m).value, links, files: files.map(f => ({ name: f.name, type: f.type, data: f.data })), email: $('#shm', m).checked } }); m.close();
+      toast('Shared. They have been notified' + (shr.emailed ? ' and emailed (' + shr.emailed + ')' : '')); render(); location.hash.startsWith('#/tasks/') && taskDetail(id); }
+    catch (er) { $('#er', m).textContent = er.message; $('#go', m).disabled = false; $('#go', m).textContent = 'Share'; }
   };
 }
 function deferTask(t) {
@@ -310,7 +315,7 @@ function updateHtml(x, t) {
   else if (x.kind === 'report') body = '<b>Field report filed</b> · ' + esc((REPORT_FORMS[d.type] || [d.type])[0]) + ' <a href="#" data-rep="' + d.report_id + '" data-pr="' + d.project_id + '">View report</a>';
   else if (x.kind === 'defer') body = '<b>Deferred</b> ' + (d.from ? 'from ' + fmtDate(d.from) + ' ' : '') + 'to ' + fmtDate(d.to) + (d.reason ? ' — ' + esc(d.reason) : '');
   else if (x.kind === 'transfer') body = '<b>Transferred</b>' + (d.from ? ' from ' + esc(d.from) : '') + ' to ' + esc(d.to || '') + (d.note ? ' — ' + esc(d.note) : '');
-  else if (x.kind === 'share') body = '<b>Shared</b> with ' + esc((d.with || []).join(', ')) + (d.note ? ' — ' + esc(d.note) : '');
+  else if (x.kind === 'share') body = '<b>Shared</b> with ' + esc((d.with || []).join(', ')) + (d.note ? '<div style="white-space:pre-wrap;margin-top:4px">' + esc(d.note) + '</div>' : '') + ((d.links || []).length ? '<div class="small" style="margin-top:4px">' + d.links.map(l => '🔗 <a href="' + esc(l) + '" target="_blank" rel="noopener noreferrer">' + esc(l) + '</a>').join('<br>') + '</div>' : '') + ((d.files || []).length ? '<div class="small muted" style="margin-top:4px">📎 ' + d.files.length + ' file' + (d.files.length === 1 ? '' : 's') + ' attached (see Files on this task)</div>' : '');
   else body = esc(d.text || '');
   return '<div style="padding:9px 0;border-top:1px solid var(--line)">' + body + '<div>' + who + '</div></div>';
 }
@@ -447,6 +452,7 @@ async function finDocPage(id) {
   v.innerHTML = '<div style="margin-bottom:6px" class="row noprint"><a href="#/finance" class="small">‹ Finance</a>' + (d.task_id ? '<a href="#/tasks/' + d.task_id + '" class="small">· Related task: ' + esc(d.task_title || '#' + d.task_id) + '</a>' : '') + '</div><div class="row noprint" style="margin-bottom:12px;flex-wrap:wrap">' + fstag(d.status) + (d.children.length ? '<span class="small muted">Leads to: ' + d.children.map(c => '<a href="#/finance/' + c.id + '">' + esc(c.number) + '</a>').join(', ') + '</span>' : '') + '<span class="right row" style="flex-wrap:wrap"><button class="btn ghost sm" id="fpr">Print / save PDF</button>' + (d.client_email && S.mail ? '<button class="btn ghost sm" id="fem">Email client</button>' : '') +
     (can && d.status !== 'void' ? (d.doc_type !== 'receipt' && d.status !== 'paid' ? '<button class="btn ghost sm" id="fed">Edit</button>' : '') + (d.status === 'draft' && d.doc_type !== 'receipt' ? '<button class="btn ghost sm" id="fsn">Mark as sent</button>' : '') + conv.map(t => '<button class="btn ghost sm" data-cv="' + t + '">Make ' + FTYPE[t].toLowerCase() + '</button>').join('') + (d.doc_type === 'invoice' && d.status !== 'paid' ? '<button class="btn sm" id="fpay">Record payment</button>' : '') + '<button class="btn ghost sm" id="fvd" style="color:var(--bad)">Void</button>' + (d.status === 'draft' && d.doc_type !== 'receipt' ? '<button class="btn ghost sm" id="fdl" style="color:var(--bad)">Delete</button>' : '') : '') + '</span></div>' + finDocHtml(d);
   $('#fpr').onclick = () => window.print();
+  try { if (window.OfficeExt && window.OfficeExt.finDocHook) window.OfficeExt.finDocHook(d, v, id); } catch (e) { console.error(e); }
   const act = async (path, data, msg) => { try { await api('finance/doc/' + id + path, { method: 'POST', data }); toast(msg); render(); } catch (er) { toast(er.message); } };
   const ed = $('#fed'); if (ed) ed.onclick = () => finForm(d, {}); const sn = $('#fsn'); if (sn) sn.onclick = () => act('/status', { status: 'sent' }, 'Marked as sent');
   v.querySelectorAll('[data-cv]').forEach(b => b.onclick = async () => { try { const r = await api('finance/doc/' + id + '/convert', { method: 'POST', data: { to: b.dataset.cv } }); toast(r.number + ' created'); location.hash = '#/finance/' + r.id; } catch (er) { toast(er.message); } });
@@ -1365,6 +1371,7 @@ async function render() {
   shell(); paintBanners();
   const name = (location.hash.split('/')[1] || 'home'); const fn = views[name] || views.home;
   try { await fn(); } catch (e) { $('#view').innerHTML = '<div class="card empty">' + esc(e.message || 'Something went wrong') + '</div>'; }
+  try { if (window.OfficeExt && window.OfficeExt.afterView) window.OfficeExt.afterView(name); } catch {}
 }
 window.addEventListener('hashchange', () => { if (!location.hash.startsWith('#/tasks/') || !$('#tl')) render(); else { const id = +location.hash.split('/')[2]; if (id) taskDetail(id); } });
 

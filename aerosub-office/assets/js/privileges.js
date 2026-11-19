@@ -27,6 +27,12 @@
   const prevMore = X.more;
   X.more = items => { if (prevMore) prevMore(items); const tb = S.user.tabs || {}; if (tb.myfiles) items.push(['myfiles', 'My Documents', null]); if (S.user.is_root) items.push(['access', 'Access control', null], ['logs', 'Logs', null]); };
 
+  const TAB_OF = { reports: 'reports', pipeline: 'pipeline', mail: 'mail', schedule: 'schedule', games: 'games', campaigns: 'campaigns', team: 'team', finance: 'finance', learn: 'learn', competition: 'competition', events: 'events', research: 'research', projects: 'projects', products: 'products', news: 'news', myfiles: 'myfiles', documents: 'documents', executive: 'executive' };
+  X.afterView = name => {
+    const old = $('#ro-banner'); if (old) old.remove(); const tab = TAB_OF[name]; if (!tab || !(S.user.ro_tabs || []).includes(tab)) return;
+    const v = $('#view'); if (v) v.insertAdjacentHTML('afterbegin', '<div id="ro-banner" class="banner noprint" role="note" style="background:var(--mist);color:var(--ink);border:1px solid var(--line)"><span>🔒 <b>Read only.</b> You can open and use this section but not create, change or delete anything in it. Ask the Root Admin if you need to edit.</span></div>');
+  };
+
   /* ---------- Access control: the Root Admin chooses who may open which tab ---------- */
   views.access = async () => {
     if (!S.user.is_root) { location.hash = '#/home'; return; }
@@ -41,12 +47,12 @@
     const box = $('#acp'); box.innerHTML = '<div class="card"><div class="empty">Loading…</div></div>'; let D;
     try { D = await api('access/' + id); } catch (e) { box.innerHTML = '<div class="card empty">' + esc(e.message) + '</div>'; return; }
     const cur = {}; D.tabs.forEach(t => cur[t.key] = t.override);
-    box.innerHTML = '<form class="card" id="acf"><div class="row"><h2 class="grow">' + esc(D.user.name) + '</h2><span class="tag">' + esc(ROLE[D.user.role] || D.user.role) + '</span></div><div class="muted small" style="margin:4px 0 12px">' + esc(D.user.email) + '</div>' +
+    box.innerHTML = '<form class="card" id="acf"><div class="row"><h2 class="grow">' + esc(D.user.name) + '</h2><span class="tag">' + esc(ROLE[D.user.role] || D.user.role) + '</span></div><div class="muted small" style="margin:4px 0 6px">' + esc(D.user.email) + '</div><div class="muted small" style="margin-bottom:12px"><b>Edit</b>: can use the tab and change things in it. <b>Read only</b>: can open and use it (look, search, print, take courses, play) but cannot create, change or delete. <b>Default</b> follows the role and department.</div>' +
       '<div class="ac-rows">' + D.tabs.map(t => '<div class="ac-row" data-k="' + t.key + '"><div class="grow"><b>' + esc(t.label) + '</b><div class="muted small">By default: ' + (t.default ? 'on' : 'off') + (t.locked ? ' · never available to administrators' : '') + '</div></div>' +
-        '<div class="ac-seg" role="radiogroup" aria-label="' + esc(t.label) + '">' + [['default', 'Default'], ['on', 'On'], ['off', 'Off']].map(([k, l]) => '<button type="button" role="radio" class="ac-b ' + k + (((t.override === null && k === 'default') || (t.override === true && k === 'on') || (t.override === false && k === 'off')) ? ' sel' : '') + '" data-v="' + k + '"' + (t.locked && k === 'on' ? ' disabled' : '') + ' aria-checked="' + (((t.override === null && k === 'default') || (t.override === true && k === 'on') || (t.override === false && k === 'off')) ? 'true' : 'false') + '">' + l + '</button>').join('') + '</div>' +
-        '<span class="tag ac-eff ' + (t.effective ? 'done' : 'blocked') + '">' + (t.effective ? 'Has access' : 'No access') + '</span></div>').join('') + '</div>' +
+        '<div class="ac-seg" role="radiogroup" aria-label="' + esc(t.label) + '">' + [['default', 'Default'], ['on', 'Edit'], ['view', 'Read only'], ['off', 'Off']].map(([k, l]) => '<button type="button" role="radio" class="ac-b ' + k + (((t.override === null && k === 'default') || (t.override === true && k === 'on') || (t.override === 'view' && k === 'view') || (t.override === false && k === 'off')) ? ' sel' : '') + '" data-v="' + k + '"' + (t.locked && k === 'on' ? ' disabled' : '') + ' aria-checked="' + (((t.override === null && k === 'default') || (t.override === true && k === 'on') || (t.override === false && k === 'off')) ? 'true' : 'false') + '">' + l + '</button>').join('') + '</div>' +
+        '<span class="tag ac-eff ' + (t.effective ? (t.read_only ? '' : 'done') : 'blocked') + '">' + (t.effective ? (t.read_only ? 'Read only' : 'Can edit') : 'No access') + '</span></div>').join('') + '</div>' +
       '<div class="err" id="er"></div><div class="row" style="margin-top:12px"><button class="btn" id="acs">Save access</button><button class="btn ghost" type="button" id="acr">Reset everything to default</button></div></form>';
-    $$('.ac-row', box).forEach(r => $$('.ac-b', r).forEach(b => b.onclick = () => { $$('.ac-b', r).forEach(x => { x.classList.toggle('sel', x === b); x.setAttribute('aria-checked', x === b ? 'true' : 'false'); }); cur[r.dataset.k] = b.dataset.v === 'default' ? null : b.dataset.v === 'on'; }));
+    $$('.ac-row', box).forEach(r => $$('.ac-b', r).forEach(b => b.onclick = () => { $$('.ac-b', r).forEach(x => { x.classList.toggle('sel', x === b); x.setAttribute('aria-checked', x === b ? 'true' : 'false'); }); cur[r.dataset.k] = b.dataset.v === 'default' ? null : b.dataset.v === 'view' ? 'view' : b.dataset.v === 'on'; }));
     const save = async data => { try { await api('access/' + id, { method: 'PATCH', data: { tabs: data } }); toast('Access saved'); X.render(); } catch (er) { $('#er', box).textContent = er.message; } };
     $('#acf', box).onsubmit = e => { e.preventDefault(); save(cur); };
     $('#acr', box).onclick = () => { if (!confirm('Put every tab back to its default for ' + D.user.name + '?')) return; const z = {}; D.tabs.forEach(t => z[t.key] = null); save(z); };

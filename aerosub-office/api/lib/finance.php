@@ -65,6 +65,8 @@ function fx_date($v): ?string { $v = trim((string)($v ?? '')); return preg_match
 /* =============== FINANCE =============== */
 if ($seg[0] === 'finance') {
     $sub = $seg[1] ?? '';
+    require_once __DIR__ . '/approvals.php';
+    if ($sub === 'approvals' || $sub === 'signature') ap_global($u, $sub, $method, $b);   // my approval queue and my saved signature
     if ($sub === 'settings') {
         if (!$fin && !in_array($role, ['founder'], true)) fail('Not allowed', 403);
         if ($method === 'GET') out(['settings' => fx_settings(), 'can_edit' => $fin]);
@@ -89,7 +91,7 @@ if ($seg[0] === 'finance') {
             elseif (!$fin && !$ro) fail('Not allowed', 403);
             foreach (['type' => 'doc_type', 'status' => 'status'] as $g => $col) if (!empty($_GET[$g])) { $w[] = "d.$col=?"; $p[] = $_GET[$g]; }
             if (!empty($_GET['q'])) { $w[] = '(d.number LIKE ? OR d.client_name LIKE ? OR d.po_number LIKE ? OR d.rfq_ref LIKE ?)'; $qq = '%' . mb_substr((string)$_GET['q'], 0, 60) . '%'; array_push($p, $qq, $qq, $qq, $qq); }
-            $rows = all('SELECT d.id,d.doc_type,d.number,d.status,d.client_name,d.po_number,d.rfq_ref,d.issue_date,d.due_date,d.currency,d.currency_symbol,d.task_id,d.parent_id,d.amount_paid,d.discount,d.tax_rate,' . fx_sub_sql() . ' AS sub FROM fin_docs d WHERE ' . implode(' AND ', $w) . ' ORDER BY d.id DESC LIMIT 300', $p);
+            $rows = all('SELECT d.id,d.doc_type,d.number,d.status,d.approval_status,d.client_name,d.po_number,d.rfq_ref,d.issue_date,d.due_date,d.currency,d.currency_symbol,d.task_id,d.parent_id,d.amount_paid,d.discount,d.tax_rate,' . fx_sub_sql() . ' AS sub FROM fin_docs d WHERE ' . implode(' AND ', $w) . ' ORDER BY d.id DESC LIMIT 300', $p);
             foreach ($rows as &$r) { $net = (float)$r['sub'] - min((float)$r['discount'], (float)$r['sub']); $r['total'] = $r['doc_type'] === 'receipt' ? (float)$r['amount_paid'] : round($net + $net * (float)$r['tax_rate'] / 100, 2); unset($r['sub']); } unset($r);
             out(['docs' => $rows, 'can_edit' => $fin]);
         }
@@ -110,14 +112,23 @@ if ($seg[0] === 'finance') {
         }
         if (!$sid) fail('Not found', 404);
         $d = fx_doc($sid); if (!$d) fail('Not found', 404);
-        if (!$fin && !$ro && !($d['task_id'] && fx_task_visible($u, (int)$d['task_id']))) fail('Not found', 404);
+        if (!$fin && !$ro && !($d['task_id'] && fx_task_visible($u, (int)$d['task_id'])) && !ap_is_in_chain($uid, (int)$d['id'])) fail('Not found', 404);
         if ($method === 'GET' && $act === '') { $d['seller'] = fx_settings(); $d['can_edit'] = $fin; $d['children'] = all('SELECT id,doc_type,number,status FROM fin_docs WHERE parent_id=? ORDER BY id', [$sid]);
             $d['parent'] = $d['parent_id'] ? one('SELECT id,doc_type,number FROM fin_docs WHERE id=?', [$d['parent_id']]) : null;
             if ($d['doc_type'] === 'invoice') { $d['paid_total'] = (float)one("SELECT COALESCE(SUM(amount_paid),0) s FROM fin_docs WHERE doc_type='receipt' AND parent_id=? AND status<>'void'", [$sid])['s']; $d['balance'] = round($d['totals']['total'] - $d['paid_total'], 2); }
+            $d['approval'] = ap_summary($u, $d, $fin && !$ro); $d['locked'] = $d['approval']['locked'];
             out($d); }
+        if ($act === 'approval') {   // Review > Request signature > Sign (or Revert), along the chain of command
+            $x = $seg[4] ?? '';
+            if ($method === 'GET' && $x === '') out(ap_summary($u, $d, $fin && !$ro));
+            if ($method === 'POST' && $x === '') { if (!$fin || $ro) fail('Only Finance can ask for approval', 403); out(ap_request($u, $d, $b)); }
+            if ($method === 'POST' && $x === 'act') out(ap_act($u, $d, $b));
+            fail('Bad request', 404);
+        }
         if (!$fin) fail('Only Finance can change these documents', 403);
         if ($method === 'PATCH' && $act === '') {
             if ($d['status'] === 'void') fail('This document is void'); if ($d['doc_type'] === 'receipt') fail('Receipts cannot be edited; void it and issue a new one');
+            if (in_array($d['approval_status'] ?? '', ['in_review', 'awaiting_sign', 'signed'], true)) fail('This document is in the approval chain or already signed, so it cannot be edited. Withdraw or revert the approval first, or void it and issue a new one.');
             if ($d['status'] === 'paid') fail('A paid invoice cannot be edited');
             $items = array_key_exists('items', $b) ? fx_clean_items($b['items']) : null; if ($items !== null && !$items) fail('Add at least one line item');
             $client = array_key_exists('client_name', $b) ? fx_s($b['client_name'], 190) : $d['client_name']; if (!$client) fail('Enter the client name');
@@ -157,7 +168,7 @@ if ($seg[0] === 'finance') {
             if (abs($bal - $amt) < 0.005) q("UPDATE fin_docs SET status='paid' WHERE id=?", [$sid]); log_act($uid, 'fin_payment', $d['number'] . ' ' . $amt);
             out(['id' => $rid, 'number' => fx_doc($rid, false)['number'], 'fully_paid' => abs($bal - $amt) < 0.005], 201);
         }
-        if ($method === 'DELETE') { if ($d['status'] !== 'draft') fail('Only drafts can be deleted. Void it instead.'); if ($d['doc_type'] === 'receipt') fail('Receipts cannot be deleted'); q('DELETE FROM fin_docs WHERE id=?', [$sid]); out(['ok' => true]); }
+        if ($method === 'DELETE') { if ($d['status'] !== 'draft') fail('Only drafts can be deleted. Void it instead.'); if (!empty($d['approval_status'])) fail('This document has been through approval, so it cannot be deleted. Void it instead.'); if ($d['doc_type'] === 'receipt') fail('Receipts cannot be deleted'); q('DELETE FROM fin_docs WHERE id=?', [$sid]); out(['ok' => true]); }
     }
     fail('Not found', 404);
 }

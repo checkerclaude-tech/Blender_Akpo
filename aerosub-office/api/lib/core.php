@@ -122,6 +122,13 @@ function tab_overrides(array $u): array {
     $m = []; try { foreach (all('SELECT tab,allowed FROM user_access WHERE user_id=?', [$id]) as $r) $m[$r['tab']] = (bool)(int)$r['allowed']; } catch (Throwable $e) {}
     return $cache[$id] = $m;
 }
+/** Tabs this person may open but not change (set by the Root Admin: "Read only"). */
+function tab_ro_map(array $u): array {
+    static $cache = []; $id = (int)($u['id'] ?? 0); if (isset($cache[$id])) return $cache[$id];
+    $m = []; try { foreach (all('SELECT tab FROM user_access WHERE user_id=? AND allowed=1 AND readonly=1', [$id]) as $r) $m[$r['tab']] = true; } catch (Throwable $e) {}
+    return $cache[$id] = $m;
+}
+function tab_readonly(array $u, string $tab): bool { return empty($u['is_root']) && !empty(tab_ro_map($u)[$tab]); }
 function tab_override(array $u, string $tab): ?bool { $m = tab_overrides($u); return array_key_exists($tab, $m) ? $m[$tab] : null; }
 /** What a person gets when the Root Admin has not said anything about a tab. */
 function tab_default(array $u, string $tab): bool {
@@ -163,7 +170,7 @@ function me(): ?array {
     $u = $id ? one('SELECT u.id,u.name,u.email,u.role,u.department_id,u.job_title,u.must_change_password,d.name AS department
                     FROM users u LEFT JOIN departments d ON d.id=u.department_id WHERE u.id=? AND u.active=1', [$id]) : null;
     if ($u) { $u['department_ids'] = user_dept_ids((int)$u['id'], (int)($u['department_id'] ?? 0));
-        $u['head_of'] = head_dept_ids((int)$u['id']); try { $u['is_root'] = (int)(one('SELECT is_root FROM users WHERE id=?', [$u['id']])['is_root'] ?? 0); } catch (Throwable $e) { $u['is_root'] = 0; } try { $ga = games_access($u); $u['games'] = $ga['visible']; $u['games_open'] = $ga['open']; } catch (Throwable $e) { $u['games'] = false; $u['games_open'] = false; } $u['campaigns'] = can_campaigns($u); $u['finance'] = can_finance($u); $u['tabs'] = tab_map($u);
+        $u['head_of'] = head_dept_ids((int)$u['id']); try { $u['is_root'] = (int)(one('SELECT is_root FROM users WHERE id=?', [$u['id']])['is_root'] ?? 0); } catch (Throwable $e) { $u['is_root'] = 0; } try { $ga = games_access($u); $u['games'] = $ga['visible']; $u['games_open'] = $ga['open']; } catch (Throwable $e) { $u['games'] = false; $u['games_open'] = false; } $u['campaigns'] = can_campaigns($u); $u['finance'] = can_finance($u); $u['tabs'] = tab_map($u); try { require_once __DIR__ . '/approvals.php'; $u['approvals'] = ap_pending_count((int)$u['id']); } catch (Throwable $e) { $u['approvals'] = 0; } $u['ro_tabs'] = array_values(array_filter(array_keys(tab_ro_map($u)), fn($k) => !empty($u['tabs'][$k])));
         $u['av'] = 0; try { $r0 = one('SELECT UNIX_TIMESTAMP(updated_at) t FROM user_avatars WHERE user_id=?', [$u['id']]); $u['av'] = $r0 ? (int)$r0['t'] : 0; } catch (Throwable $e) {} }
     if ($id && !$u) { session_destroy(); }
     return $u;

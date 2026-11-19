@@ -45,3 +45,21 @@ Check its output: it must say `Root Admin account: dev.aaerosub@…`. If it says
 ## Team performance now counts weekly-report entries
 * Items people enter in their weekly reports are counted alongside tasks: **Delivered** = completed, **In view** = in progress, **Nil/Lost** = lost. Rows that are simply a task from the task list are not counted twice, and an item repeated in several weeks counts once. The leaderboard has a new "From weekly reports" column, and a note shows how many were added. Drafts count too.
 * Fixed: the "‹ Reports" button on the weekly report page now goes back to Reports.
+
+## Weekly report ⇄ tasks
+* Rows typed into a weekly report that are not on the task list become **real tasks** of the person when the report is **submitted** (and when a submitted report is edited later). They show in Tasks, the daily-report pickers and the analytics. Report status follows for tasks created this way (Delivered = done, In view = in progress, Nil/Lost = canceled); tasks that already existed are linked, never changed or duplicated.
+* **Completed tasks appear in the report:** tasks assigned to you that were completed in the week, and tasks you assigned to others that they completed (shown with "Assigned to NAME"). Tasks completed after you last saved are brought into the saved sheet.
+* Creators can edit their own reports: a daily report you wrote can be edited at any time; only brand-new reports are limited to the last 3 days.
+
+## Approvals and signatures (Finance documents)
+* Open any commercial, proforma/quotation or invoice → **Approval & signature** → **Request approval…**. Choose the chain: reviewers first, then the signer(s). The suggestion follows the chain of command (your department head, the Finance head, then the Founder/CEO).
+* Each person acts in turn and gets a notification and an e-mail from the requester's name with a link: **Approve review** (or **Approve and request signature**), **Sign** (draw, type your name, or use your saved signature) or **Revert** with a reason, which goes back to the author. The author can fix and ask again (history is kept) or withdraw the request.
+* The document is **locked** while in the chain and after signing. A fingerprint of the content is checked at every step, so what is signed is exactly what was reviewed. Signatures are printed on the "For Aerosub" line of invoices/proformas and at the end of commercials, with name, title, date and reference.
+* Approvers do not need the Finance tab. A new **Approvals** page lists what waits for you, your requests and what you did. The Root Admin's Access page can still set Finance to Read only: that blocks requesting but not reviewing/signing.
+
+## Sharing tasks
+* The note box is now a full text area (up to 8,000 characters) with **attachments** (images and documents, also kept on the task) and **links**. The message, links and files show in the task's activity.
+* E-mails show the sender's real name on the office no-reply address (replies go to the sender), include the message, links, attachments and a link to the task or report. The receiver also gets the in-app notification. Weekly-report e-mails use the same sender name.
+
+## Access: Edit or Read only
+* On the Root Admin's **Access** page each tab is now Default / **Edit** / **Read only** / Off. Read only means the person can open and use the tab (look, search, print, download, take courses, play games) but creating, changing or deleting is refused by the server, and a note is shown at the top of the tab.
