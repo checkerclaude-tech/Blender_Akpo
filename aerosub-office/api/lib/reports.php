@@ -190,10 +190,8 @@ const RP_LEGEND_SHORT = ['lost' => 'Lost', 'view' => 'In view', 'done' => 'Deliv
 function rp_week_start(string $any): string { $t = strtotime($any) ?: time(); return date('Y-m-d', strtotime('monday this week', $t)); }
 function rp_can_see_person(array $u, int $pid): bool { return rp_global($u) || $pid === (int)$u['id'] || rp_heads_user($u, $pid); }
 
-if ($method === 'GET' && $sub === 'weekly' && !(isset($seg[2]) && ctype_digit($seg[2]))) {
-    $pid = (int)($_GET['user'] ?? $uid) ?: $uid; if (!rp_can_see_person($u, $pid)) fail('Not allowed', 403);
-    $emp = one('SELECT id,name,job_title FROM users WHERE id=?', [$pid]); if (!$emp) fail('Not found', 404);
-    $mon = rp_week_start((string)(d($_GET['week'] ?? null) ?: $today)); $fri = date('Y-m-d', strtotime($mon . ' +4 days')); $sun = date('Y-m-d', strtotime($mon . ' +6 days'));
+function rp_weekly_rows(int $pid, string $mon): array {
+    $fri = date('Y-m-d', strtotime($mon . ' +4 days')); $sun = date('Y-m-d', strtotime($mon . ' +6 days'));
     $tasks = all("SELECT t.id,t.title,t.status,t.due_date,t.task_type,t.status_reason,co.name AS company,p.name AS project,d.name AS department
                   FROM tasks t LEFT JOIN companies co ON co.id=t.company_id LEFT JOIN projects p ON p.id=t.project_id LEFT JOIN departments d ON d.id=t.department_id
                   WHERE t.assignee_id=? AND (t.status IN ('in_progress','blocked') OR t.updated_at BETWEEN ? AND ? OR EXISTS (SELECT 1 FROM daily_reports r WHERE r.task_id=t.id AND r.user_id=? AND r.report_date BETWEEN ? AND ?))
@@ -215,17 +213,25 @@ if ($method === 'GET' && $sub === 'weekly' && !(isset($seg[2]) && ctype_digit($s
         $rows[] = ['sn' => $i + 1, 'client' => $t['company'] ?: ($t['department'] ?: ''), 'project' => (string)$t['project'], 'task' => $t['title'], 'status' => $cls,
                    'outstanding' => mb_substr(implode(' · ', $out_), 0, 600), 'comment' => mb_substr(implode("\n", $cm), 0, 1500), 'review' => ''];
     }
+    return $rows;
+}
+
+if ($method === 'GET' && $sub === 'weekly' && !(isset($seg[2]) && ctype_digit($seg[2]))) {
+    $pid = (int)($_GET['user'] ?? $uid) ?: $uid; if (!rp_can_see_person($u, $pid)) fail('Not allowed', 403);
+    $emp = one('SELECT id,name,job_title FROM users WHERE id=?', [$pid]); if (!$emp) fail('Not found', 404);
+    $mon = rp_week_start((string)(d($_GET['week'] ?? null) ?: $today)); $fri = date('Y-m-d', strtotime($mon . ' +4 days')); $sun = date('Y-m-d', strtotime($mon . ' +6 days'));
+    $rows = rp_weekly_rows($pid, $mon);
     $Wout = (['code' => 'ASL-HR-WR-001', 'rev' => 'Rev 01', 'employee' => $emp['name'], 'designation' => (string)$emp['job_title'], 'week_start' => $mon, 'week_end' => $fri, 'date' => $fri, 'rows' => $rows,
          'people' => rp_global($u) ? all("SELECT id,name FROM users WHERE active=1 AND role<>'founder' ORDER BY name") : (rp_heads($u) ? all('SELECT id,name FROM users WHERE active=1 AND id IN ' . rp_member_sql(rp_heads($u)) . ' ORDER BY name') : [['id' => $uid, 'name' => $u['name']]]),
          'legend' => array_map(fn($k) => ['key' => $k, 'label' => RP_LEGEND[$k][0], 'short' => RP_LEGEND_SHORT[$k], 'color' => RP_LEGEND[$k][1]], array_keys(RP_LEGEND))]);
     // what the person already wrote for this week (auto-saved draft or submitted report) replaces the freshly built sheet; ?fresh=1 rebuilds it from the tasks
-    $saved = one('SELECT id,data,status,updated_at,submitted_at FROM weekly_reports WHERE user_id=? AND week_start=?', [$pid, $mon]); $state = null;
+    $saved = one("SELECT id,data,status,updated_at,submitted_at FROM weekly_reports WHERE user_id=? AND week_start=? AND kind='personal'", [$pid, $mon]); $state = null;
     $mode = $ro ? 'view' : ($pid === $uid ? 'owner' : ((rp_global($u) || rp_heads_user($u, $pid)) ? 'review' : 'view'));
     if ($saved) { $state = ['id' => (int)$saved['id'], 'status' => $saved['status'], 'updated_at' => $saved['updated_at'], 'submitted_at' => $saved['submitted_at']];
-        if (empty($_GET['fresh']) && ($pid === $uid || $saved['status'] === 'submitted')) { $c = json_decode((string)$saved['data'], true);
+        if (empty($_GET['fresh']) && ($pid === $uid || $mode === 'review')) { $c = json_decode((string)$saved['data'], true);
             if (is_array($c) && isset($c['rows'])) foreach (['code', 'rev', 'employee', 'designation', 'date', 'date_text', 'rows'] as $k) if (array_key_exists($k, $c)) $Wout[$k] = $c[$k]; $Wout['restored'] = true; }
-        elseif ($pid !== $uid) $state['hidden_draft'] = true; }
-    out($Wout + ['state' => $state, 'mode' => $mode, 'owner_id' => $pid]);
+    }
+    out($Wout + ['state' => $state, 'mode' => $mode, 'owner_id' => $pid, 'can_combine' => !$ro && (rp_global($u) || (bool)rp_heads($u))]);
 }
 
 function rp_weekly_clean(array $b, string $today): array {
@@ -282,22 +288,52 @@ if ($method === 'POST' && $sub === 'weekly-xlsx') { // the edited sheet comes ba
 function rp_legend_out(): array { return array_map(fn($k) => ['key' => $k, 'label' => RP_LEGEND[$k][0], 'short' => RP_LEGEND_SHORT[$k], 'color' => RP_LEGEND[$k][1]], array_keys(RP_LEGEND)); }
 function rp_weekly_access(array $u, array $row): bool {
     if ((int)$row['user_id'] === (int)$u['id']) return true;
-    if (rp_global($u) || rp_heads_user($u, (int)$row['user_id'])) return ($row['status'] ?? 'submitted') === 'submitted';
+    if (($row['kind'] ?? 'personal') === 'combined') return (bool)one('SELECT 1 FROM weekly_shares WHERE weekly_id=? AND user_id=?', [$row['id'], $u['id']]);   // a combined report belongs to its author and the people it was shared with
+    if (rp_global($u) || rp_heads_user($u, (int)$row['user_id'])) return true;
     return (bool)one('SELECT 1 FROM weekly_shares WHERE weekly_id=? AND user_id=?', [$row['id'], $u['id']]);
 }
 if ($method === 'GET' && ($seg[1] ?? '') === 'weekly' && isset($seg[2]) && ctype_digit($seg[2])) { // a saved (shared) weekly report
     $row = one('SELECT * FROM weekly_reports WHERE id=?', [(int)$seg[2]]); if (!$row || !rp_weekly_access($u, $row)) fail('Not found', 404);
     $c = json_decode((string)$row['data'], true) ?: [];
     $sh = one('SELECT s.note,s.created_at,sb.name AS shared_by FROM weekly_shares s LEFT JOIN users sb ON sb.id=s.shared_by WHERE s.weekly_id=? AND s.user_id=?', [$row['id'], $uid]);
-    out($c + ['people' => [], 'legend' => rp_legend_out(), 'week_end' => date('Y-m-d', strtotime($row['week_start'] . ' +4 days')), 'mode' => $ro ? 'view' : ((int)$row['user_id'] === $uid ? 'owner' : ((rp_global($u) || rp_heads_user($u, (int)$row['user_id'])) ? 'review' : 'view')), 'owner_id' => (int)$row['user_id'], 'state' => ['id' => (int)$row['id'], 'status' => $row['status'], 'updated_at' => $row['updated_at'], 'submitted_at' => $row['submitted_at']],
+    out($c + ['kind' => $row['kind'], 'people' => [], 'legend' => rp_legend_out(), 'week_end' => date('Y-m-d', strtotime($row['week_start'] . ' +4 days')), 'mode' => $ro ? 'view' : ((int)$row['user_id'] === $uid ? 'owner' : ((rp_global($u) || rp_heads_user($u, (int)$row['user_id'])) ? 'review' : 'view')), 'owner_id' => (int)$row['user_id'], 'state' => ['id' => (int)$row['id'], 'status' => $row['status'], 'updated_at' => $row['updated_at'], 'submitted_at' => $row['submitted_at']],
         'saved' => ['id' => (int)$row['id'], 'owner_id' => (int)$row['user_id'], 'status' => $row['status'], 'submitted_at' => $row['submitted_at'], 'updated_at' => $row['updated_at'], 'shared_by' => $sh['shared_by'] ?? null, 'note' => $sh['note'] ?? null,
         'recipients' => all('SELECT u.name FROM weekly_shares s JOIN users u ON u.id=s.user_id WHERE s.weekly_id=? ORDER BY u.name', [$row['id']])]]);
 }
 if ($method === 'GET' && $sub === 'weekly-shared') { // lists for the weekly page
-    $with = all('SELECT w.id,w.week_start,u.name AS employee,s.note,s.created_at,sb.name AS shared_by FROM weekly_shares s JOIN weekly_reports w ON w.id=s.weekly_id JOIN users u ON u.id=w.user_id LEFT JOIN users sb ON sb.id=s.shared_by WHERE s.user_id=? ORDER BY s.created_at DESC LIMIT 30', [$uid]);
-    $mine = all('SELECT w.id,w.week_start,w.updated_at,w.status,w.submitted_at,(SELECT COUNT(*) FROM weekly_shares s WHERE s.weekly_id=w.id) AS shares FROM weekly_reports w WHERE w.user_id=? ORDER BY w.week_start DESC LIMIT 12', [$uid]); $team = [];
-    if (rp_global($u) || rp_heads($u)) $team = all("SELECT w.id,w.week_start,w.updated_at,w.submitted_at,u.name AS employee FROM weekly_reports w JOIN users u ON u.id=w.user_id WHERE w.status='submitted' AND w.user_id<>? " . (rp_global($u) ? '' : 'AND w.user_id IN ' . rp_member_sql(rp_heads($u))) . ' ORDER BY COALESCE(w.submitted_at,w.updated_at) DESC LIMIT 30', [$uid]);
-    out(['with_me' => $with, 'mine' => $mine, 'team' => $team]);
+    $with = all('SELECT w.id,w.week_start,w.kind,u.name AS employee,s.note,s.created_at,sb.name AS shared_by FROM weekly_shares s JOIN weekly_reports w ON w.id=s.weekly_id JOIN users u ON u.id=w.user_id LEFT JOIN users sb ON sb.id=s.shared_by WHERE s.user_id=? ORDER BY s.created_at DESC LIMIT 30', [$uid]);
+    $mine = all("SELECT w.id,w.week_start,w.updated_at,w.status,w.submitted_at,(SELECT COUNT(*) FROM weekly_shares s WHERE s.weekly_id=w.id) AS shares FROM weekly_reports w WHERE w.user_id=? AND w.kind='personal' ORDER BY w.week_start DESC LIMIT 12", [$uid]);
+    $combined = array_map(fn($r) => ['id' => (int)$r['id'], 'week_start' => $r['week_start'], 'updated_at' => $r['updated_at'], 'shares' => (int)$r['shares'], 'title' => (json_decode((string)$r['data'], true)['employee'] ?? 'Combined weekly report')], all("SELECT w.id,w.week_start,w.updated_at,w.data,(SELECT COUNT(*) FROM weekly_shares s WHERE s.weekly_id=w.id) AS shares FROM weekly_reports w WHERE w.user_id=? AND w.kind='combined' ORDER BY w.updated_at DESC LIMIT 12", [$uid])); $team = [];
+    if (rp_global($u) || rp_heads($u)) $team = all("SELECT w.id,w.week_start,w.updated_at,w.submitted_at,w.status,u.name AS employee FROM weekly_reports w JOIN users u ON u.id=w.user_id WHERE w.kind='personal' AND w.user_id<>? " . (rp_global($u) ? '' : 'AND w.user_id IN ' . rp_member_sql(rp_heads($u))) . ' ORDER BY COALESCE(w.submitted_at,w.updated_at) DESC LIMIT 30', [$uid]);
+    out(['with_me' => $with, 'mine' => $mine, 'combined' => $combined, 'team' => $team]);
+}
+/** People a head may combine reports from (their department members; administrators: everyone), with the state of their report for the week. */
+function rp_combine_people(array $u, string $week): array {
+    $uid = (int)$u['id']; $ppl = rp_global($u) ? all("SELECT id,name FROM users WHERE active=1 AND role<>'founder' ORDER BY name") : (rp_heads($u) ? all('SELECT id,name FROM users WHERE active=1 AND id IN ' . rp_member_sql(rp_heads($u)) . ' ORDER BY name') : []);
+    $st = []; foreach (all("SELECT user_id,status FROM weekly_reports WHERE week_start=? AND kind='personal'", [$week]) as $r) $st[(int)$r['user_id']] = $r['status'];
+    $cnt = []; foreach ($ppl as $p) $cnt[] = ['id' => (int)$p['id'], 'name' => $p['name'], 'status' => $st[(int)$p['id']] ?? 'none'];
+    return $cnt;
+}
+if ($method === 'GET' && $sub === 'weekly-team') {
+    if (!(rp_global($u) || rp_heads($u))) fail('Only heads of department can combine reports', 403);
+    $week = rp_week_start((string)(d($_GET['week'] ?? null) ?: $today)); out(['week_start' => $week, 'people' => rp_combine_people($u, $week)]);
+}
+if ($method === 'POST' && $sub === 'weekly-combine') {
+    if ($ro) fail('Founder accounts are read-only', 403); if (!(rp_global($u) || rp_heads($u))) fail('Only heads of department can combine reports', 403);
+    $b = body(); $week = rp_week_start((string)(d($b['week'] ?? null) ?: $today)); $ids = array_values(array_unique(array_filter(array_map('intval', (array)($b['user_ids'] ?? [])))));
+    if (!$ids) fail('Choose at least one person'); if (count($ids) > 40) fail('Choose 40 people or fewer');
+    $allowed = array_column(rp_combine_people($u, $week), 'id'); foreach ($ids as $x) if (!in_array($x, $allowed, true)) fail('You can only combine reports of people in your departments', 403);
+    $mon = $week; $fri = date('Y-m-d', strtotime($mon . ' +4 days')); $rows = []; $names = [];
+    foreach (all('SELECT id,name FROM users WHERE id IN (' . implode(',', $ids) . ') ORDER BY name') as $m) {
+        $sv = one("SELECT data FROM weekly_reports WHERE user_id=? AND week_start=? AND kind='personal'", [$m['id'], $mon]); $mr = null;
+        if ($sv) { $cc = json_decode((string)$sv['data'], true); if (is_array($cc) && !empty($cc['rows'])) $mr = $cc['rows']; }
+        if ($mr === null) $mr = rp_weekly_rows((int)$m['id'], $mon);
+        foreach ($mr as $r) { $r['client'] = $m['name'] . ($r['client'] !== '' ? ' · ' . $r['client'] : ''); $rows[] = $r; } $names[] = $m['name']; }
+    if (!$rows) fail('The selected people have nothing to report for this week');
+    $title = s($b['title'] ?? '', 120) ?: 'Combined weekly report (' . count($names) . ' staff)';
+    $c = ['code' => 'ASL-HR-WR-001', 'rev' => 'Rev 01', 'employee' => $title, 'designation' => (string)($u['job_title'] ?: 'Head of Department'), 'date' => $fri, 'date_text' => '', 'week_start' => $week, 'rows' => rp_weekly_clean(['rows' => $rows], $today)['rows'], 'kind' => 'combined', 'members' => $names, 'member_ids' => $ids, 'user_id' => $uid];
+    for ($try = 0; $try < 5; $try++) { try { q("INSERT INTO weekly_reports (user_id,week_start,data,status,submitted_at,kind,ukey) VALUES (?,?,?,'submitted',NOW(),'combined',?)", [$uid, $week, json_encode($c, JSON_UNESCAPED_UNICODE), mt_rand(1, 2000000000)]); break; } catch (PDOException $e) { if ($try === 4) throw $e; } }
+    $wid = (int)db()->lastInsertId(); log_act($uid, 'weekly_combined', count($names) . ' people ' . $week); out(['id' => $wid, 'rows' => count($rows), 'members' => $names], 201);
 }
 /** A reviewer (department head, administrator) may only write the Comment and Management review columns: everything else stays as the person wrote it. */
 function rp_weekly_review_merge(array $stored, array $incoming): array {
@@ -307,9 +343,16 @@ function rp_weekly_review_merge(array $stored, array $incoming): array {
 /** Autosave and Submit. The owner writes the whole sheet; a department head (or administrator) can only add comments and the management review to a SUBMITTED report. */
 if ($method === 'POST' && $sub === 'weekly-save') {
     if ($ro) fail('Founder accounts are read-only', 403);
-    $b = body(); $pid = (int)($b['user_id'] ?? 0) ?: $uid; $emp = one('SELECT id,name,department_id FROM users WHERE id=?', [$pid]); if (!$emp) fail('Not found', 404);
+    $b = body();
+    if (!empty($b['id'])) {   // a combined team report: only its author edits it
+        $row = one("SELECT * FROM weekly_reports WHERE id=? AND kind='combined' AND user_id=?", [(int)$b['id'], $uid]); if (!$row) fail('Not found', 404);
+        $c = rp_weekly_clean($b, $today); $old = json_decode((string)$row['data'], true) ?: []; $c['week_start'] = $row['week_start']; $c['user_id'] = $uid; $c['kind'] = 'combined'; foreach (['members', 'member_ids'] as $k) if (isset($old[$k])) $c[$k] = $old[$k];
+        q('UPDATE weekly_reports SET data=?, updated_at=NOW() WHERE id=?', [json_encode($c, JSON_UNESCAPED_UNICODE), $row['id']]);
+        out(['ok' => true, 'state' => one('SELECT id,status,updated_at,submitted_at FROM weekly_reports WHERE id=?', [$row['id']]), 'notified' => 0]);
+    }
+    $pid = (int)($b['user_id'] ?? 0) ?: $uid; $emp = one('SELECT id,name,department_id FROM users WHERE id=?', [$pid]); if (!$emp) fail('Not found', 404);
     $c = rp_weekly_clean($b, $today); $week = rp_week_start((string)($c['week_start'] ?: $c['date'])); $c['week_start'] = $week; $c['user_id'] = $pid; if ($c['employee'] === '') $c['employee'] = $emp['name'];
-    $row = one('SELECT * FROM weekly_reports WHERE user_id=? AND week_start=?', [$pid, $week]); $submit = !empty($b['submit']);
+    $row = one("SELECT * FROM weekly_reports WHERE user_id=? AND week_start=? AND kind='personal'", [$pid, $week]); $submit = !empty($b['submit']);
     if ($pid !== $uid) {   // review by a department head / administrator
         if (!(rp_global($u) || rp_heads_user($u, $pid))) fail('You can only comment on reports of people in your departments', 403);
         if (!$row || $row['status'] !== 'submitted') fail($emp['name'] . ' has not submitted this report yet', 409);
@@ -331,7 +374,7 @@ if ($method === 'POST' && $sub === 'weekly-save') {
     $first = !($row && $row['status'] === 'submitted') && $submit;
     q("INSERT INTO weekly_reports (user_id,week_start,data,status,submitted_at) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE data=VALUES(data), status=IF(status='submitted' OR VALUES(status)='submitted','submitted','draft'), submitted_at=IF(VALUES(status)='submitted' AND submitted_at IS NULL, NOW(), submitted_at), updated_at=NOW()",
       [$pid, $week, json_encode($c, JSON_UNESCAPED_UNICODE), $submit ? 'submitted' : 'draft', $submit ? date('Y-m-d H:i:s') : null]);
-    $r2 = one('SELECT id,status,updated_at,submitted_at FROM weekly_reports WHERE user_id=? AND week_start=?', [$pid, $week]); $told = 0;
+    $r2 = one("SELECT id,status,updated_at,submitted_at FROM weekly_reports WHERE user_id=? AND week_start=? AND kind='personal'", [$pid, $week]); $told = 0;
     if ($first) {   // tell the head(s) of the person's department(s)
         $depts = user_dept_ids($pid, (int)($emp['department_id'] ?? 0)); $heads = $depts ? array_column(all('SELECT DISTINCT head_id FROM departments WHERE head_id IS NOT NULL AND id IN (' . implode(',', array_map('intval', $depts)) . ')'), 'head_id') : [];
         foreach (array_unique(array_map('intval', $heads)) as $h) { if ($h === $uid) continue; notify($h, 'weekly_submitted', $emp['name'] . ' submitted the weekly report', 'Week of ' . date('j M', strtotime($week)) . ' · ' . count($c['rows']) . ' item' . (count($c['rows']) === 1 ? '' : 's'), '#/reports/weekly/' . $r2['id']); $told++; }
@@ -346,9 +389,11 @@ if ($method === 'POST' && $sub === 'weekly-share') {
     $c = rp_weekly_clean($b, $today); $week = rp_week_start((string)($c['week_start'] ?: $c['date'])); $c['week_start'] = $week; $c['user_id'] = $pid; if ($c['employee'] === '') $c['employee'] = $emp['name'];
     if (!$c['rows']) fail('There is nothing in the report yet');
     $ids = array_values(array_unique(array_filter(array_map('intval', (array)($b['user_ids'] ?? [])))));  $ids = array_values(array_diff($ids, [$uid, $pid])); if (!$ids) fail('Choose at least one person to share it with');
-    if ($pid !== $uid) { $st0 = one('SELECT data FROM weekly_reports WHERE user_id=? AND week_start=?', [$pid, $week]); if ($st0) $c = rp_weekly_review_merge(json_decode((string)$st0['data'], true) ?: [], $c) + ['user_id' => $pid]; }
-    q("INSERT INTO weekly_reports (user_id,week_start,data,status,submitted_at) VALUES (?,?,?,'submitted',NOW()) ON DUPLICATE KEY UPDATE data=VALUES(data), status='submitted', submitted_at=COALESCE(submitted_at,NOW()), updated_at=NOW()", [$pid, $week, json_encode($c, JSON_UNESCAPED_UNICODE)]);
-    $wid = (int)one('SELECT id FROM weekly_reports WHERE user_id=? AND week_start=?', [$pid, $week])['id'];
+    $combinedId = 0; if (!empty($b['id'])) { $crow = one("SELECT id,data FROM weekly_reports WHERE id=? AND kind='combined' AND user_id=?", [(int)$b['id'], $uid]); if (!$crow) fail('Not found', 404); $combinedId = (int)$crow['id']; $old = json_decode((string)$crow['data'], true) ?: []; foreach (['members', 'member_ids'] as $k) if (isset($old[$k])) $c[$k] = $old[$k]; $c['kind'] = 'combined'; }
+    if ($pid !== $uid && !$combinedId) { $st0 = one("SELECT data,status FROM weekly_reports WHERE user_id=? AND week_start=? AND kind='personal'", [$pid, $week]); if (!$st0 || $st0['status'] !== 'submitted') fail($emp['name'] . ' has not submitted this report yet. Wait until it is submitted, or use "Combine team reports" to build one from tasks.', 409); if ($st0) $c = rp_weekly_review_merge(json_decode((string)$st0['data'], true) ?: [], $c) + ['user_id' => $pid]; }
+    if ($combinedId) { q('UPDATE weekly_reports SET data=?, updated_at=NOW() WHERE id=?', [json_encode($c, JSON_UNESCAPED_UNICODE), $combinedId]); $wid = $combinedId; }
+    else { q("INSERT INTO weekly_reports (user_id,week_start,data,status,submitted_at) VALUES (?,?,?,'submitted',NOW()) ON DUPLICATE KEY UPDATE data=VALUES(data), status='submitted', submitted_at=COALESCE(submitted_at,NOW()), updated_at=NOW()", [$pid, $week, json_encode($c, JSON_UNESCAPED_UNICODE)]);
+        $wid = (int)one("SELECT id FROM weekly_reports WHERE user_id=? AND week_start=? AND kind='personal'", [$pid, $week])['id']; }
     $note = s($b['note'] ?? '', 500); $email = !empty($b['email']); $bin = null;
     require_once __DIR__ . '/accounts.php'; require_once __DIR__ . '/campcore.php';
     if ($email) { try { $bin = rp_weekly_xlsx($c); } catch (Throwable $e) { $bin = null; } }

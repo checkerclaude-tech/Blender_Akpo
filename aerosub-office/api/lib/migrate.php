@@ -346,7 +346,11 @@ function migrate_weekly(): array {
         FOREIGN KEY (weekly_id) REFERENCES weekly_reports(id) ON DELETE CASCADE, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
     ] as $q) db()->exec($q);
     if (!col_exists('weekly_reports', 'status')) { db()->exec("ALTER TABLE weekly_reports ADD COLUMN status ENUM('draft','submitted') NOT NULL DEFAULT 'draft', ADD COLUMN submitted_at DATETIME NULL"); db()->exec("UPDATE weekly_reports SET status='submitted', submitted_at=updated_at WHERE id IN (SELECT weekly_id FROM weekly_shares)"); }
-    return ['Weekly report sharing ready (drafts, submit, department-head review).'];
+    if (!col_exists('weekly_reports', 'kind')) {
+        db()->exec("ALTER TABLE weekly_reports ADD COLUMN kind ENUM('personal','combined') NOT NULL DEFAULT 'personal', ADD COLUMN ukey INT UNSIGNED NOT NULL DEFAULT 0");
+        db()->exec('ALTER TABLE weekly_reports DROP INDEX uq_week, ADD UNIQUE KEY uq_week (user_id,week_start,ukey)');
+    }
+    return ['Weekly report sharing ready (drafts, submit, department-head review, combined team reports).'];
 }
 
 // Games: admin settings (who sees them, when they are open), matches and players. Safe to run repeatedly.
