@@ -111,7 +111,10 @@ $sub2 = $seg[3] ?? null; $sub2 = ($sub2 !== null && ctype_digit($sub2)) ? (int)$
 
 /* ---------- dashboard ---------- */
 if ($method === 'GET' && $sub === 'dashboard') {
-    $date = d($_GET['date'] ?? null) ?: $today;
+    $date = d($_GET['date'] ?? null) ?: $today;     // the day shown (or the last day of the range)
+    $rfrom = d($_GET['from'] ?? null); $rangeMode = $rfrom !== null && $rfrom <= $date; if ($rangeMode && $rfrom < date('Y-m-d', strtotime($date . ' -365 days'))) $rfrom = date('Y-m-d', strtotime($date . ' -365 days'));
+    $qs = mb_substr(trim((string)($_GET['q'] ?? '')), 0, 60); $like = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $qs) . '%';
+    $prio = in_array($_GET['priority'] ?? '', ['low', 'medium', 'high', 'urgent'], true) ? $_GET['priority'] : ''; $source = in_array($_GET['source'] ?? '', ['tasks', 'weekly'], true) ? $_GET['source'] : 'all';
     $global = rp_global($u); $managed = rp_heads($u); $review = $global || (bool)$managed;
     // Filters the person is allowed to use
     $depts = $global ? all('SELECT id,name FROM departments ORDER BY name') : ($managed ? all('SELECT id,name FROM departments WHERE id IN (' . implode(',', $managed) . ') ORDER BY name') : []);
@@ -128,22 +131,42 @@ if ($method === 'GET' && $sub === 'dashboard') {
     [$ts, $tp] = rp_task_scope($u); $tw = [$ts]; $tpar = $tp;
     if ($fd) { $tw[] = '(t.department_id=? OR t.assignee_id IN ' . rp_member_sql([$fd]) . ')'; $tpar[] = $fd; }
     if ($fu) { $tw[] = 't.assignee_id=?'; $tpar[] = $fu; }
-    $since = date('Y-m-d', strtotime($date . ' -30 days')) . ' 00:00:00';
+    if ($qs !== '') { $tw[] = '(t.title LIKE ? OR a.name LIKE ?)'; array_push($tpar, $like, $like); }
+    if ($prio !== '') { $tw[] = 't.priority=?'; $tpar[] = $prio; }
+    if ($source === 'weekly') $tw[] = '1=0';
+    $since = ($rangeMode ? $rfrom : date('Y-m-d', strtotime($date . ' -30 days'))) . ' 00:00:00';
     $tasks = all("SELECT t.id,t.title,t.status,t.priority,t.due_date,t.assignee_id,t.department_id,t.updated_at,t.completed_at,a.name AS assignee_name,d.name AS department
                   FROM tasks t LEFT JOIN users a ON a.id=t.assignee_id LEFT JOIN departments d ON d.id=t.department_id
-                  WHERE " . implode(' AND ', $tw) . " AND (t.status IN ('todo','in_progress','blocked','deferred') OR t.updated_at >= ?) AND t.created_at <= ? ORDER BY t.due_date IS NULL, t.due_date LIMIT 5000",
-                 array_merge($tpar, [$since, $date . ' 23:59:59']));
+                  WHERE " . implode(' AND ', $tw) . " AND (t.status IN ('todo','in_progress','blocked','deferred') OR (t.updated_at >= ? AND t.updated_at <= ?)) AND t.created_at <= ? ORDER BY t.due_date IS NULL, t.due_date LIMIT 5000",
+                 array_merge($tpar, [$since, $date . ' 23:59:59', $date . ' 23:59:59']));
 
     // reports on the chosen day
-    [$rs, $rp] = rp_scope($u); $rw = [$rs, 'r.report_date=?']; $rpar = array_merge($rp, [$date]);
+    [$rs, $rp] = rp_scope($u); $rw = [$rs, $rangeMode ? 'r.report_date BETWEEN ? AND ?' : 'r.report_date=?']; $rpar = array_merge($rp, $rangeMode ? [$rfrom, $date] : [$date]);
     if ($fd) { $rw[] = '(t.department_id=? OR r.user_id IN ' . rp_member_sql([$fd]) . ')'; $rpar[] = $fd; }
     if ($fu) { $rw[] = 'r.user_id=?'; $rpar[] = $fu; }
+    if ($qs !== '') { $rw[] = '(r.summary LIKE ? OR t.title LIKE ? OR u.name LIKE ?)'; array_push($rpar, $like, $like, $like); }
+    if ($prio !== '') { $rw[] = 't.priority=?'; $rpar[] = $prio; }
+    if ($source === 'weekly') $rw[] = '1=0';
     $reports = all('SELECT r.id,r.task_id,r.user_id,r.report_date,r.status,r.progress,r.hours,r.summary,r.blockers,r.created_at,r.updated_at,t.title AS task_title,t.department_id,u.name AS user_name,d.name AS department,
                     (SELECT COUNT(*) FROM report_comments c WHERE c.report_id=r.id) AS comment_count, (SELECT COUNT(*) FROM report_shares s WHERE s.report_id=r.id) AS share_count
                     FROM daily_reports r JOIN tasks t ON t.id=r.task_id JOIN users u ON u.id=r.user_id LEFT JOIN departments d ON d.id=t.department_id
-                    WHERE ' . implode(' AND ', $rw) . ' ORDER BY u.name, r.updated_at DESC LIMIT 300', $rpar);
+                    WHERE ' . implode(' AND ', $rw) . ' ORDER BY ' . ($rangeMode ? 'r.report_date DESC, ' : '') . 'u.name, r.updated_at DESC LIMIT 300', $rpar);
     $reported = []; foreach ($reports as $x) $reported[(int)$x['task_id'] . ':' . (int)$x['user_id']] = true;
 
+    // Items written in weekly reports (Delivered / In view / Nil-Lost) that are not on the task list count with the tasks: delivered = completed, in view = open, lost = canceled
+    $wkItems = []; $WMAP = ['done' => 'done', 'view' => 'in_progress', 'lost' => 'canceled'];
+    if ($source !== 'tasks') {
+        $wIds = $fu ? [$fu] : ($review ? $peopleIds : [$uid]); $wSql = 'w.user_id IN (' . ($wIds ? implode(',', array_map('intval', $wIds)) : '0') . ')'; $wPar = [];
+        if ($fd && !$fu) { $wSql .= ' AND w.user_id IN ' . rp_member_sql([$fd]); }
+        $wFrom = $rangeMode ? $rfrom : date('Y-m-d', strtotime($date . ' -30 days'));
+        $own = []; foreach (all('SELECT assignee_id, LOWER(TRIM(title)) t FROM tasks WHERE assignee_id IN (' . ($wIds ? implode(',', array_map('intval', $wIds)) : '0') . ')') as $r0) $own[(int)$r0['assignee_id']][$r0['t']] = 1;
+        $seenW = [];
+        foreach (all("SELECT w.id,w.user_id,w.week_start,w.data,w.status AS wstatus,u.name FROM weekly_reports w JOIN users u ON u.id=w.user_id WHERE w.kind='personal' AND $wSql AND w.week_start BETWEEN ? AND ? ORDER BY w.week_start", array_merge($wPar, [date('Y-m-d', strtotime($wFrom . ' -6 days')), $date])) as $w) {
+            $c = json_decode((string)$w['data'], true); foreach ((array)($c['rows'] ?? []) as $x) { $tt = mb_strtolower(trim((string)($x['task'] ?? ''))); if ($tt === '' || isset($own[(int)$w['user_id']][$tt])) continue;
+                $st = array_key_exists($x['status'] ?? '', $WMAP) ? $x['status'] : 'view'; $hay = mb_strtolower(($x['task'] ?? '') . ' ' . ($x['client'] ?? '') . ' ' . ($x['project'] ?? '') . ' ' . $w['name']); if ($qs !== '' && mb_strpos($hay, mb_strtolower($qs)) === false) continue;
+                $seenW[(int)$w['user_id'] . '|' . $tt] = ['weekly_id' => (int)$w['id'], 'user_id' => (int)$w['user_id'], 'user_name' => $w['name'], 'task' => (string)$x['task'], 'client' => (string)($x['client'] ?? ''), 'project' => (string)($x['project'] ?? ''), 'status' => $st, 'week_start' => $w['week_start'], 'outstanding' => (string)($x['outstanding'] ?? ''), 'draft' => $w['wstatus'] !== 'submitted']; } }
+        $wkItems = array_slice(array_values($seenW), 0, 500);
+    }
     // status cards, people table and "not reported yet"
     $counts = ['todo' => 0, 'in_progress' => 0, 'blocked' => 0, 'deferred' => 0, 'canceled' => 0, 'done' => 0, 'transferred' => 0];
     $per = []; $missing = [];
@@ -156,11 +179,13 @@ if ($method === 'GET' && $sub === 'dashboard') {
             if (in_array($st, RP_WORKING, true)) { $per[$aid]['expected']++; if (isset($reported[(int)$t['id'] . ':' . $aid])) $per[$aid]['reported']++; elseif ($date <= $today) $missing[] = ['task_id' => (int)$t['id'], 'title' => $t['title'], 'status' => $st, 'user_id' => $aid, 'user_name' => $t['assignee_name'], 'department' => $t['department'], 'due_date' => $t['due_date']]; }
         }
     }
+    foreach ($wkItems as $wi) { $st = $WMAP[$wi['status']]; $counts[$st]++; $aid = $wi['user_id'];
+        $per[$aid] ??= ['id' => $aid, 'name' => $wi['user_name'], 'counts' => array_fill_keys(array_keys($counts), 0), 'expected' => 0, 'reported' => 0]; $per[$aid]['counts'][$st]++; $per[$aid]['wk'] = ($per[$aid]['wk'] ?? ['done' => 0, 'view' => 0, 'lost' => 0]); $per[$aid]['wk'][$wi['status']]++; }
     usort($missing, fn($a, $b) => strcmp((string)$a['user_name'], (string)$b['user_name']));
-    $people_rows = array_values($per); usort($people_rows, fn($a, $b) => ($b['expected'] - $b['reported']) <=> ($a['expected'] - $a['reported']) ?: strcmp((string)$a['name'], (string)$b['name']));
+    foreach ($per as &$pp) { $pp['wk'] = $pp['wk'] ?? ['done' => 0, 'view' => 0, 'lost' => 0]; } unset($pp); $people_rows = array_values($per); usort($people_rows, fn($a, $b) => ($b['expected'] - $b['reported']) <=> ($a['expected'] - $a['reported']) ?: strcmp((string)$a['name'], (string)$b['name']));
 
     // 7-day trend
-    $from = date('Y-m-d', strtotime($date . ' -6 days'));
+    $from = $rangeMode ? max($rfrom, date('Y-m-d', strtotime($date . ' -30 days'))) : date('Y-m-d', strtotime($date . ' -6 days')); $nDays = (int)round((strtotime($date) - strtotime($from)) / 86400) + 1;
     $trw = [$rs, 'r.report_date BETWEEN ? AND ?']; $trp = array_merge($rp, [$from, $date]);
     if ($fd) { $trw[] = '(t.department_id=? OR r.user_id IN ' . rp_member_sql([$fd]) . ')'; $trp[] = $fd; }
     if ($fu) { $trw[] = 'r.user_id=?'; $trp[] = $fu; }
@@ -169,7 +194,7 @@ if ($method === 'GET' && $sub === 'dashboard') {
     if ($fd) { $dw[] = '(t.department_id=? OR t.assignee_id IN ' . rp_member_sql([$fd]) . ')'; $dp[] = $fd; }
     if ($fu) { $dw[] = 't.assignee_id=?'; $dp[] = $fu; }
     $doneDay = array_column(all('SELECT DATE(t.completed_at) dte, COUNT(*) c FROM tasks t WHERE ' . implode(' AND ', $dw) . ' GROUP BY DATE(t.completed_at)', $dp), 'c', 'dte');
-    $trend = []; for ($i = 0; $i < 7; $i++) { $day = date('Y-m-d', strtotime($from . " +$i days")); $trend[] = ['date' => $day, 'reports' => (int)($byDay[$day] ?? 0), 'completed' => (int)($doneDay[$day] ?? 0)]; }
+    $trend = []; for ($i = 0; $i < $nDays; $i++) { $day = date('Y-m-d', strtotime($from . " +$i days")); $trend[] = ['date' => $day, 'reports' => (int)($byDay[$day] ?? 0), 'completed' => (int)($doneDay[$day] ?? 0)]; }
 
     // reports other people shared with me
     $shared = all('SELECT r.id,r.report_date,r.status,r.summary,t.title AS task_title,u.name AS user_name,sb.name AS shared_by,rs.note,rs.created_at AS shared_at
@@ -180,7 +205,8 @@ if ($method === 'GET' && $sub === 'dashboard') {
     out(['date' => $date, 'today' => $today, 'scope' => $global ? 'all' : ($managed ? 'department' : 'own'), 'review' => $review, 'read_only' => $ro,
          'departments' => $depts, 'people' => $people, 'filter' => ['department' => $fd, 'user' => $fu],
          'perf' => tab_access($u, 'performance'), 'counts' => $counts, 'reports' => $reports, 'missing' => array_slice($missing, 0, 100), 'missing_total' => count($missing), 'people_rows' => $people_rows,
-         'trend' => $trend, 'shared' => $shared, 'my_missing' => $mine,
+         'trend' => $trend, 'shared' => $shared, 'my_missing' => $mine, 'weekly_items' => $wkItems, 'range' => ['mode' => $rangeMode, 'from' => $rangeMode ? $rfrom : date('Y-m-d', strtotime($date . ' -30 days')), 'to' => $date],
+         'filter_more' => ['q' => $qs, 'priority' => $prio, 'source' => $source],
          'totals' => ['reports' => count($reports), 'expected' => array_sum(array_column($people_rows, 'expected')), 'missing' => count($missing)]]);
 }
 
@@ -460,6 +486,8 @@ if ($method === 'GET' && $sub === 'performance') {
     // Administrators and the Founder see every department; a department head sees their own; anyone else the Root Admin chose sees everyone
     $everyone = $global || !$managed;
     $days = in_array((int)($_GET['days'] ?? 30), [7, 14, 30, 60, 90], true) ? (int)$_GET['days'] : 30; $to = $today; $from = date('Y-m-d', strtotime("-" . ($days - 1) . " days"));
+    $cf = d($_GET['from'] ?? null); $ct = d($_GET['to'] ?? null);   // a custom range (up to a year)
+    if ($cf) { $to = min($ct ?: $today, $today); $from = min($cf, $to); if ($from < date('Y-m-d', strtotime($to . ' -365 days'))) $from = date('Y-m-d', strtotime($to . ' -365 days')); $days = (int)round((strtotime($to) - strtotime($from)) / 86400) + 1; }
     $depts = $everyone ? all('SELECT id,name FROM departments ORDER BY name') : all('SELECT id,name FROM departments WHERE id IN (' . implode(',', $managed) . ') ORDER BY name'); $dids = array_map('intval', array_column($depts, 'id'));
     $fd = (int)($_GET['department'] ?? 0); if ($fd && !in_array($fd, $dids, true)) $fd = 0;
     $people = $fd ? all("SELECT id,name,job_title FROM users WHERE active=1 AND role<>'founder' AND id IN " . rp_member_sql([$fd]) . ' ORDER BY name')

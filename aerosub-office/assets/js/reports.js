@@ -49,48 +49,62 @@
   };
 
   /* ---------- reports dashboard ---------- */
-  const RP = { date: '', dept: '', user: '', status: '' };
+  const RP = { date: '', dept: '', user: '', status: '', q: '', pri: '', src: '', mode: 'day', from: '', to: '', today: '', focusQ: false };
+  const RANGES = [['day', 'A single day'], ['7', 'Last 7 days'], ['30', 'Last 30 days'], ['week', 'This week'], ['month', 'This month'], ['custom', 'Custom range']];
+  const isoD = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  function rangeFor(mode, t0) { const t = dayOf(t0); if (mode === '7') return { from: shiftDay(t0, -6), to: t0 }; if (mode === '30') return { from: shiftDay(t0, -29), to: t0 };
+    if (mode === 'week') { const k = (t.getDay() + 6) % 7; return { from: shiftDay(t0, -k), to: t0 }; } if (mode === 'month') return { from: isoD(new Date(t.getFullYear(), t.getMonth(), 1)), to: t0 };
+    return { from: RP.from || shiftDay(t0, -6), to: RP.to || t0 }; }
 
   views.reports = async () => {
     const sub1 = location.hash.split('/')[2];
     if (sub1 === 'weekly') return weeklyView();
     if (sub1 === 'performance') return window.RPPerf ? window.RPPerf.view() : X.render();
     const v = $('#view'); v.innerHTML = '<div class="empty">Loading…</div>';
-    const q = new URLSearchParams(); if (RP.date) q.set('date', RP.date); if (RP.dept) q.set('department', RP.dept); if (RP.user) q.set('user', RP.user);
+    const q = new URLSearchParams(); const t0 = RP.today || isoD(new Date());
+    if (RP.mode === 'day') { if (RP.date) q.set('date', RP.date); } else { const rg = rangeFor(RP.mode, t0); q.set('date', rg.to); q.set('from', rg.from); }
+    if (RP.dept) q.set('department', RP.dept); if (RP.user) q.set('user', RP.user); if (RP.q) q.set('q', RP.q); if (RP.pri) q.set('priority', RP.pri); if (RP.src) q.set('source', RP.src);
     const D = await api('reports/dashboard?' + q.toString());
-    RP.date = D.date === D.today ? '' : D.date; RP.dept = D.filter.department || ''; RP.user = D.filter.user || '';
-    const isToday = D.date === D.today, ro = readOnly();
+    RP.today = D.today; if (RP.mode === 'day') RP.date = D.date === D.today ? '' : D.date; RP.dept = D.filter.department || ''; RP.user = D.filter.user || '';
+    const isToday = D.date === D.today && RP.mode === 'day', ro = readOnly(), inRange = RP.mode !== 'day', anyFilter = !!(RP.q || RP.dept || RP.user || RP.pri || RP.src);
     const scopeTxt = D.scope === 'all' ? 'Every department' : D.scope === 'department' ? (D.departments.map(d => d.name).join(', ') || 'Your department') : 'Your own tasks and reports shared with you';
     const people = D.people || [];
     v.innerHTML =
       '<div class="top"><div><h1>Reports</h1><div class="muted">' + esc(scopeTxt) + '</div></div><span class="right row">' +
       (ro ? '' : '<button class="btn" id="rpnew">+ Daily report</button>') + '<a class="btn ghost" href="#/reports/weekly">Weekly report</a>' + (D.perf ? '<a class="btn ghost" href="#/reports/performance">Team performance</a>' : '') + '<button class="btn ghost" id="rpprint">Print</button></span></div>' +
-      '<div class="rp-filters"><div class="row"><button class="btn ghost sm" id="rpprev" aria-label="Previous day">‹</button><input type="date" id="rpdate" value="' + esc(D.date) + '" max="' + esc(D.today) + '" aria-label="Report date">' +
-      '<button class="btn ghost sm" id="rpnext" aria-label="Next day"' + (isToday ? ' disabled' : '') + '>›</button>' + (isToday ? '' : '<button class="btn ghost sm" id="rptoday">Today</button>') + '</div>' +
+      '<div class="rp-filters"><select id="rprange" aria-label="Time range">' + RANGES.map(r => opt(r[0], r[1], RP.mode)).join('') + '</select>' +
+      (RP.mode === 'day' ? '<div class="row"><button class="btn ghost sm" id="rpprev" aria-label="Previous day">‹</button><input type="date" id="rpdate" value="' + esc(D.date) + '" max="' + esc(D.today) + '" aria-label="Report date">' +
+        '<button class="btn ghost sm" id="rpnext" aria-label="Next day"' + (isToday ? ' disabled' : '') + '>›</button>' + (isToday ? '' : '<button class="btn ghost sm" id="rptoday">Today</button>') + '</div>'
+        : RP.mode === 'custom' ? '<div class="row"><input type="date" id="rpfrom" value="' + esc(D.range.from) + '" max="' + esc(D.today) + '" aria-label="From"><span class="muted small">to</span><input type="date" id="rpto" value="' + esc(D.range.to) + '" max="' + esc(D.today) + '" aria-label="To"></div>'
+        : '<span class="muted small">' + esc(fmtShort(D.range.from)) + ' to ' + esc(fmtShort(D.range.to)) + '</span>') +
+      '<input type="search" id="rpq" placeholder="Search tasks, reports, people…" value="' + esc(RP.q) + '" style="min-width:210px;max-width:280px" aria-label="Search">' +
       (D.review && D.departments.length > 1 ? '<select id="rpdept" aria-label="Department">' + opt('', 'All departments', RP.dept) + D.departments.map(d => opt(d.id, d.name, RP.dept)).join('') + '</select>' : '') +
-      (D.review && people.length > 1 ? '<select id="rpuser" aria-label="Person">' + opt('', 'Everyone', RP.user) + people.map(p => opt(p.id, p.name, RP.user)).join('') + '</select>' : '') + '</div>' +
+      (D.review && people.length > 1 ? '<select id="rpuser" aria-label="Person">' + opt('', 'Everyone', RP.user) + people.map(p => opt(p.id, p.name, RP.user)).join('') + '</select>' : '') +
+      '<select id="rppri" aria-label="Priority">' + opt('', 'Any priority', RP.pri) + [['urgent', 'Urgent'], ['high', 'High'], ['medium', 'Medium'], ['low', 'Low']].map(a => opt(a[0], a[1], RP.pri)).join('') + '</select>' +
+      '<select id="rpsrc" aria-label="What to include">' + opt('', 'Tasks and weekly report items', RP.src) + opt('tasks', 'Tasks only', RP.src) + opt('weekly', 'Weekly report items only', RP.src) + '</select>' +
+      (anyFilter ? '<button class="btn ghost sm" id="rpclear">Clear filters</button>' : '') + '</div>' +
       (D.my_missing && isToday && !ro ? '<div class="banner" style="background:#fff4dd;color:#8a5a00"><span>You have <b>' + D.my_missing + '</b> task' + (D.my_missing > 1 ? 's' : '') + ' in progress with no report today.</span><button class="btn sm right" id="rpnew2">Report now</button></div>' : '') +
       '<div class="rp-cards" id="rpcards">' + CARD_ORDER.map(k => '<button class="rp-card ' + k + (RP.status === k ? ' on' : '') + '" data-st="' + k + '"><span class="small">' + SL[k] + '</span><b>' + (D.counts[k] || 0) + '</b></button>').join('') +
       (D.counts.blocked ? '<button class="rp-card blocked' + (RP.status === 'blocked' ? ' on' : '') + '" data-st="blocked"><span class="small">Blocked</span><b>' + D.counts.blocked + '</b></button>' : '') + '</div>' +
-      '<div class="muted small rp-note">Counts show tasks as they stand now. Completed, canceled and transferred cover the 30 days before ' + esc(fmtShort(D.date)) + '. Tap a card to list those tasks.</div>' +
+      '<div class="muted small rp-note">Open and not-yet-started counts show tasks as they stand now. Completed, canceled and transferred cover ' + esc(fmtShort(D.range.from)) + ' to ' + esc(fmtShort(D.range.to)) + '. Items written in weekly reports (Delivered, In view, Lost) are counted too' + (D.weekly_items.length ? ' (' + D.weekly_items.length + ' item' + (D.weekly_items.length === 1 ? '' : 's') + ')' : '') + '. Tap a card to list them.</div>' +
       '<div id="rptasks"></div>' +
       '<div class="two rp-main"><div class="col">' +
-      '<div class="card"><div class="row"><h2>' + (isToday ? "Today's reports" : 'Reports for ' + esc(fmtDay(D.date))) + '</h2><span class="muted small right">' + D.totals.reports + ' report' + (D.totals.reports === 1 ? '' : 's') + '</span></div><div class="rp-feed" id="rpfeed"></div></div>' +
-      '<div class="card"><h2>Not reported yet</h2><div class="muted small">Tasks marked Open / ongoing or Blocked that have no report for this day.</div><div class="list" id="rpmiss"></div></div>' +
+      '<div class="card"><div class="row"><h2>' + (inRange ? 'Reports from ' + esc(fmtShort(D.range.from)) + ' to ' + esc(fmtShort(D.range.to)) : isToday ? "Today's reports" : 'Reports for ' + esc(fmtDay(D.date))) + '</h2><span class="muted small right">' + D.totals.reports + ' report' + (D.totals.reports === 1 ? '' : 's') + '</span></div><div class="rp-feed" id="rpfeed"></div></div>' +
+      '<div class="card"><h2>Not reported yet</h2><div class="muted small">Tasks marked Open / ongoing or Blocked that have no report on ' + esc(fmtShort(D.date)) + '.</div><div class="list" id="rpmiss"></div></div>' +
       '</div><div class="col">' +
-      '<div class="card"><h2>Last 7 days</h2><div class="rp-trend" id="rptrend"></div><div class="rp-legend"><span><i class="a"></i>Reports</span><span><i class="b"></i>Tasks completed</span></div></div>' +
-      (D.review ? '<div class="card"><h2>People</h2><div class="tablewrap"><table class="rp-people"><thead><tr><th>Name</th><th title="Open / ongoing">Open</th><th title="Not yet started">New</th><th title="Completed in the last 30 days">Done</th><th title="Reports received / reports expected">Reported</th></tr></thead><tbody id="rppeople"></tbody></table></div></div>' : '') +
+      '<div class="card"><h2>' + (inRange ? 'Daily activity' : 'Last 7 days') + '</h2><div class="rp-trend" id="rptrend"></div><div class="rp-legend"><span><i class="a"></i>Reports</span><span><i class="b"></i>Tasks completed</span></div></div>' +
+      (D.review ? '<div class="card"><h2>People</h2><div class="tablewrap"><table class="rp-people"><thead><tr><th>Name</th><th title="Open / ongoing">Open</th><th title="Not yet started">New</th><th title="Completed in the chosen range">Done</th><th title="Items in weekly reports: delivered / in view / lost">Weekly</th><th title="Reports received / reports expected">Reported</th></tr></thead><tbody id="rppeople"></tbody></table></div></div>' : '') +
       (D.shared.length ? '<div class="card"><h2>Shared with me</h2><div class="list" id="rpshared"></div></div>' : '') +
       '</div></div>';
 
     // feed
     $('#rpfeed').innerHTML = D.reports.length ? D.reports.map(r =>
       '<div class="rp-item" data-rep="' + r.id + '" tabindex="0" role="button">' +
-      '<div class="row">' + avatar(r.user_id, r.user_name) + '<div class="grow"><b>' + esc(r.task_title) + '</b><div class="muted small">' + esc(r.user_name) + (r.department ? ' · ' + esc(r.department) : '') + ' · ' + esc(ago(r.updated_at)) + '</div></div>' + tag(r.status) + '</div>' +
+      '<div class="row">' + avatar(r.user_id, r.user_name) + '<div class="grow"><b>' + esc(r.task_title) + '</b><div class="muted small">' + esc(r.user_name) + (r.department ? ' · ' + esc(r.department) : '') + ' · ' + (inRange ? esc(fmtShort(r.report_date)) + ' · ' : '') + esc(ago(r.updated_at)) + '</div></div>' + tag(r.status) + '</div>' +
       '<div class="row rp-prog">' + bar(r.progress) + '<span class="small muted">' + r.progress + '%' + (r.hours != null ? ' · ' + (+r.hours) + ' h' : '') + '</span></div>' +
       '<div class="rp-sum">' + esc(r.summary) + '</div>' + (r.blockers ? '<div class="rp-block">⚠ ' + esc(r.blockers) + '</div>' : '') +
       '<div class="muted small">' + (+r.comment_count ? '💬 ' + r.comment_count + ' · ' : '') + (+r.share_count ? '👥 Shared with ' + r.share_count + ' · ' : '') + '<span class="rp-open">Open</span></div></div>').join('')
-      : '<div class="empty">No reports for this day yet.</div>';
+      : '<div class="empty">' + (anyFilter ? 'No reports match these filters.' : inRange ? 'No reports in this range.' : 'No reports for this day yet.') + '</div>';
     $$('.rp-item', v).forEach(el => { const go = () => openReport(+el.dataset.rep); el.onclick = go; el.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } }; });
 
     // missing
@@ -101,13 +115,15 @@
 
     // trend
     const mx = Math.max(1, ...D.trend.map(t => Math.max(t.reports, t.completed)));
+    const dense = D.trend.length > 10; $('#rptrend').classList.toggle('dense', dense); $('#rptrend').style.gridTemplateColumns = 'repeat(' + D.trend.length + ',minmax(0,1fr))';
     $('#rptrend').innerHTML = D.trend.map(t => '<button class="rp-day' + (t.date === D.date ? ' on' : '') + '" data-day="' + t.date + '" title="' + esc(fmtDay(t.date)) + '"><span class="rp-cols"><i class="a" style="height:' + Math.round(t.reports / mx * 100) + '%"></i><i class="b" style="height:' + Math.round(t.completed / mx * 100) + '%"></i></span><span class="small">' + t.reports + '/' + t.completed + '</span><span class="small muted">' + esc(wk(t.date)) + '</span></button>').join('');
+    if (dense) $('#rptrend').insertAdjacentHTML('afterend', '<div class="rp-trend-ends small muted"><span>' + esc(fmtShort(D.trend[0].date)) + '</span><span>' + esc(fmtShort(D.trend[D.trend.length - 1].date)) + '</span></div>');
 
     // people
     if (D.review) $('#rppeople').innerHTML = D.people_rows.length ? D.people_rows.map(p =>
-      '<tr class="rp-prow" data-user="' + p.id + '"><td><b>' + esc(p.name) + '</b></td><td>' + p.counts.in_progress + (p.counts.blocked ? ' <span class="tag blocked">' + p.counts.blocked + ' blocked</span>' : '') + '</td><td>' + p.counts.todo + '</td><td>' + p.counts.done + '</td><td>' +
+      '<tr class="rp-prow" data-user="' + p.id + '"><td><b>' + esc(p.name) + '</b></td><td>' + p.counts.in_progress + (p.counts.blocked ? ' <span class="tag blocked">' + p.counts.blocked + ' blocked</span>' : '') + '</td><td>' + p.counts.todo + '</td><td>' + p.counts.done + '</td><td>' + ((p.wk && (p.wk.done + p.wk.view + p.wk.lost)) ? '<span title="Delivered / in view / lost">' + p.wk.done + ' ✓ · ' + p.wk.view + ' ⏳ · ' + p.wk.lost + ' ✗</span>' : '<span class="muted">—</span>') + '</td><td>' +
       (p.expected ? '<span class="tag ' + (p.reported >= p.expected ? 'done' : p.reported ? 'deferred' : 'blocked') + '">' + p.reported + ' / ' + p.expected + '</span>' : '<span class="muted">—</span>') + '</td></tr>').join('')
-      : '<tr><td colspan="5" class="muted">No tasks yet.</td></tr>';
+      : '<tr><td colspan="6" class="muted">Nothing here.</td></tr>';
 
     // shared
     if (D.shared.length) $('#rpshared').innerHTML = D.shared.map(s => '<div class="item" data-rep="' + s.id + '"><div class="grow"><b>' + esc(s.task_title) + '</b><div class="muted small">' + esc(s.user_name) + ' · ' + esc(fmtShort(s.report_date)) + ' · shared by ' + esc(s.shared_by || '—') + (s.note ? ' — ' + esc(s.note) : '') + '</div></div>' + tag(s.status) + '</div>').join('');
@@ -115,13 +131,20 @@
 
     // events
     const go = () => X.render();
-    $('#rpdate').onchange = e => { RP.date = e.target.value || ''; go(); };
-    $('#rpprev').onclick = () => { RP.date = shiftDay(D.date, -1); go(); };
+    const onD = (id, fn) => { const e = $(id); if (e) fn(e); };
+    $('#rprange').onchange = e => { RP.mode = e.target.value; if (RP.mode === 'custom') { RP.from = RP.from || D.range.from; RP.to = RP.to || D.range.to; } if (RP.mode === 'day') RP.date = ''; go(); };
+    onD('#rpfrom', e => e.onchange = () => { RP.from = e.value; if (RP.to && RP.from > RP.to) RP.to = RP.from; go(); }); onD('#rpto', e => e.onchange = () => { RP.to = e.value; if (RP.from && RP.from > RP.to) RP.from = RP.to; go(); });
+    let qt = 0; const qi = $('#rpq'); qi.oninput = () => { clearTimeout(qt); qt = setTimeout(() => { RP.q = qi.value.trim(); RP.focusQ = true; go(); }, 450); };
+    if (RP.focusQ) { RP.focusQ = false; qi.focus(); qi.setSelectionRange(qi.value.length, qi.value.length); }
+    $('#rppri').onchange = e => { RP.pri = e.target.value; go(); }; $('#rpsrc').onchange = e => { RP.src = e.target.value; go(); };
+    onD('#rpclear', e => e.onclick = () => { RP.q = ''; RP.dept = ''; RP.user = ''; RP.pri = ''; RP.src = ''; go(); });
+    onD('#rpdate', e => e.onchange = () => { RP.date = e.value || ''; go(); });
+    onD('#rpprev', e => e.onclick = () => { RP.date = shiftDay(D.date, -1); go(); });
     const nx = $('#rpnext'); if (nx) nx.onclick = () => { const n = shiftDay(D.date, 1); RP.date = n >= D.today ? '' : n; go(); };
     const td = $('#rptoday'); if (td) td.onclick = () => { RP.date = ''; go(); };
     const sd = $('#rpdept'); if (sd) sd.onchange = () => { RP.dept = sd.value; RP.user = ''; go(); };
     const su = $('#rpuser'); if (su) su.onchange = () => { RP.user = su.value; go(); };
-    $$('.rp-day', v).forEach(b => b.onclick = () => { RP.date = b.dataset.day >= D.today ? '' : b.dataset.day; go(); });
+    $$('.rp-day', v).forEach(b => b.onclick = () => { RP.mode = 'day'; RP.date = b.dataset.day >= D.today ? '' : b.dataset.day; go(); });
     $$('.rp-prow', v).forEach(r => r.onclick = () => { RP.user = r.dataset.user; go(); });
     $$('.rp-card', v).forEach(c => c.onclick = () => { RP.status = RP.status === c.dataset.st ? '' : c.dataset.st; $$('.rp-card', v).forEach(x => x.classList.toggle('on', x.dataset.st === RP.status)); taskPanel(D); });
     const nw = $('#rpnew'), nw2 = $('#rpnew2'); if (nw) nw.onclick = () => reportForm({ date: D.date }); if (nw2) nw2.onclick = () => reportForm({});
@@ -140,9 +163,11 @@
     const p = new URLSearchParams({ status: RP.status }); if (RP.dept) p.set('department', RP.dept); if (RP.user) p.set('assignee', RP.user);
     let rows = []; try { rows = await api('tasks?' + p.toString()); } catch (e) { box.innerHTML = '<div class="card empty">' + esc(e.message) + '</div>'; return; }
     if (!RP.user && !RP.dept && D.scope === 'own') rows = rows.filter(t => +t.assignee_id === +S.user.id);
-    if (CLOSED.includes(RP.status)) { const since = shiftDay(D.date, -30); rows = rows.filter(t => String(t.updated_at).slice(0, 10) >= since); }
+    if (CLOSED.includes(RP.status)) rows = rows.filter(t => String(t.updated_at).slice(0, 10) >= D.range.from && String(t.updated_at).slice(0, 10) <= D.range.to);
+    if (RP.q) { const ql = RP.q.toLowerCase(); rows = rows.filter(t => (t.title + ' ' + (t.assignee_name || '')).toLowerCase().includes(ql)); } if (RP.pri) rows = rows.filter(t => t.priority === RP.pri); if (RP.src === 'weekly') rows = [];
+    const wst = { in_progress: 'view', done: 'done', canceled: 'lost' }[RP.status], items = wst ? (D.weekly_items || []).filter(i => i.status === wst) : [];
     box.innerHTML = '<div class="card rp-tasks"><div class="row"><h2>' + esc(SL[RP.status]) + '</h2><span class="muted small">' + rows.length + ' task' + (rows.length === 1 ? '' : 's') + '</span><button class="btn ghost sm right" id="rpclose">Close</button></div><div class="list">' +
-      (rows.length ? rows.map(t => '<div class="item" data-go="#/tasks/' + t.id + '"><div class="grow"><b>' + esc(t.title) + '</b><div class="muted small">' + esc(t.assignee_name || 'Unassigned') + (t.department ? ' · ' + esc(t.department) : '') + (t.due_date ? ' · due ' + esc(fmtShort(t.due_date)) : '') + (t.status_reason ? ' · ' + esc(t.status_reason) : '') + '</div></div><span class="tag ' + esc(t.priority) + '">' + esc(t.priority) + '</span></div>').join('') : '<div class="empty">Nothing here.</div>') + '</div></div>';
+      (rows.length ? rows.map(t => '<div class="item" data-go="#/tasks/' + t.id + '"><div class="grow"><b>' + esc(t.title) + '</b><div class="muted small">' + esc(t.assignee_name || 'Unassigned') + (t.department ? ' · ' + esc(t.department) : '') + (t.due_date ? ' · due ' + esc(fmtShort(t.due_date)) : '') + (t.status_reason ? ' · ' + esc(t.status_reason) : '') + '</div></div><span class="tag ' + esc(t.priority) + '">' + esc(t.priority) + '</span></div>').join('') : (items.length ? '' : '<div class="empty">Nothing here.</div>')) + '</div>' + (items.length ? '<h3 style="margin:14px 0 4px">From weekly reports <span class="muted small">' + items.length + ' item' + (items.length === 1 ? '' : 's') + '</span></h3><div class="list">' + items.map(i => '<a class="item" href="#/reports/weekly/' + i.weekly_id + '" style="color:inherit"><div class="grow"><b>' + esc(i.task) + '</b><div class="muted small">' + esc(i.user_name) + (i.client ? ' · ' + esc(i.client) : '') + (i.project ? ' · ' + esc(i.project) : '') + ' · week of ' + esc(fmtShort(i.week_start)) + (i.draft ? ' · draft' : '') + '</div></div><span class="tag ' + (i.status === 'done' ? 'done' : i.status === 'lost' ? 'blocked' : '') + '">' + ({ done: 'Delivered', view: 'In view', lost: 'Lost' }[i.status]) + '</span></a>').join('') + '</div>' : '') + '</div>';
     $('#rpclose').onclick = () => { RP.status = ''; $$('.rp-card').forEach(x => x.classList.remove('on')); box.innerHTML = ''; };
   }
 

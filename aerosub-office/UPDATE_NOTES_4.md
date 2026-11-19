@@ -69,3 +69,9 @@ Check its output: it must say `Root Admin account: dev.aaerosub@…`. If it says
 * Two things carry it: a persistent session cookie and a remember-me token (stored hashed in the database, `HttpOnly`, `Secure` on https, `SameSite=Lax`, replaced with a new value every time it is used). If the phone or browser drops the session when the app is closed, the token signs the person straight back in.
 * Signing out removes it. Changing or resetting a password signs out every other device (the one you are on stays). A deactivated or archived account cannot be restored. A token that is replayed after it was already used wipes that person's tokens.
 * Run `/upgrade.php` once (adds the `remember_tokens` table).
+
+## Reports analytics: weekly items, range, filters, search
+* **Weekly-report items count in the Reports dashboard** next to tasks: Delivered = Completed, In view = Open / ongoing, Lost = Canceled (items that are not already tasks; once a report is submitted its rows become tasks and are counted as tasks). Tapping a status card lists the tasks and, under "From weekly reports", the items (with person, week and a link to that report).
+* **Department heads see it per member:** the People table has a new "Weekly" column (delivered ✓ / in view ⏳ / lost ✗) for every member, and the person filter shows one member's tasks, daily reports and weekly items. Heads can see members' saved weekly reports, including drafts. Staff see only their own.
+* **New controls on Reports:** time range (a single day, last 7 or 30 days, this week, this month, or a custom from–to range), a **search** box (tasks, reports, people, weekly items), and filters for department, person, priority and "Tasks only / Weekly report items only", with a "Clear filters" button. The daily activity chart follows the range.
+* **Team performance** also has a custom date range (up to a year) and a people search.

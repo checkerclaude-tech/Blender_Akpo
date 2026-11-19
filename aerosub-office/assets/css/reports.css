@@ -88,3 +88,6 @@ input[type=range]{padding:0;height:28px;accent-color:var(--cyan)}
 @media print{.pf-two{grid-template-columns:1fr 1fr}.pf-sort{font-weight:700}}
 
 .wr-sheet,.wr-sheet td,.wr-sheet th,.wr-sheet b{color:#111}.wr-sheet .btn.ghost{background:#fff;color:#0C1F61;border-color:#c9d2e6}.wr-sheet select{color:#111}
+/* a longer range: one compact row of bars, the day numbers only at the ends */
+.rp-trend.dense{gap:2px}.rp-trend.dense .rp-day{padding:4px 0;gap:2px}.rp-trend.dense .rp-day .small{display:none}.rp-trend.dense .rp-cols{gap:1px}.rp-trend.dense .rp-cols i{width:44%;max-width:none}
+.rp-trend-ends{display:flex;justify-content:space-between;margin-top:4px}
