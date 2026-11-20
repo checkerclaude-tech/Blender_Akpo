@@ -467,6 +467,7 @@ if ($method === 'POST' && $sub === 'weekly-share') {
     if ($email) { try { $bin = rp_weekly_xlsx($c); } catch (Throwable $e) { $bin = null; } }
     $link = camp_base() . '/#/reports/weekly/' . $wid; $total = count($c['rows']); $done = count(array_filter($c['rows'], fn($r) => $r['status'] === 'done')); $lost = count(array_filter($c['rows'], fn($r) => $r['status'] === 'lost'));
     $names = []; $sent = 0; $failed = 0;
+    require_once __DIR__ . '/sharemsg.php'; $msg = sm_create('weekly', $wid, $u, $b, $ids); if ($msg) $note = mb_substr(preg_replace('/\s+/', ' ', $msg['text']), 0, 500);
     foreach ($ids as $x) {
         $r = one('SELECT id,name,email FROM users WHERE id=? AND active=1', [$x]); if (!$r) continue;
         q('INSERT INTO weekly_shares (weekly_id,user_id,shared_by,note) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE shared_by=VALUES(shared_by), note=VALUES(note), created_at=NOW()', [$wid, $x, $uid, $note ?: null]);
@@ -476,12 +477,15 @@ if ($method === 'POST' && $sub === 'weekly-share') {
             $subj = 'Weekly report: ' . $c['employee'] . ' · week of ' . date('j M Y', strtotime($week));
             $text = "Hello " . $r['name'] . ",\n\n" . $u['name'] . " shared the weekly report of " . $c['employee'] . " (week of " . date('j M Y', strtotime($week)) . ") with you.\n" . $total . " item(s), " . $done . " delivered/closed out, " . $lost . " lost/nil.\n" . ($note ? "\nNote: " . $note . "\n" : '') . "\nOpen it in Aerosub Office: " . $link . "\n" . ($bin ? "The Excel file is attached.\n" : '');
             $html = '<p>Hello ' . htmlspecialchars($r['name']) . ',</p><p><b>' . htmlspecialchars($u['name']) . '</b> shared the weekly report of <b>' . htmlspecialchars($c['employee']) . '</b> (week of ' . date('j M Y', strtotime($week)) . ') with you.</p><p>' . $total . ' item(s) · ' . $done . ' delivered / closed out · ' . $lost . ' lost / nil</p>' . ($note ? '<p style="border-left:3px solid #00A3DE;padding-left:10px;color:#444">' . nl2br(htmlspecialchars($note)) . '</p>' : '') . '<p><a href="' . htmlspecialchars($link) . '">Open the report in Aerosub Office</a>' . ($bin ? ' (the Excel file is attached)' : '') . '</p>';
-            if (acct_send_mail($r['email'], $subj, $html, $text, $bin ? [['name' => rp_weekly_filename($c), 'type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'data' => $bin]] : [], ['from_name' => $u['name'], 'reply_to' => $u['email']])) { $sent++; q('UPDATE weekly_shares SET emailed=1 WHERE weekly_id=? AND user_id=?', [$wid, $x]); } else $failed++;
+            $atts = $bin ? [['name' => rp_weekly_filename($c), 'type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'data' => $bin]] : []; $inl = [];
+            if ($msg) { $info = '<p>' . $total . ' item(s) · ' . $done . ' delivered / closed out · ' . $lost . ' lost / nil</p>'; [$html, $text] = sm_mail($msg, $u, $r, 'the weekly report of ' . $c['employee'] . ' (week of ' . date('j M Y', strtotime($week)) . ')', $link, $info); $atts = array_merge($atts, $msg['mail_files']); $inl = array_values($msg['mail_inline']); }
+            if (acct_send_mail($r['email'], $subj, $html, $text, $atts, ['from_name' => $u['name'], 'reply_to' => $u['email'], 'inline' => $inl])) { $sent++; q('UPDATE weekly_shares SET emailed=1 WHERE weekly_id=? AND user_id=?', [$wid, $x]); } else $failed++;
         }
     }
-    if (!$names) fail('Choose at least one active person');
+    if (!$names) { if ($msg) sm_delete($msg['id']); fail('Choose at least one active person'); }
     log_act($uid, 'weekly_shared', $c['employee'] . ' ' . $week);
-    out(['ok' => true, 'id' => $wid, 'shared' => $names, 'emailed' => $sent, 'email_failed' => $failed, 'link' => $link]);
+    if (!$names && $msg) sm_delete($msg['id']);
+    out(['ok' => true, 'id' => $wid, 'shared' => $names, 'emailed' => $sent, 'email_failed' => $failed, 'link' => $link, 'message_id' => $msg['id'] ?? null]);
 }
 
 /* ---------- team performance (for heads, managers, admins) ---------- */
@@ -617,16 +621,23 @@ if ($id !== null) {
         if ($method === 'POST') {
             if (!rp_can_share($u, $rep)) fail('Only the author or the department head can share this report', 403);
             $b = body(); $ids = array_values(array_unique(array_filter(array_map('intval', (array)($b['user_ids'] ?? []))))); if (!$ids) fail('Choose at least one person');
-            $note = s($b['note'] ?? '', 500); $names = [];
+            require_once __DIR__ . '/sharemsg.php'; $ids = array_values(array_diff($ids, [$uid]));
+            $msg = sm_create('daily', $id, $u, $b, $ids); $note = $msg ? mb_substr(preg_replace('/\s+/', ' ', $msg['text']), 0, 500) : s($b['note'] ?? '', 500); $names = []; $people = [];
             foreach ($ids as $x) {
-                if ($x === $uid) continue; $p = one('SELECT id,name FROM users WHERE id=? AND active=1', [$x]); if (!$p) continue;
+                $p = one('SELECT id,name,email FROM users WHERE id=? AND active=1', [$x]); if (!$p) continue;
                 $new = q('INSERT INTO report_shares (report_id,user_id,shared_by,note) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE note=COALESCE(VALUES(note),note)', [$id, $x, $uid, $note ?: null])->rowCount() === 1;
-                if ($new) notify($x, 'report_shared', $u['name'] . ' shared a report with you: ' . $rep['task_title'], $rep['user_name'] . ' · ' . $rep['report_date'] . ($note ? ' — ' . mb_substr($note, 0, 120) : ''), '#/reports/' . $id);
-                $names[] = $p['name'];
+                if ($new || $msg) notify($x, 'report_shared', $u['name'] . ' shared a report with you: ' . $rep['task_title'], $rep['user_name'] . ' · ' . $rep['report_date'] . ($note ? ' — ' . mb_substr($note, 0, 120) : ''), '#/reports/' . $id);
+                $names[] = $p['name']; $people[] = $p;
             }
-            if (!$names) fail('Choose someone other than yourself');
+            if (!$names) { if ($msg) sm_delete($msg['id']); fail('Choose someone other than yourself'); }
+            $emailed = 0; $failed = 0;
+            if (!empty($b['email'])) { require_once __DIR__ . '/accounts.php'; require_once __DIR__ . '/campcore.php'; $link = camp_base() . '/#/reports/' . $id; $e = fn($v) => htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8');
+                $info = '<p style="font-size:16px"><b>' . $e($rep['task_title']) . '</b><br><span style="color:#667">' . $e($rep['user_name']) . ' · ' . $e(date('D j M Y', strtotime((string)$rep['report_date']))) . ' · ' . (int)$rep['progress'] . '% · ' . $e($rep['status']) . '</span></p><p style="white-space:pre-wrap">' . $e($rep['summary']) . '</p>' . ($rep['blockers'] ? '<p><b>Blockers:</b> ' . $e($rep['blockers']) . '</p>' : '');
+                $m2 = $msg ?: ['html' => '', 'text' => '', 'links' => [], 'files' => [], 'mail_inline' => [], 'mail_files' => []];
+                foreach ($people as $p) { if (!filter_var($p['email'], FILTER_VALIDATE_EMAIL)) continue; [$html, $text] = sm_mail($m2, $u, $p, 'a report', $link, $info); $text = preg_replace('/\n\nOpen it:/', "\n\n" . $rep['task_title'] . ' (' . $rep['user_name'] . ', ' . $rep['report_date'] . "):\n" . $rep['summary'] . "\n\nOpen it:", $text, 1);
+                    if (acct_send_mail($p['email'], 'Report: ' . $rep['task_title'] . ' · ' . $rep['user_name'], $html, $text, $m2['mail_files'], ['from_name' => $u['name'], 'reply_to' => $u['email'], 'inline' => array_values($m2['mail_inline'])])) $emailed++; else $failed++; } }
             log_act($uid, 'report_shared', $rep['task_title']);
-            out(['ok' => true, 'shared' => $names]);
+            out(['ok' => true, 'shared' => $names, 'emailed' => $emailed, 'email_failed' => $failed, 'message_id' => $msg['id'] ?? null]);
         }
         if ($method === 'DELETE' && $sub2) {
             if (!rp_can_share($u, $rep) && $sub2 !== $uid) fail('Not allowed', 403);

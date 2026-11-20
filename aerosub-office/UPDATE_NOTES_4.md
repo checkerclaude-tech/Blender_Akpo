@@ -103,3 +103,10 @@ Check its output: it must say `Root Admin account: dev.aaerosub@…`. If it says
 - `.htaccess` now compresses pages, scripts, styles and API answers, and lets the browser keep static files for an hour (replace your `.htaccess` with this one).
 - Read-only API calls release the PHP session lock immediately, so the screen's parallel requests no longer queue behind each other.
 - Opening a course no longer runs a database schema lookup.
+
+## Sharing reports: rich messages, pictures, documents, links and email
+**Open `/upgrade.php` once** (adds the tables for share messages).
+- Sharing a daily or weekly report now has a message box with **bold, italic, underline, lists, headings and links**, **pictures inside the text** (insert, paste or drag one in), **attached documents** (PDF, Word, Excel, PowerPoint, text, CSV, zip, images; up to 8, 8 MB each, 14 MB together) and **links**.
+- **Email:** tick "Also email it". The email shows the sender's name, the report, the formatted message with pictures shown inline, the attached documents (and the Excel file for weekly reports) and a link back. Replies go to the sender. Recipients also get an in-app notification.
+- Recipients see the messages inside the report (daily: report window, weekly: under the sheet), can open pictures and download documents, and the sender (or a Super Admin) can remove a message.
+- Only the sender, the recipients, the report owner and Super Admins can read a message or download its files. Pasted text is cleaned so scripts cannot get in.

@@ -12,7 +12,7 @@ function acct_send_mail(string $to, string $subject, string $html, string $text,
         if (!empty($st['smtp_host']) && !empty($st['smtp_user']) && !empty($st['secret_enc']) && !empty($st['from_email'])) {
             $sm = camp_smtp($st);
             $raw = build_message(['from' => ['name' => $fn !== '' ? $fn : (string)($st['from_name'] ?: 'Aerosub Office'), 'email' => $st['from_email']], 'to' => [['name' => '', 'email' => $to]], 'cc' => [],
-                'subject' => $subject, 'html' => $html, 'text' => $text, 'attachments' => $attachments, 'extra_headers' => $rt !== '' ? ['Reply-To: ' . ($fn !== '' ? mime_hdr_encode($fn) . ' <' . $rt . '>' : $rt)] : []]);
+                'subject' => $subject, 'html' => $html, 'text' => $text, 'attachments' => $attachments, 'inline' => $opts['inline'] ?? [], 'extra_headers' => $rt !== '' ? ['Reply-To: ' . ($fn !== '' ? mime_hdr_encode($fn) . ' <' . $rt . '>' : $rt)] : []]);
             $sm->deliver($st['from_email'], [$to], $raw);
             return true;
         }
@@ -20,7 +20,7 @@ function acct_send_mail(string $to, string $subject, string $html, string $text,
     try {      // no SMTP set up: PHP's own mail(), still as a proper multipart message (HTML, plain text and attachments) from the sender's name
         require_once __DIR__ . '/campcore.php';
         $host = preg_replace('/^www\./', '', (string)parse_url((string)cfg('app_url'), PHP_URL_HOST)) ?: 'aerosub.co';
-        $raw = build_message(['from' => ['name' => $fn !== '' ? $fn : 'Aerosub Office', 'email' => "no-reply@$host"], 'to' => [['name' => '', 'email' => $to]], 'cc' => [], 'subject' => $subject, 'html' => $html, 'text' => $text, 'attachments' => $attachments,
+        $raw = build_message(['from' => ['name' => $fn !== '' ? $fn : 'Aerosub Office', 'email' => "no-reply@$host"], 'to' => [['name' => '', 'email' => $to]], 'cc' => [], 'subject' => $subject, 'html' => $html, 'text' => $text, 'attachments' => $attachments, 'inline' => $opts['inline'] ?? [],
             'extra_headers' => $rt !== '' ? ['Reply-To: ' . ($fn !== '' ? mime_hdr_encode($fn) . ' <' . $rt . '>' : $rt)] : []]);
         [$hdr, $body] = explode("\r\n\r\n", $raw, 2); $keep = []; $skip = false;
         foreach (explode("\r\n", $hdr) as $line) { if ($line !== '' && ($line[0] === ' ' || $line[0] === "\t")) { if (!$skip) $keep[] = $line; continue; } $skip = (bool)preg_match('/^(To|Subject):/i', $line); if (!$skip) $keep[] = $line; }

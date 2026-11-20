@@ -476,3 +476,11 @@ function migrate_exec(): array {
     ] as $q) db()->exec($q);
     return ['Executive dashboard ready (add sources under Executive → Manage sources).'];
 }
+
+
+// Rich share messages for reports (formatted text, pictures, documents, links). Safe to run repeatedly.
+function migrate_share_msgs(): array {
+    db()->exec("CREATE TABLE IF NOT EXISTS share_messages (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, kind ENUM('daily','weekly') NOT NULL, target_id INT UNSIGNED NOT NULL, sender_id INT UNSIGNED NOT NULL, body MEDIUMTEXT NOT NULL, links TEXT NULL, to_ids TEXT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, KEY (kind,target_id), KEY (sender_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    db()->exec("CREATE TABLE IF NOT EXISTS share_files (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, msg_id INT UNSIGNED NOT NULL, name VARCHAR(200) NOT NULL, mime VARCHAR(100) NOT NULL DEFAULT 'application/octet-stream', size INT UNSIGNED NOT NULL DEFAULT 0, path VARCHAR(64) NOT NULL, inline TINYINT(1) NOT NULL DEFAULT 0, KEY (msg_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    return ['Report sharing: rich messages, pictures and attachments ready.'];
+}
