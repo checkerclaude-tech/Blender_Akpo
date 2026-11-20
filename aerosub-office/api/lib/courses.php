@@ -299,7 +299,7 @@ if ($method === 'DELETE' && $part === '') { if (!$isAdmin) fail('Not allowed', 4
 /* ---- one course ---- */
 if ($method === 'GET' && $part === '') {
     $c = $course; $m = cr_mine($c, $uid); $depts = cr_depts($cid);
-    require_once __DIR__ . '/coursecontent.php'; $items = []; $mods = crc_modules($cid, $uid);
+    require_once __DIR__ . '/coursecontent.php'; crc_ensure(); $items = []; $mods = crc_modules($cid, $uid);
     foreach ($items as &$it) { $it['id'] = (int)$it['id']; if (in_array($it['kind'], ['video', 'slides'], true)) $it['data'] = json_decode((string)$it['body'], true); if ($it['kind'] !== 'text' && $it['kind'] !== 'link') $it['body'] = null; } unset($it);
     $o = ['id' => $cid, 'title' => $c['title'], 'description' => $c['description'], 'image_url' => $c['image_url'], 'category' => $c['category'], 'status' => $c['status'], 'pass_mark' => (int)$c['pass_mark'], 'questions_per_test' => (int)$c['questions_per_test'],
           'shuffle_questions' => (int)$c['shuffle_questions'], 'shuffle_answers' => (int)$c['shuffle_answers'], 'time_limit_min' => (int)$c['time_limit_min'], 'max_attempts' => (int)$c['max_attempts'], 'show_answers' => (int)$c['show_answers'], 'heads_see_grades' => (int)$c['heads_see_grades'],

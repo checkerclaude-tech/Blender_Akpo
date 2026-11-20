@@ -12,7 +12,14 @@ function crc_flat(int $cid): array {
     return all('SELECT s.id,s.title,s.module_id,m.title AS module_title FROM course_sections s JOIN course_modules m ON m.id=s.module_id WHERE s.course_id=? ORDER BY m.position,m.id,s.position,s.id', [$cid]);
 }
 /** Modules with their sections and what this person has finished (counters per module and per section). */
+/** Create the module tables on first use, so the feature works even if /upgrade.php was not opened yet. */
+function crc_ensure(): void {
+    static $done = false; if ($done) return; $done = true;
+    try { db()->query('SELECT 1 FROM course_modules LIMIT 1'); if (col_exists('course_questions', 'qtype')) return; } catch (Throwable $e) {}
+    require_once __DIR__ . '/migrate.php'; migrate_course_content();
+}
 function crc_modules(int $cid, int $uid): array {
+    crc_ensure();
     $done = array_flip(array_map('intval', array_column(all('SELECT section_id FROM course_progress WHERE course_id=? AND user_id=?', [$cid, $uid]), 'section_id')));
     $quizzes = []; foreach (all("SELECT section_id, COUNT(*) n, SUM(EXISTS(SELECT 1 FROM course_quiz_results r WHERE r.block_id=b.id AND r.user_id=?)) answered FROM course_blocks b WHERE b.course_id=? AND b.kind='quiz' GROUP BY section_id", [$uid, $cid]) as $r) $quizzes[(int)$r['section_id']] = $r;
     $counts = array_column(all('SELECT section_id, COUNT(*) n FROM course_blocks WHERE course_id=? GROUP BY section_id', [$cid]), 'n', 'section_id');
