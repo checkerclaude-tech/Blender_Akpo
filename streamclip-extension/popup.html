@@ -1,0 +1,29 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="ui.css"><style>body{width:340px}</style></head>
+<body>
+<h1>● StreamClip</h1>
+<div id="idle">
+  <p class="sub" id="tabTitle">…</p>
+  <div class="label">Record for</div>
+  <div class="chips" id="chips">
+    <button data-ms="300000">5 min</button><button data-ms="600000">10 min</button>
+    <button data-ms="1800000">30 min</button><button data-ms="3600000">1 hour</button>
+    <button data-ms="18000000">5 hours</button><button data-ms="0">Until I stop</button>
+  </div>
+  <p class="hint" id="est"></p>
+  <label><input type="checkbox" id="cComments" checked> Capture live chat / comments</label>
+  <label><input type="checkbox" id="cCaptions" checked> Capture on-page captions</label>
+  <label><input type="checkbox" id="cWhisper"> AI transcript (Whisper) <span class="hint" id="wHint"></span></label>
+  <button class="primary" id="start">Start recording</button>
+  <p class="err" id="err"></p>
+</div>
+<div id="busy" hidden>
+  <p class="sub" id="recTitle"></p>
+  <div class="big" id="clock">00:00</div>
+  <p class="hint" id="remain"></p>
+  <div class="row"><input id="note" placeholder="Add a comment at this moment…"><button id="addNote">Add</button></div>
+  <button class="danger" id="stop">Stop &amp; save</button>
+</div>
+<div class="foot"><a href="library.html" target="_blank">Library</a> · <a href="options.html" target="_blank">Settings</a></div>
+<script src="popup.js"></script>
+</body></html>

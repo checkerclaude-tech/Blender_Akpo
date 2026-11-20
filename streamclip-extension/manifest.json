@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "StreamClip – Stream Recorder",
+  "version": "1.0.0",
+  "description": "Record any stream playing in a tab (5 min to 5 hours) with transcripts and live comments synced to the recording timeline.",
+  "minimum_chrome_version": "116",
+  "permissions": ["tabCapture", "offscreen", "storage", "unlimitedStorage", "activeTab", "tabs", "alarms"],
+  "background": { "service_worker": "background.js" },
+  "action": {
+    "default_title": "StreamClip",
+    "default_popup": "popup.html",
+    "default_icon": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" }
+  },
+  "icons": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" },
+  "options_page": "options.html",
+  "content_scripts": [
+    { "matches": ["<all_urls>"], "all_frames": true, "js": ["content.js"], "run_at": "document_idle" }
+  ],
+  "commands": {
+    "add-bookmark": {
+      "suggested_key": { "default": "Alt+Shift+B" },
+      "description": "Bookmark the current moment in the active recording"
+    }
+  }
+}

@@ -1,0 +1,19 @@
+<!doctype html><html><head><meta charset="utf-8"><title>StreamClip library</title><link rel="stylesheet" href="ui.css">
+<style>
+body{padding:0;display:grid;grid-template-columns:320px 1fr;height:100vh}
+aside{border-right:1px solid var(--line);overflow:auto;padding:14px}main{overflow:auto;padding:16px}
+.rec{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px;margin:8px 0;cursor:pointer}
+.rec.sel{border-color:var(--acc)}.rec b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+video{width:100%;max-height:52vh;background:#000;border-radius:10px}
+.bar{position:relative;height:14px;background:var(--card);border-radius:7px;margin:8px 0;overflow:hidden}
+.bar i{position:absolute;top:0;bottom:0;width:3px;opacity:.9}
+.tools{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}.tools button{padding:6px 10px}
+.feed{border:1px solid var(--line);border-radius:10px;max-height:34vh;overflow:auto}
+.it{display:flex;gap:8px;padding:6px 10px;border-bottom:1px solid var(--line);cursor:pointer}
+.it:hover{background:var(--card)}.it.now{background:rgba(255,77,79,.18)}
+.it .t{color:var(--mut);font-family:ui-monospace,monospace;flex:none}.it .k{flex:none;width:18px;text-align:center}
+.it .a{font-weight:600}.badge{font-size:11px;color:var(--mut)}
+</style></head><body>
+<aside><h1>● Library</h1><div id="list"></div></aside>
+<main id="main"><p class="hint">Select a recording.</p></main>
+<script src="db.js"></script><script src="library.js"></script></body></html>

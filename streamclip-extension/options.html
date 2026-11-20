@@ -1,0 +1,21 @@
+<!doctype html><html><head><meta charset="utf-8"><title>StreamClip settings</title><link rel="stylesheet" href="ui.css">
+<style>body{max-width:560px;margin:auto;padding:24px}input,select{width:100%;padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--card);margin:4px 0 10px}input[type=checkbox]{width:auto}h2{font-size:14px;margin:20px 0 4px}</style></head>
+<body><h1>● StreamClip settings</h1>
+<h2>Video</h2>
+<label>Quality<select id="quality"><option value="low">Low – 720p, ~0.45 GB/hour</option><option value="medium">Medium – 1080p, ~1.2 GB/hour</option><option value="high">High – 1080p, ~2.3 GB/hour</option></select></label>
+<h2>AI transcript (optional)</h2>
+<p class="hint">Audio is cut into chunks and sent to the OpenAI transcription API using <b>your</b> key. The key is stored only in this browser. Without it, StreamClip uses the stream's own captions where available.</p>
+<label>OpenAI API key<input id="openaiKey" type="password" placeholder="sk-…" autocomplete="off"></label>
+<label>Model<input id="whisperModel" placeholder="whisper-1"></label>
+<label>Language code (blank = auto)<input id="language" placeholder="en"></label>
+<label>Chunk length, seconds (10–120)<input id="chunkSec" type="number" min="10" max="120" value="30"></label>
+<h2>Comments from other sites (optional)</h2>
+<p class="hint">YouTube live chat, Twitch and Kick work out of the box. For another site, give CSS selectors for one chat message and the parts inside it.</p>
+<label>Message selector<input id="s_item" placeholder=".chat-message"></label>
+<label>Author selector<input id="s_author" placeholder=".username"></label>
+<label>Text selector<input id="s_text" placeholder=".message-body"></label>
+<h2>Defaults</h2>
+<label><input type="checkbox" id="comments"> Capture comments</label>
+<label><input type="checkbox" id="captions"> Capture on-page captions</label>
+<button class="primary" id="save">Save</button> <span id="ok" class="hint"></span>
+<script src="options.js"></script></body></html>
