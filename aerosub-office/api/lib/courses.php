@@ -145,21 +145,67 @@ function cr_parse_questions(array $table): array {
     }
     return [$ok, $err];
 }
+const CR_TYPES = ['mcq', 'order', 'match'];
 function cr_insert_question(int $cid, array $q, int $pos): void {
-    q('INSERT INTO course_questions (course_id,position,question,image_url,opt_a,opt_b,opt_c,opt_d,opt_e,correct,hint) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-      [$cid, $pos, $q['question'], $q['image_url'], $q['opts']['a'] ?: null, $q['opts']['b'] ?: null, $q['opts']['c'] ?: null, $q['opts']['d'] ?: null, $q['opts']['e'] ?: null, $q['correct'], $q['hint']]);
+    q('INSERT INTO course_questions (course_id,position,qtype,question,extra_text,image_url,video,puzzle,opt_a,opt_b,opt_c,opt_d,opt_e,correct,hint) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      [$cid, $pos, $q['qtype'] ?? 'mcq', $q['question'], $q['extra_text'] ?? null, $q['image_url'], $q['video'] ?? null, $q['puzzle'] ?? null, $q['opts']['a'] ?: null, $q['opts']['b'] ?: null, $q['opts']['c'] ?: null, $q['opts']['d'] ?: null, $q['opts']['e'] ?: null, $q['correct'], $q['hint']]);
 }
-/** One question from the manual form. */
+/** One question from the editor: multiple choice, or a puzzle (put the steps in order / match the pairs), each with optional text, picture and video. */
 function cr_question_in(array $b): array {
-    $q = cr_str($b['question'] ?? '', 2000); if ($q === '') fail('Write the question');
-    $opts = []; foreach (['a', 'b', 'c', 'd', 'e'] as $l) $opts[$l] = cr_str($b['opt_' . $l] ?? '', 500);
-    if (count(array_filter($opts, fn($x) => $x !== '')) < 2) fail('Give at least two answers');
-    $c = strtoupper(cr_str($b['correct'] ?? '', 1)); if (!in_array($c, CR_LETTERS, true) || $opts[strtolower($c)] === '') fail('Choose which answer is correct (it must have text)');
-    return ['question' => $q, 'image_url' => cr_img($b['image_url'] ?? ''), 'opts' => $opts, 'correct' => $c, 'hint' => cr_str($b['hint'] ?? '', 500) ?: null];
+    $type = in((string)($b['qtype'] ?? 'mcq'), CR_TYPES, 'mcq'); $q = cr_str($b['question'] ?? '', 2000); if ($q === '') fail('Write the question');
+    $vurl = trim((string)($b['video_url'] ?? '')); $video = null; if ($vurl !== '') { $vurl = cr_url($vurl); $video = json_encode(cr_video($vurl) + ['url' => $vurl], JSON_UNESCAPED_SLASHES); }
+    $out = ['qtype' => $type, 'question' => $q, 'extra_text' => cr_str($b['extra_text'] ?? '', 5000) ?: null, 'image_url' => cr_img($b['image_url'] ?? ''), 'video' => $video, 'puzzle' => null, 'hint' => cr_str($b['hint'] ?? '', 500) ?: null];
+    if ($type === 'mcq') {
+        $opts = []; foreach (['a', 'b', 'c', 'd', 'e'] as $l) $opts[$l] = cr_str($b['opt_' . $l] ?? '', 500);
+        if (count(array_filter($opts, fn($x) => $x !== '')) < 2) fail('Give at least two answers');
+        $c = strtoupper(cr_str($b['correct'] ?? '', 1)); if (!in_array($c, CR_LETTERS, true) || $opts[strtolower($c)] === '') fail('Choose which answer is correct (it must have text)');
+        return $out + ['opts' => $opts, 'correct' => $c];
+    }
+    $none = ['a' => '', 'b' => '', 'c' => '', 'd' => '', 'e' => ''];
+    if ($type === 'order') {
+        $items = array_values(array_filter(array_map(fn($x) => cr_str($x, 200), (array)($b['items'] ?? [])), fn($x) => $x !== '')); if (count($items) < 2 || count($items) > 8) fail('An ordering puzzle needs 2 to 8 steps, written in the CORRECT order');
+        return ['puzzle' => json_encode(['items' => $items], JSON_UNESCAPED_UNICODE)] + $out + ['opts' => $none, 'correct' => 'A'];
+    }
+    $pairs = []; foreach ((array)($b['pairs'] ?? []) as $p) { if (!is_array($p)) continue; $l = cr_str($p['l'] ?? '', 200); $r = cr_str($p['r'] ?? '', 200); if ($l === '' && $r === '') continue; if ($l === '' || $r === '') fail('Every pair needs both sides'); $pairs[] = ['l' => $l, 'r' => $r]; }
+    if (count($pairs) < 2 || count($pairs) > 6) fail('A matching puzzle needs 2 to 6 pairs');
+    return ['puzzle' => json_encode(['pairs' => $pairs], JSON_UNESCAPED_UNICODE)] + $out + ['opts' => $none, 'correct' => 'A'];
+}
+function crc_move_q(int $cid, int $id, int $dir): void {
+    $ids = array_map('intval', array_column(all('SELECT id FROM course_questions WHERE course_id=? ORDER BY position,id', [$cid]), 'id')); $i = array_search($id, $ids, true); $j = $i + $dir;
+    if ($i !== false && $j >= 0 && $j < count($ids)) { [$ids[$i], $ids[$j]] = [$ids[$j], $ids[$i]]; foreach ($ids as $n => $x) q('UPDATE course_questions SET position=? WHERE id=?', [$n + 1, $x]); }
 }
 function cr_q_out(array $r, bool $withAnswer): array {
-    $o = ['id' => (int)$r['id'], 'question' => $r['question'], 'image_url' => $r['image_url'], 'hint' => $r['hint'], 'opt_a' => $r['opt_a'], 'opt_b' => $r['opt_b'], 'opt_c' => $r['opt_c'], 'opt_d' => $r['opt_d'], 'opt_e' => $r['opt_e']];
-    if ($withAnswer) $o['correct'] = $r['correct']; return $o;
+    $o = ['id' => (int)$r['id'], 'qtype' => $r['qtype'] ?? 'mcq', 'question' => $r['question'], 'extra_text' => $r['extra_text'] ?? null, 'image_url' => $r['image_url'], 'video' => !empty($r['video']) ? json_decode((string)$r['video'], true) : null, 'hint' => $r['hint'],
+          'opt_a' => $r['opt_a'], 'opt_b' => $r['opt_b'], 'opt_c' => $r['opt_c'], 'opt_d' => $r['opt_d'], 'opt_e' => $r['opt_e']];
+    if ($withAnswer) { $o['correct'] = $r['correct']; $o['puzzle'] = !empty($r['puzzle']) ? json_decode((string)$r['puzzle'], true) : null; } return $o;
+}
+/** A question as the person taking the test sees it (puzzles are shuffled; nothing reveals the answer). */
+function cr_q_play(array $r, array $x): array {
+    $t = $r['qtype'] ?? 'mcq'; $o = ['id' => (int)$r['id'], 'qtype' => $t, 'question' => $r['question'], 'extra_text' => $r['extra_text'] ?? null, 'image_url' => $r['image_url'], 'video' => !empty($r['video']) ? json_decode((string)$r['video'], true) : null, 'hint' => $r['hint']];
+    if ($t === 'mcq') { $o['options'] = array_map(fn($k) => ['k' => $k, 'text' => $r['opt_' . strtolower($k)]], $x['map'] ?? []); return $o; }
+    $pz = json_decode((string)$r['puzzle'], true) ?: []; $perm = $x['perm'] ?? [];
+    if ($t === 'order') { $it = $pz['items'] ?? []; $o['items'] = array_map(fn($i) => ['i' => (int)$i, 'text' => $it[$i] ?? ''], $perm); }
+    else { $pr = $pz['pairs'] ?? []; $o['left'] = array_map(fn($i) => ['i' => (int)$i, 'text' => $pr[$i]['l']], array_keys($pr)); $o['right'] = array_map(fn($i) => ['i' => (int)$i, 'text' => $pr[$i]['r'] ?? ''], $perm); }
+    return $o;
+}
+/** Grades one answer. @return array{0: bool, 1: array} [correct?, the review entry] */
+function cr_grade_q(array $r, array $x, $given): array {
+    $t = $r['qtype'] ?? 'mcq'; $base = ['id' => (int)$r['id'], 'qtype' => $t, 'question' => $r['question'], 'extra_text' => $r['extra_text'] ?? null, 'image_url' => $r['image_url'], 'video' => !empty($r['video']) ? json_decode((string)$r['video'], true) : null, 'hint' => $r['hint']];
+    if ($t === 'mcq') { $sel = strtoupper(is_string($given) ? $given : ''); $ok = $sel !== '' && $sel === $r['correct'];
+        return [$ok, $base + ['selected' => $sel ?: null, 'correct' => $r['correct'], 'is_correct' => $ok, 'options' => array_map(fn($k) => ['k' => $k, 'text' => $r['opt_' . strtolower($k)]], $x['map'] ?? [])]]; }
+    $pz = json_decode((string)$r['puzzle'], true) ?: []; $g = is_array($given) ? array_values(array_map('intval', $given)) : [];
+    if ($t === 'order') { $items = $pz['items'] ?? []; $n = count($items); $ok = $n > 0 && $g === range(0, $n - 1);
+        return [$ok, $base + ['is_correct' => $ok, 'answered' => (bool)$g, 'correct_items' => $items, 'given_items' => $g ? array_map(fn($i) => $items[$i] ?? '?', $g) : null]]; }
+    $pairs = $pz['pairs'] ?? []; $n = count($pairs); $ok = $n > 0 && count($g) === $n; $rows = [];
+    foreach ($pairs as $i => $p) { $gv = $g[$i] ?? -1; $good = $gv === $i; if (!$good) $ok = false; $rows[] = ['l' => $p['l'], 'r' => $p['r'], 'given' => ($gv >= 0 && isset($pairs[$gv])) ? $pairs[$gv]['r'] : null, 'ok' => $good]; }
+    return [$ok, $base + ['is_correct' => $ok, 'answered' => (bool)array_filter($g, fn($v) => $v >= 0), 'pairs' => $rows]];
+}
+/** Keeps only well-formed answers: a letter A-E for choice questions, a short list of numbers for puzzles. */
+function cr_clean_answers(array $in): array {
+    $o = []; foreach ($in as $k => $v) { if (!ctype_digit((string)$k)) continue;
+        if (is_string($v) && preg_match('/^[A-Ea-e]$/', $v)) $o[(string)(int)$k] = strtoupper($v);
+        elseif (is_array($v) && count($v) <= 12) { $arr = []; foreach ($v as $x) { if (!is_int($x) && !(is_string($x) && preg_match('/^-?\d{1,2}$/', $x))) continue 2; $arr[] = (int)$x; } $o[(string)(int)$k] = $arr; } }
+    return $o;
 }
 
 /* ---------------- grading ---------------- */
@@ -167,11 +213,7 @@ function cr_finish(array $a, array $c, array $answers): array {
     $qs = json_decode((string)$a['questions'], true) ?: []; $ids = array_map(fn($x) => (int)$x['id'], $qs); $rows = [];
     if ($ids) foreach (all('SELECT * FROM course_questions WHERE id IN (' . implode(',', $ids) . ')') as $r) $rows[(int)$r['id']] = $r;
     $total = count($qs); $right = 0; $review = [];
-    foreach ($qs as $x) {
-        $r = $rows[(int)$x['id']] ?? null; if (!$r) { $total--; continue; } $sel = strtoupper((string)($answers[(string)$x['id']] ?? '')); $ok = $sel !== '' && $sel === $r['correct']; if ($ok) $right++;
-        $review[] = ['id' => (int)$r['id'], 'question' => $r['question'], 'image_url' => $r['image_url'], 'hint' => $r['hint'], 'selected' => $sel ?: null, 'correct' => $r['correct'], 'is_correct' => $ok,
-                     'options' => array_map(fn($k) => ['k' => $k, 'text' => $r['opt_' . strtolower($k)]], $x['map'])];
-    }
+    foreach ($qs as $x) { $r = $rows[(int)$x['id']] ?? null; if (!$r) { $total--; continue; } [$ok, $rv] = cr_grade_q($r, $x, $answers[(string)$x['id']] ?? null); if ($ok) $right++; $review[] = $rv; }
     $score = $total ? round($right * 100 / $total, 2) : 0.0; $passed = $score >= (int)$c['pass_mark'] ? 1 : 0;
     q('UPDATE course_attempts SET submitted_at=NOW(), score=?, correct_count=?, total=?, passed=?, answers=? WHERE id=?', [$score, $right, $total, $passed, json_encode($answers), $a['id']]);
     return ['score' => $score, 'correct' => $right, 'total' => $total, 'passed' => (bool)$passed, 'review' => $review];
@@ -197,12 +239,12 @@ if ($method === 'GET' && $part === 'template' && !$cid) {
 
 /* ---- list ---- */
 if ($method === 'GET' && !$cid && $part === '') {
-    $out = [];
-    foreach (all('SELECT c.*, (SELECT COUNT(*) FROM course_questions q WHERE q.course_id=c.id) AS question_count, (SELECT COUNT(*) FROM course_items i WHERE i.course_id=c.id) AS item_count FROM courses c ORDER BY c.status, c.title') as $c) {
+    $out = []; $secDone = array_column(all('SELECT course_id, COUNT(*) n FROM course_progress WHERE user_id=? GROUP BY course_id', [$uid]), 'n', 'course_id');
+    foreach (all('SELECT c.*, (SELECT COUNT(*) FROM course_questions q WHERE q.course_id=c.id) AS question_count, (SELECT COUNT(*) FROM course_sections i WHERE i.course_id=c.id) AS item_count FROM courses c ORDER BY c.status, c.title') as $c) {
         if (!cr_visible($u, $c)) continue; $depts = cr_depts((int)$c['id']);
         $o = ['id' => (int)$c['id'], 'title' => $c['title'], 'description' => mb_substr((string)$c['description'], 0, 220), 'image_url' => $c['image_url'], 'category' => $c['category'], 'status' => $c['status'], 'pass_mark' => (int)$c['pass_mark'],
               'question_count' => (int)$c['question_count'], 'item_count' => (int)$c['item_count'], 'department_ids' => $depts, 'departments' => $depts ? array_column(all('SELECT name FROM departments WHERE id IN (' . implode(',', $depts) . ') ORDER BY name'), 'name') : []];
-        $m = cr_mine($c, $uid); $o['mine'] = ['count' => $m['count'], 'best' => $m['best'], 'passed' => $m['passed'], 'remaining' => $m['remaining'], 'last_at' => $m['last_at'], 'open_attempt' => $m['open_attempt']];
+        $o['progress'] = ['done' => (int)($secDone[$c['id']] ?? 0), 'total' => (int)$c['item_count']]; $m = cr_mine($c, $uid); $o['mine'] = ['count' => $m['count'], 'best' => $m['best'], 'passed' => $m['passed'], 'remaining' => $m['remaining'], 'last_at' => $m['last_at'], 'open_attempt' => $m['open_attempt']];
         $o['can_grades'] = cr_grade_scope($u, $c) !== false; $out[] = $o;
     }
     out(['courses' => $out, 'can_manage' => $isAdmin, 'can_grades' => $isAdmin || $ro || (bool)managed_dept_ids($u) || (bool)one('SELECT 1 FROM course_viewers WHERE user_id=?', [$uid])]);
@@ -257,17 +299,20 @@ if ($method === 'DELETE' && $part === '') { if (!$isAdmin) fail('Not allowed', 4
 /* ---- one course ---- */
 if ($method === 'GET' && $part === '') {
     $c = $course; $m = cr_mine($c, $uid); $depts = cr_depts($cid);
-    $items = all('SELECT id,position,kind,title,body,url FROM course_items WHERE course_id=? ORDER BY position,id', [$cid]);
+    require_once __DIR__ . '/coursecontent.php'; $items = []; $mods = crc_modules($cid, $uid);
     foreach ($items as &$it) { $it['id'] = (int)$it['id']; if (in_array($it['kind'], ['video', 'slides'], true)) $it['data'] = json_decode((string)$it['body'], true); if ($it['kind'] !== 'text' && $it['kind'] !== 'link') $it['body'] = null; } unset($it);
     $o = ['id' => $cid, 'title' => $c['title'], 'description' => $c['description'], 'image_url' => $c['image_url'], 'category' => $c['category'], 'status' => $c['status'], 'pass_mark' => (int)$c['pass_mark'], 'questions_per_test' => (int)$c['questions_per_test'],
           'shuffle_questions' => (int)$c['shuffle_questions'], 'shuffle_answers' => (int)$c['shuffle_answers'], 'time_limit_min' => (int)$c['time_limit_min'], 'max_attempts' => (int)$c['max_attempts'], 'show_answers' => (int)$c['show_answers'], 'heads_see_grades' => (int)$c['heads_see_grades'],
           'question_count' => (int)one('SELECT COUNT(*) c FROM course_questions WHERE course_id=?', [$cid])['c'], 'department_ids' => $depts, 'departments' => $depts ? array_column(all('SELECT name FROM departments WHERE id IN (' . implode(',', $depts) . ') ORDER BY name'), 'name') : [],
-          'items' => $items, 'mine' => $m, 'can_manage' => $isAdmin, 'can_grades' => cr_grade_scope($u, $c) !== false, 'can_take' => !$ro && $c['status'] === 'published'];
+          'items' => $items, 'modules' => $mods, 'progress' => crc_progress($mods), 'mine' => $m, 'can_manage' => $isAdmin, 'can_grades' => cr_grade_scope($u, $c) !== false, 'can_take' => !$ro && $c['status'] === 'published'];
     if ($isAdmin) $o['viewer_ids'] = array_map('intval', array_column(all('SELECT user_id FROM course_viewers WHERE course_id=?', [$cid]), 'user_id'));
     out($o);
 }
 
-/* ---- content items (admin) ---- */
+/* ---- modules, sections and blocks ---- */
+if (in_array($part, ['modules', 'sections', 'blocks'], true)) { require_once __DIR__ . '/coursecontent.php'; crc_handle($part, $cid, $sid, $act, $method, $b, $u, $course, $isAdmin, $ro); }
+
+/* ---- content items (old flat layout, kept for old links) ---- */
 if ($part === 'items' || $part === 'slides') {
     if (!$isAdmin) fail('Only the Super Admin edits course content', 403);
     $pos = (int)(one('SELECT COALESCE(MAX(position),0)+1 p FROM course_items WHERE course_id=?', [$cid])['p']);
@@ -318,8 +363,10 @@ if ($part === 'questions') {
     if ($method === 'DELETE' && !$sid) { q('DELETE FROM course_questions WHERE course_id=?', [$cid]); out(['ok' => true]); }
     $row = $sid ? one('SELECT * FROM course_questions WHERE id=? AND course_id=?', [$sid, $cid]) : null; if (!$row) fail('Not found', 404);
     if ($method === 'DELETE') { q('DELETE FROM course_questions WHERE id=?', [$sid]); out(['ok' => true]); }
-    if ($method === 'PATCH') { $qq = cr_question_in($b + ['question' => $row['question']]);
-        q('UPDATE course_questions SET question=?,image_url=?,opt_a=?,opt_b=?,opt_c=?,opt_d=?,opt_e=?,correct=?,hint=? WHERE id=?', [$qq['question'], $qq['image_url'], $qq['opts']['a'] ?: null, $qq['opts']['b'] ?: null, $qq['opts']['c'] ?: null, $qq['opts']['d'] ?: null, $qq['opts']['e'] ?: null, $qq['correct'], $qq['hint'], $sid]); out(['ok' => true]); }
+    if ($method === 'POST' && $act === 'duplicate') { cr_insert_question($cid, cr_question_in(cr_q_out($row, true) + ['video_url' => !empty($row['video']) ? (json_decode((string)$row['video'], true)['url'] ?? '') : '', 'items' => (json_decode((string)$row['puzzle'], true) ?: [])['items'] ?? [], 'pairs' => (json_decode((string)$row['puzzle'], true) ?: [])['pairs'] ?? [], 'opt_a' => $row['opt_a'], 'opt_b' => $row['opt_b'], 'opt_c' => $row['opt_c'], 'opt_d' => $row['opt_d'], 'opt_e' => $row['opt_e']]), $pos); out(['ok' => true, 'id' => (int)db()->lastInsertId()], 201); }
+    if ($method === 'POST' && $act === 'move') { crc_move_q($cid, $sid, (int)($b['dir'] ?? 0) < 0 ? -1 : 1); out(['ok' => true]); }
+    if ($method === 'PATCH') { $qq = cr_question_in($b);
+        q('UPDATE course_questions SET qtype=?,question=?,extra_text=?,image_url=?,video=?,puzzle=?,opt_a=?,opt_b=?,opt_c=?,opt_d=?,opt_e=?,correct=?,hint=? WHERE id=?', [$qq['qtype'], $qq['question'], $qq['extra_text'], $qq['image_url'], $qq['video'], $qq['puzzle'], $qq['opts']['a'] ?: null, $qq['opts']['b'] ?: null, $qq['opts']['c'] ?: null, $qq['opts']['d'] ?: null, $qq['opts']['e'] ?: null, $qq['correct'], $qq['hint'], $sid]); out(['ok' => true]); }
     fail('Bad request', 404);
 }
 
@@ -334,13 +381,16 @@ if ($part === 'start' && $method === 'POST') {
         $m = cr_mine($course, $uid); if ($m['remaining'] !== null && $m['remaining'] <= 0) fail($m['count'] ? 'You have used all your attempts. Ask your administrator if you may retake it.' : 'You cannot take this test.', 403);
         $pick = $all; if ((int)$course['shuffle_questions']) shuffle($pick); $n = (int)$course['questions_per_test']; if ($n > 0 && $n < count($pick)) $pick = array_slice($pick, 0, $n);
         if (!(int)$course['shuffle_questions']) usort($pick, fn($x, $y) => (int)$x['position'] <=> (int)$y['position'] ?: (int)$x['id'] <=> (int)$y['id']);
-        $qs = []; foreach ($pick as $r) { $map = array_values(array_filter(CR_LETTERS, fn($l) => (string)$r['opt_' . strtolower($l)] !== '')); if ((int)$course['shuffle_answers']) shuffle($map); $qs[] = ['id' => (int)$r['id'], 'map' => $map]; }
+        $qs = []; foreach ($pick as $r) { $t = $r['qtype'] ?? 'mcq'; $e = ['id' => (int)$r['id'], 'type' => $t];
+            if ($t === 'mcq') { $map = array_values(array_filter(CR_LETTERS, fn($l) => (string)$r['opt_' . strtolower($l)] !== '')); if ((int)$course['shuffle_answers']) shuffle($map); $e['map'] = $map; }
+            else { $pz = json_decode((string)$r['puzzle'], true) ?: []; $n = count($t === 'order' ? ($pz['items'] ?? []) : ($pz['pairs'] ?? [])); $perm = range(0, max(0, $n - 1)); $tries = 0; do { shuffle($perm); } while ($n > 1 && $perm === range(0, $n - 1) && ++$tries < 20); $e['perm'] = $perm; $e['map'] = []; }
+            $qs[] = $e; }
         $ends = (int)$course['time_limit_min'] > 0 ? date('Y-m-d H:i:s', time() + (int)$course['time_limit_min'] * 60) : null;
         q('INSERT INTO course_attempts (course_id,user_id,attempt_no,ends_at,total,questions,answers) VALUES (?,?,?,?,?,?,?)', [$cid, $uid, $m['count'] + 1, $ends, count($qs), json_encode($qs), '{}']);
         $open = one('SELECT * FROM course_attempts WHERE id=?', [(int)db()->lastInsertId()]);
     }
     $qs = json_decode((string)$open['questions'], true) ?: []; $rows = []; foreach (all('SELECT * FROM course_questions WHERE id IN (' . implode(',', array_map(fn($x) => (int)$x['id'], $qs) ?: [0]) . ')') as $r) $rows[(int)$r['id']] = $r;
-    $out = []; foreach ($qs as $x) { $r = $rows[(int)$x['id']] ?? null; if (!$r) continue; $out[] = ['id' => (int)$r['id'], 'question' => $r['question'], 'image_url' => $r['image_url'], 'hint' => $r['hint'], 'options' => array_map(fn($k) => ['k' => $k, 'text' => $r['opt_' . strtolower($k)]], $x['map'])]; }
+    $out = []; foreach ($qs as $x) { $r = $rows[(int)$x['id']] ?? null; if (!$r) continue; $out[] = cr_q_play($r, $x); }
     out(['attempt_id' => (int)$open['id'], 'attempt_no' => (int)$open['attempt_no'], 'ends_at' => $open['ends_at'], 'seconds_left' => $open['ends_at'] ? max(0, strtotime($open['ends_at']) - time()) : null, 'questions' => $out, 'answers' => (object)(json_decode((string)$open['answers'], true) ?: []), 'pass_mark' => (int)$course['pass_mark']]);
 }
 if ($part === 'attempts' && $sid) {
@@ -350,11 +400,11 @@ if ($part === 'attempts' && $sid) {
         if (!$may || $a['submitted_at'] === null) fail('Not found', 404);
         $res = ['score' => (float)$a['score'], 'correct' => (int)$a['correct_count'], 'total' => (int)$a['total'], 'passed' => (int)$a['passed'] === 1, 'submitted_at' => $a['submitted_at'], 'attempt_no' => (int)$a['attempt_no'], 'user_name' => one('SELECT name FROM users WHERE id=?', [$a['user_id']])['name']];
         if ($own ? (int)$course['show_answers'] === 1 : true) { $qs = json_decode((string)$a['questions'], true) ?: []; $ans = json_decode((string)$a['answers'], true) ?: []; $rows = []; foreach (all('SELECT * FROM course_questions WHERE id IN (' . implode(',', array_map(fn($x) => (int)$x['id'], $qs) ?: [0]) . ')') as $r) $rows[(int)$r['id']] = $r;
-            $res['review'] = []; foreach ($qs as $x) { $r = $rows[(int)$x['id']] ?? null; if (!$r) continue; $sel = strtoupper((string)($ans[(string)$x['id']] ?? '')); $res['review'][] = ['id' => (int)$r['id'], 'question' => $r['question'], 'image_url' => $r['image_url'], 'hint' => $r['hint'], 'selected' => $sel ?: null, 'correct' => $r['correct'], 'is_correct' => $sel !== '' && $sel === $r['correct'], 'options' => array_map(fn($k) => ['k' => $k, 'text' => $r['opt_' . strtolower($k)]], $x['map'])]; } }
+            $res['review'] = []; foreach ($qs as $x) { $r = $rows[(int)$x['id']] ?? null; if (!$r) continue; $res['review'][] = cr_grade_q($r, $x, $ans[(string)$x['id']] ?? null)[1]; } }
         out($res);
     }
     if ((int)$a['user_id'] !== $uid) fail('Not allowed', 403); if ($a['submitted_at'] !== null) fail('This attempt is already finished', 409);
-    $given = []; foreach ((array)($b['answers'] ?? []) as $k => $v) if (ctype_digit((string)$k) && is_string($v) && preg_match('/^[A-Ea-e]$/', $v)) $given[(string)(int)$k] = strtoupper($v);
+    $given = cr_clean_answers((array)($b['answers'] ?? []));
     $what = $seg[4] ?? '';
     if ($method === 'POST' && $what === 'save') { q('UPDATE course_attempts SET answers=? WHERE id=?', [json_encode($given), $sid]); out(['ok' => true]); }
     if ($method === 'POST' && $what === 'submit') {

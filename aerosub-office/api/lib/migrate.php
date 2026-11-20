@@ -398,6 +398,34 @@ function migrate_privileges(): array {
     return $log;
 }
 
+// Courses: modules > sections > blocks with progress, and exam questions with media and puzzles. Safe to run repeatedly.
+function migrate_course_content(): array {
+    foreach ([
+    "CREATE TABLE IF NOT EXISTS course_modules (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, course_id INT UNSIGNED NOT NULL, position INT NOT NULL DEFAULT 0, title VARCHAR(200) NOT NULL, summary VARCHAR(500) NULL,
+        KEY (course_id,position), FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    "CREATE TABLE IF NOT EXISTS course_sections (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, course_id INT UNSIGNED NOT NULL, module_id INT UNSIGNED NOT NULL, position INT NOT NULL DEFAULT 0, title VARCHAR(200) NOT NULL,
+        KEY (module_id,position), KEY (course_id), FOREIGN KEY (module_id) REFERENCES course_modules(id) ON DELETE CASCADE, FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    "CREATE TABLE IF NOT EXISTS course_blocks (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, course_id INT UNSIGNED NOT NULL, section_id INT UNSIGNED NOT NULL, position INT NOT NULL DEFAULT 0,
+        kind ENUM('text','image','video','link','cards','quiz','slides') NOT NULL, title VARCHAR(200) NULL, data MEDIUMTEXT NULL, KEY (section_id,position), KEY (course_id),
+        FOREIGN KEY (section_id) REFERENCES course_sections(id) ON DELETE CASCADE, FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    "CREATE TABLE IF NOT EXISTS course_progress (user_id INT UNSIGNED NOT NULL, section_id INT UNSIGNED NOT NULL, course_id INT UNSIGNED NOT NULL, completed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_id,section_id), KEY (course_id,user_id), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE, FOREIGN KEY (section_id) REFERENCES course_sections(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    "CREATE TABLE IF NOT EXISTS course_quiz_results (user_id INT UNSIGNED NOT NULL, block_id INT UNSIGNED NOT NULL, score DECIMAL(5,1) NOT NULL DEFAULT 0, correct SMALLINT UNSIGNED NOT NULL DEFAULT 0, total SMALLINT UNSIGNED NOT NULL DEFAULT 0, answers TEXT NULL,
+        taken_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (user_id,block_id), FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE, FOREIGN KEY (block_id) REFERENCES course_blocks(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    ] as $q) db()->exec($q);
+    foreach (['qtype' => "VARCHAR(10) NOT NULL DEFAULT 'mcq'", 'extra_text' => 'TEXT NULL', 'video' => 'VARCHAR(400) NULL', 'puzzle' => 'MEDIUMTEXT NULL'] as $c => $def) if (!col_exists('course_questions', $c)) db()->exec("ALTER TABLE course_questions ADD COLUMN $c $def");
+    $log = [];
+    // the flat lessons of the old layout become the first module, one section per lesson
+    foreach (all('SELECT DISTINCT course_id FROM course_items WHERE course_id NOT IN (SELECT course_id FROM course_modules)') as $r) {
+        $cid = (int)$r['course_id']; q('INSERT INTO course_modules (course_id,position,title) VALUES (?,1,?)', [$cid, 'Lessons']); $mid = (int)db()->lastInsertId(); $n = 0;
+        foreach (all('SELECT * FROM course_items WHERE course_id=? ORDER BY position,id', [$cid]) as $it) { $n++;
+            q('INSERT INTO course_sections (course_id,module_id,position,title) VALUES (?,?,?,?)', [$cid, $mid, $n, $it['title']]); $sid = (int)db()->lastInsertId();
+            $k = $it['kind']; $body = (string)$it['body']; $d = $k === 'text' ? ['body' => $body] : ($k === 'link' ? ['url' => $it['url'], 'note' => $body] : ($k === 'video' ? ((json_decode($body, true) ?: []) + ['url' => $it['url']]) : (json_decode($body, true) ?: ['slides' => []])));
+            q('INSERT INTO course_blocks (course_id,section_id,position,kind,title,data) VALUES (?,?,1,?,?,?)', [$cid, $sid, $k, $it['title'], json_encode($d, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)]); }
+        $log[] = 'Course ' . $cid . ': ' . $n . ' lesson(s) moved into a module.'; }
+    $log[] = 'Courses: modules, sections, learning cards, short quizzes, progress, and puzzle questions ready.'; return $log;
+}
+
 // Meetings: where they are, and a version number so calendar invites can be updated. Safe to run repeatedly.
 function migrate_meetings(): array {
     foreach (['meeting_place' => 'VARCHAR(190) NULL', 'ics_seq' => 'INT UNSIGNED NOT NULL DEFAULT 0'] as $c => $def) if (!col_exists('tasks', $c)) db()->exec("ALTER TABLE tasks ADD COLUMN $c $def");

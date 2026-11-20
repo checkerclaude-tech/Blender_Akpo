@@ -24,7 +24,8 @@
       let saved = null; try { const r = await api('finance/signature'); if (r.has) saved = r.image; } catch {}
       const m = modal('<div class="row"><h2 class="grow">Sign ' + esc(opts.title || 'document') + '</h2><button class="btn ghost sm" id="sx">✕</button></div>' +
         '<div class="muted small" style="margin:4px 0 10px">By signing you confirm you have read it and approve it as shown. Your name, the date and a fingerprint of the document are recorded.</div>' +
-        '<div class="ac-seg" role="tablist" style="margin-bottom:10px">' + (saved ? '<button type="button" class="ac-b sel" data-t="saved">My saved signature</button>' : '') + '<button type="button" class="ac-b' + (saved ? '' : ' sel') + '" data-t="draw">Draw</button><button type="button" class="ac-b" data-t="type">Type</button></div>' +
+        '<div class="ac-seg" role="tablist" style="margin-bottom:10px">' + (saved ? '<button type="button" class="ac-b sel" data-t="saved">My saved signature</button>' : '') + '<button type="button" class="ac-b' + (saved ? '' : ' sel') + '" data-t="draw">Draw</button><button type="button" class="ac-b" data-t="type">Type</button><button type="button" class="ac-b" data-t="png">Upload PNG</button></div>' +
+        '<div id="sp-png" hidden><label class="btn ghost sm" style="cursor:pointer;display:inline-block;margin:0 0 8px">Choose a PNG picture of your signature<input type="file" id="sgf2" accept="image/png,image/jpeg,image/webp" hidden></label><div class="sg-box"><canvas id="sgu" width="900" height="260" class="sg-canvas" style="cursor:default" aria-label="Signature picture preview"></canvas></div><label class="small" style="display:block;margin-top:6px"><input type="checkbox" id="sgw" style="width:auto" checked> Make a white background transparent</label><div class="muted small">A PNG with a transparent background looks best. Photos of a signature on white paper also work.</div></div>' +
         '<div id="sp-saved"' + (saved ? '' : ' hidden') + '><div class="sg-box"><img src="' + (saved || '') + '" alt="Your saved signature" style="max-width:100%;max-height:140px"></div></div>' +
         '<div id="sp-draw" hidden><canvas id="sgc" width="900" height="260" class="sg-canvas" aria-label="Signature drawing area"></canvas><div class="row small"><span class="muted grow">Draw with your mouse, finger or pen.</span><button type="button" class="btn ghost sm" id="sgx">Clear</button></div></div>' +
         '<div id="sp-type" hidden><div class="field"><label>Type your name</label><input id="sgn" maxlength="60" value="' + esc(S.user.name) + '"></div><div class="sg-box"><canvas id="sgt" width="900" height="260" class="sg-canvas" style="cursor:default"></canvas></div><div class="row small" style="gap:6px;margin-top:6px"><span class="muted">Style:</span><select id="sgf" style="width:auto"><option value="Segoe Script,Brush Script MT,Snell Roundhand,cursive">Script</option><option value="Lucida Handwriting,Apple Chancery,cursive">Handwriting</option><option value="Georgia,serif">Classic</option></select></div></div>' +
@@ -33,7 +34,7 @@
         '<div class="row"><button class="btn" id="sgo">Sign</button><button class="btn ghost" id="sgc2">Cancel</button></div>');
       let tab = saved ? 'saved' : 'draw'; const done = v => { m.close(); resolve(v); };
       $('#sx', m).onclick = $('#sgc2', m).onclick = () => done(null);
-      const paint = () => { ['saved', 'draw', 'type'].forEach(k => { const e = $('#sp-' + k, m); if (e) e.hidden = k !== tab; }); $$('.ac-b', m).forEach(b => b.classList.toggle('sel', b.dataset.t === tab)); $('#sgsv', m).hidden = tab === 'saved'; if (tab === 'type') renderType(); };
+      const paint = () => { ['saved', 'draw', 'type', 'png'].forEach(k => { const e = $('#sp-' + k, m); if (e) e.hidden = k !== tab; }); $$('.ac-b', m).forEach(b => b.classList.toggle('sel', b.dataset.t === tab)); $('#sgsv', m).hidden = tab === 'saved'; if (tab === 'type') renderType(); };
       $$('.ac-b', m).forEach(b => b.onclick = () => { tab = b.dataset.t; paint(); });
       // drawing
       const cv = $('#sgc', m), cx = cv.getContext('2d'); cx.lineWidth = 5; cx.lineCap = 'round'; cx.lineJoin = 'round'; cx.strokeStyle = '#0B1B4D'; let down = false, ink = false;
@@ -48,10 +49,16 @@
       $('#sgn', m).oninput = renderType; $('#sgf', m).onchange = renderType;
       const trim = c => { const x = c.getContext('2d'), d = x.getImageData(0, 0, c.width, c.height).data; let x0 = c.width, y0 = c.height, x1 = 0, y1 = 0; for (let y = 0; y < c.height; y++) for (let i = 0; i < c.width; i++) if (d[(y * c.width + i) * 4 + 3] > 10) { if (i < x0) x0 = i; if (i > x1) x1 = i; if (y < y0) y0 = y; if (y > y1) y1 = y; }
         if (x1 <= x0) return null; const p = 12, w = Math.min(c.width, x1 - x0 + 2 * p), h = Math.min(c.height, y1 - y0 + 2 * p), o = document.createElement('canvas'); o.width = w; o.height = h; o.getContext('2d').drawImage(c, Math.max(0, x0 - p), Math.max(0, y0 - p), w, h, 0, 0, w, h); return o.toDataURL('image/png'); };
+      // uploaded picture (PNG preferred): scaled to fit, optional white-to-transparent, then trimmed
+      const uc = $('#sgu', m), ux = uc.getContext('2d'); let upImg = null, upOk = false;
+      const drawUp = () => { ux.clearRect(0, 0, uc.width, uc.height); if (!upImg) { upOk = false; return; } const k = Math.min(uc.width / upImg.width, uc.height / upImg.height, 1), w = Math.max(1, Math.round(upImg.width * k)), h = Math.max(1, Math.round(upImg.height * k)); ux.drawImage(upImg, 0, 0, w, h);
+        if ($('#sgw', m).checked) { const im = ux.getImageData(0, 0, w, h), d = im.data; for (let i = 0; i < d.length; i += 4) { const mn = Math.min(d[i], d[i + 1], d[i + 2]); if (mn > 235) d[i + 3] = 0; else if (mn > 190) d[i + 3] = Math.min(d[i + 3], Math.round((235 - mn) / 45 * 255)); } ux.putImageData(im, 0, 0); } upOk = true; };
+      $('#sgw', m).onchange = drawUp;
+      $('#sgf2', m).onchange = e => { const f = e.target.files[0]; if (!f) return; $('#er', m).textContent = ''; if (f.size > 8e6) { $('#er', m).textContent = 'That picture is too large (max 8 MB).'; return; } const u = URL.createObjectURL(f), im = new Image(); im.onload = () => { upImg = im; drawUp(); URL.revokeObjectURL(u); }; im.onerror = () => { upImg = null; drawUp(); $('#er', m).textContent = 'That file could not be read as a picture.'; URL.revokeObjectURL(u); }; im.src = u; };
       $('#sgo', m).onclick = () => {
         const comment = $('#sgm', m).value.trim();
         if (tab === 'saved') return done({ mode: 'saved', comment });
-        const img = tab === 'draw' ? (ink ? trim(cv) : null) : trim(tc); if (!img) { $('#er', m).textContent = tab === 'draw' ? 'Draw your signature first.' : 'Type your name first.'; return; }
+        const img = tab === 'draw' ? (ink ? trim(cv) : null) : tab === 'png' ? (upOk ? trim(uc) : null) : trim(tc); if (!img) { $('#er', m).textContent = tab === 'draw' ? 'Draw your signature first.' : tab === 'png' ? 'Choose a picture of your signature first.' : 'Type your name first.'; return; }
         done({ mode: 'new', image: img, save: $('#sgs', m).checked, comment });
       };
       paint();

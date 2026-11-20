@@ -88,3 +88,13 @@ Check its output: it must say `Root Admin account: dev.aaerosub@…`. If it says
 * **Changes follow:** moving the time, changing the place or title sends an **updated invite** (same meeting, calendar replaces the old one); cancelling a meeting, or deleting one that has not happened, sends a **cancellation** that removes it from calendars. Adding someone later invites only that person. Sharing a meeting task also attaches the invite.
 * On the meeting itself: **Add to my calendar**, **Copy calendar link**, and **Subscribe to all my meetings** (a personal calendar feed that keeps the phone calendar in sync). These links work without signing in (the calendar app cannot sign in); each is personal and cannot be guessed.
 * Run `/upgrade.php` once. Emails need your mail set up (SMTP in Campaigns settings, or the server's mail).
+
+## Courses: modules, sections, progress, learning cards, short quizzes, better exams, image signatures
+
+**After unzipping, open `/upgrade.php` once as Super Admin.** Your existing flat lessons are moved automatically into a module called "Lessons" (one section per lesson). Nothing is lost.
+
+- **Course > Modules > Sections.** The Super Admin adds modules, then sections, and fills each section with parts: notes, pictures, YouTube/Vimeo video, links, PowerPoint slides, **learning cards** (flip cards, shuffle, keyboard friendly) and **short quizzes** (instant feedback and an explanation). Everything can be edited, deleted and moved up/down.
+- **Progress counters.** Every module shows "2 / 3 sections", every section shows its parts and quiz status, and the course shows an overall percentage with a Continue button. A section is completed with "Mark complete"; a section with a short quiz needs the quiz answered first.
+- **Exam.** Live counters (answered / not answered / flagged), a **question map** (tap a number to jump to that question, colours show the state), filters (All, Not answered, Flagged, Answered), a flag button on each question, and a warning on submit that lists the unanswered question numbers. Answers autosave and resume.
+- **Editable questions of every kind.** Each question can have extra text, a picture (link or upload), a video and a hint. Types: multiple choice, **puzzle: put in order** (2–8 steps) and **puzzle: match pairs** (2–6 pairs). Questions can be edited, duplicated and re-ordered. Results show puzzles with the correct order / pairs.
+- **Signatures.** When signing a document you can now also **upload a PNG** of your signature (a transparent PNG is best; white backgrounds are made transparent). It can be saved as your signature for next time.

@@ -15,7 +15,7 @@
   const nl = v => esc(v || '').replace(/(https:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer nofollow">$1</a>');
   const b64 = f => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] || ''); r.onerror = rej; r.readAsDataURL(f); });
   const LET = ['A', 'B', 'C', 'D', 'E'];
-  let timer = 0; const stopTimer = () => { if (timer) { clearInterval(timer); timer = 0; } };
+  let timer = 0; const stopTimer = () => { if (timer) { clearInterval(timer); timer = 0; } if (X.cr && X.cr.leave) { const f = X.cr.leave; X.cr.leave = null; f(); } };
   const view = () => $('#view');
 
   /* the two tabs on the Learn page */
@@ -35,6 +35,7 @@
       if (!parts[3]) return await list();
       if (parts[3] === 'grades') return await gradesOverview();
       const id = +parts[3]; if (!id) return await list();
+      if (parts[4] === 's' && +parts[5] && X.courseSection) return await X.courseSection(id, +parts[5]);
       if (parts[4] === 'test') return await testView(id);
       if (parts[4] === 'result' && +parts[5]) return await resultView(id, +parts[5]);
       return await coursePage(id, ['questions', 'settings', 'grades'].includes(parts[4]) ? parts[4] : 'overview');
@@ -47,8 +48,8 @@
     const card = c => {
       const m = c.mine, st = m.passed ? '<span class="tag done">Passed ' + pct(m.best) + '</span>' : m.open_attempt ? '<span class="tag in_progress">In progress</span>' : m.count ? '<span class="tag deferred">Best ' + pct(m.best) + '</span>' : (c.question_count ? '<span class="tag">Not taken</span>' : '');
       return '<a class="cr-card" href="#/learn/c/' + c.id + '"><div class="cr-img">' + (c.image_url ? '<img src="' + esc(c.image_url) + '" alt="" loading="lazy" data-rm="1">' : '') + '<span class="cr-ph" aria-hidden="true">' + esc((c.title || '?').slice(0, 1).toUpperCase()) + '</span>' + (c.status === 'draft' ? '<span class="cr-draft">Draft</span>' : '') + '</div>' +
-        '<div class="cr-body"><div class="cr-title">' + esc(c.title) + '</div><div class="muted small cr-desc">' + esc(c.description || '') + '</div><div class="cr-tags">' + (c.departments.length ? c.departments.map(d => '<span class="tag">' + esc(d) + '</span>').join('') : '<span class="tag">Everyone</span>') + '</div>' +
-        '<div class="row cr-foot"><span class="muted small">' + c.question_count + ' question' + (c.question_count === 1 ? '' : 's') + (c.item_count ? ' · ' + c.item_count + ' lesson' + (c.item_count === 1 ? '' : 's') : '') + '</span><span class="right">' + st + '</span></div></div></a>';
+        '<div class="cr-body"><div class="cr-title">' + esc(c.title) + '</div><div class="muted small cr-desc">' + esc(c.description || '') + '</div>' + (c.progress && c.progress.total ? '<div class="cr-pbar" style="margin-top:8px" role="img" aria-label="Progress"><i style="width:' + Math.round(c.progress.done * 100 / c.progress.total) + '%"></i></div><div class="muted small">' + c.progress.done + ' of ' + c.progress.total + ' sections done</div>' : '') + '<div class="cr-tags">' + (c.departments.length ? c.departments.map(d => '<span class="tag">' + esc(d) + '</span>').join('') : '<span class="tag">Everyone</span>') + '</div>' +
+        '<div class="row cr-foot"><span class="muted small">' + c.question_count + ' question' + (c.question_count === 1 ? '' : 's') + (c.item_count ? ' · ' + c.item_count + ' section' + (c.item_count === 1 ? '' : 's') : '') + '</span><span class="right">' + st + '</span></div></div></a>';
     };
     v.innerHTML = '<div class="top"><div><h1>Learn</h1><div class="muted">Courses with tests, set by your administrator</div></div><span class="right row">' + (D.can_grades ? '<a class="btn ghost" href="#/learn/c/grades">Grades</a>' : '') + (D.can_manage ? '<button class="btn" id="cnew">+ New course</button>' : '') + '</span></div>' + tabs('courses') +
       (D.courses.length ? '<div class="cr-grid">' + D.courses.map(card).join('') + '</div>' : '<div class="card empty">' + (D.can_manage ? 'No courses yet. Click “New course” to create the first one.' : 'No courses have been assigned to you yet.') + '</div>');
@@ -68,7 +69,7 @@
       (adm || c.can_grades ? '<div class="chips lt-tabs" style="margin:14px 0"><a class="chip' + (tab === 'overview' ? ' on' : '') + '" href="#/learn/c/' + id + '">Course</a>' + (adm ? '<a class="chip' + (tab === 'questions' ? ' on' : '') + '" href="#/learn/c/' + id + '/questions">Questions (' + c.question_count + ')</a><a class="chip' + (tab === 'settings' ? ' on' : '') + '" href="#/learn/c/' + id + '/settings">Settings</a>' : '') + (c.can_grades ? '<a class="chip' + (tab === 'grades' ? ' on' : '') + '" href="#/learn/c/' + id + '/grades">Grades</a>' : '') + '</div>' : '<div style="height:14px"></div>') +
       '<div id="cbody"></div>';
     const box = $('#cbody');
-    if (tab === 'overview') overview(box, c); else if (tab === 'questions') await questionsTab(box, c); else if (tab === 'settings') await settingsTab(box, c); else await gradesTab(box, c);
+    if (tab === 'overview') { if (X.courseOverview) X.courseOverview(box, c); else overview(box, c); } else if (tab === 'questions') { if (X.courseQuestions) await X.courseQuestions(box, c); else await questionsTab(box, c); } else if (tab === 'settings') await settingsTab(box, c); else await gradesTab(box, c);
   }
 
   const video = d => d.provider === 'youtube' ? '<div class="cr-video"><iframe src="https://www.youtube-nocookie.com/embed/' + esc(d.id) + '" title="Video" loading="lazy" allowfullscreen referrerpolicy="strict-origin-when-cross-origin" allow="accelerometer; encrypted-media; gyroscope; picture-in-picture; fullscreen"></iframe></div><div class="small" style="margin-top:4px"><a href="https://www.youtube.com/watch?v=' + esc(d.id) + '" target="_blank" rel="noopener noreferrer">Open on YouTube</a></div>'
@@ -187,6 +188,7 @@
 
   /* ---------- taking a test ---------- */
   async function testView(id) {
+    if (X.courseTest) return X.courseTest(id);
     const v = view(); v.innerHTML = '<div class="empty">Loading the test…</div>'; const c = await api('courses/' + id); let T;
     try { T = await api('courses/' + id + '/start', { method: 'POST', data: {} }); } catch (e) { v.innerHTML = back('#/learn/c/' + id, c.title) + '<div class="card empty">' + esc(e.message) + '</div>'; return; }
     const ans = { ...T.answers }; let done = false, saveT = 0; const total = T.questions.length;
@@ -207,7 +209,8 @@
     if (T.seconds_left != null) { let left = T.seconds_left; const tt = $('#tt'); tt.style.display = ''; const tick = () => { const mm = Math.floor(left / 60), ss = left % 60; tt.textContent = '⏱ ' + mm + ':' + String(ss).padStart(2, '0'); tt.className = 'tag ' + (left <= 60 ? 'blocked' : 'in_progress'); if (left <= 0) { stopTimer(); toast('Time is up: submitting your answers'); submit(true); } left--; }; tick(); timer = setInterval(tick, 1000); }
   }
   function resultHtml(v, c, r) {
-    const rev = r.review ? '<div class="cr-review">' + r.review.map((q, n) => '<div class="card cr-q-card ' + (q.is_correct ? 'ok' : 'bad') + '"><div class="cr-qn">Question ' + (n + 1) + ' · ' + (q.is_correct ? '<span style="color:var(--ok)">Correct ✓</span>' : q.selected ? '<span style="color:var(--bad)">Wrong ✗</span>' : '<span style="color:var(--bad)">Not answered</span>') + '</div><div class="cr-qt">' + esc(q.question).replace(/\n/g, '<br>') + '</div>' + (q.image_url ? '<img class="cr-qimg" src="' + esc(q.image_url) + '" alt="" loading="lazy" data-rm="1">' : '') +
+    const rev1 = (r.review && X.reviewHtml) ? X.reviewHtml(r.review) : null;
+    const rev = rev1 !== null ? rev1 : r.review ? '<div class="cr-review">' + r.review.map((q, n) => '<div class="card cr-q-card ' + (q.is_correct ? 'ok' : 'bad') + '"><div class="cr-qn">Question ' + (n + 1) + ' · ' + (q.is_correct ? '<span style="color:var(--ok)">Correct ✓</span>' : q.selected ? '<span style="color:var(--bad)">Wrong ✗</span>' : '<span style="color:var(--bad)">Not answered</span>') + '</div><div class="cr-qt">' + esc(q.question).replace(/\n/g, '<br>') + '</div>' + (q.image_url ? '<img class="cr-qimg" src="' + esc(q.image_url) + '" alt="" loading="lazy" data-rm="1">' : '') +
       '<div class="cr-opts">' + q.options.map((o, i) => '<div class="cr-o ' + (o.k === q.correct ? 'is-right' : '') + (o.k === q.selected && o.k !== q.correct ? ' wrongpick' : '') + '"><span class="cr-l">' + LET[i] + '</span><span>' + esc(o.text) + '</span>' + (o.k === q.correct ? '<b class="small" style="margin-left:auto">✓ correct</b>' : o.k === q.selected ? '<b class="small" style="margin-left:auto">your answer</b>' : '') + '</div>').join('') + '</div>' + (q.hint ? '<div class="small muted" style="margin-top:6px">💡 ' + esc(q.hint) + '</div>' : '') + '</div>').join('') + '</div>' : '<div class="card muted" style="margin-top:14px">Your administrator has chosen not to show the right answers for this course.</div>';
     const again = r.remaining == null || r.remaining > 0;
     v.innerHTML = back('#/learn/c/' + c.id, c.title) + '<div class="card cr-score ' + (r.passed ? 'pass' : 'fail') + '"><div class="cr-big">' + pct(r.score) + '</div><div><h2>' + (r.passed ? 'You passed 🎉' : 'Not passed this time') + '</h2><div class="muted">' + r.correct + ' of ' + r.total + ' correct · pass mark ' + (r.pass_mark || c.pass_mark) + '%' + (r.remaining != null ? ' · ' + r.remaining + ' attempt' + (r.remaining === 1 ? '' : 's') + ' left' : '') + '</div><div class="row" style="margin-top:10px"><a class="btn" href="#/learn/c/' + c.id + '">Back to the course</a>' + (again ? '<a class="btn ghost" href="#/learn/c/' + c.id + '/test">Take it again</a>' : '') + '</div></div></div>' + rev;
@@ -217,4 +220,5 @@
     resultHtml(v, c, { ...r, pass_mark: c.pass_mark, remaining: 0 }); const h = $('h2', v); if (h && r.user_name) h.insertAdjacentHTML('afterend', '<div class="small muted">' + esc(r.user_name) + ' · attempt ' + r.attempt_no + ' · ' + fmtD(r.submitted_at) + '</div>');
     const ag = $$('a.btn', v).find(a => /Take it again/.test(a.textContent)); if (ag) ag.remove();
   }
+  X.cr = { video, slides, nl, back, view, fail, shrink, b64, pct, fmtD, opt, LET, importForm };
 })();

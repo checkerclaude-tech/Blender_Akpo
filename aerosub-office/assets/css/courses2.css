@@ -1,0 +1,45 @@
+/* course modules, sections, learning cards, short quizzes, exam navigator, puzzles */
+.cr-pbar{display:block;height:8px;border-radius:99px;background:var(--mist,#e8edf5);overflow:hidden}.cr-pbar.big{height:12px}
+.cr-pbar>i{display:block;height:100%;background:var(--ok,#1a9d5c);border-radius:99px;transition:width .4s}
+.cr-mod{margin-bottom:14px}.cr-mod-h{gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.cr-mn{display:inline-grid;place-items:center;width:30px;height:30px;border-radius:50%;background:var(--navy,#0B1B4D);color:#fff;font-weight:700;flex:none}
+.cr-ck{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:50%;border:2px solid var(--line,#cbd5e1);font-size:13px;flex:none;margin-right:6px}
+.cr-ck.done{background:var(--ok,#1a9d5c);border-color:var(--ok,#1a9d5c);color:#fff}
+.cr-sec{cursor:pointer}.cr-sec:hover{background:var(--mist,#f1f5f9)}.cr-ctl{display:inline-flex;gap:4px;flex-wrap:wrap}
+.cr-prog-card{margin-bottom:14px}
+.cr-sechead{padding-bottom:8px}.cr-counters{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;align-items:center;margin-top:6px}
+.cr-counters>span:nth-child(odd){grid-column:1}.cr-counters .cr-pbar{grid-column:2}
+.cr-block{margin-bottom:14px}.cr-bk{font-size:20px}.cr-text{line-height:1.6;font-size:16px}
+.cr-bigimg{max-width:100%;border-radius:10px;display:block;margin:0 auto}.cr-fig{margin:0;text-align:center}
+.cr-bar{position:sticky;bottom:0;background:var(--card,#fff);padding:10px 0;border-top:1px solid var(--line,#e2e8f0);z-index:5;margin-top:10px}
+.cr-bar .row{gap:8px}
+/* learning cards */
+.cr-flip{display:block;width:100%;min-height:200px;perspective:900px;background:none;border:0;padding:0;cursor:pointer}
+.cr-flip-in{display:block;position:relative;width:100%;min-height:200px;transition:transform .5s;transform-style:preserve-3d}
+.cr-flip.on .cr-flip-in{transform:rotateY(180deg)}
+.cr-face{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:18px;border-radius:14px;backface-visibility:hidden;-webkit-backface-visibility:hidden;font-size:20px;text-align:center;border:1px solid var(--line,#cbd5e1)}
+.cr-face.front{background:var(--mist,#eef3fb);color:var(--ink,#0b1b4d)}.cr-face.back{background:var(--navy,#0B1B4D);color:#fff;transform:rotateY(180deg)}
+.cr-cimg{max-height:110px;border-radius:8px}.cr-cnav{margin-top:8px;gap:6px}
+@media (prefers-reduced-motion:reduce){.cr-flip-in{transition:none}}
+/* short quiz */
+.cr-quiz .cr-qz{margin-bottom:16px}.cr-quizbar{gap:10px;align-items:center}.cr-expl{background:var(--mist,#eef3fb);border-radius:8px;padding:8px 10px;margin-top:6px}
+.cr-extra{background:var(--mist,#eef3fb);border-radius:8px;padding:10px 12px;margin:8px 0;line-height:1.55}
+/* exam navigator */
+.cr-counts{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+.cc{padding:4px 10px;border-radius:99px;font-size:13px;background:var(--mist,#eef3fb)}.cc b{font-size:15px}
+.cc.a{color:var(--ok,#1a9d5c)}.cc.n{color:var(--bad,#c0392b)}.cc.f{color:#b7791f}
+.cr-map{display:flex;flex-wrap:wrap;gap:5px;margin:8px 0}
+.cm{width:34px;height:34px;border-radius:8px;border:1.5px solid var(--line,#cbd5e1);background:var(--card,#fff);color:inherit;font-weight:600;cursor:pointer;position:relative}
+.cm.a{background:var(--ok,#1a9d5c);border-color:var(--ok,#1a9d5c);color:#fff}.cm.p{background:#f6c85f;border-color:#f6c85f;color:#222}
+.cm.n{background:var(--card,#fff)}.cm.cur{outline:2px solid var(--navy,#0B1B4D);outline-offset:1px}
+.cm.f::after{content:"⚑";position:absolute;top:-6px;right:-3px;font-size:12px;color:#b7791f}
+.cr-key{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.cr-key .k{display:inline-block;width:12px;height:12px;border-radius:3px;border:1px solid var(--line,#cbd5e1)}
+.cr-key .k.a{background:var(--ok,#1a9d5c)}.cr-key .k.p{background:#f6c85f}.cr-key .k.f{background:#fff;border-color:#b7791f}
+.cr-q-card.is-done{border-left:4px solid var(--ok,#1a9d5c)}.cr-q-card.is-flag{border-left:4px solid #b7791f}
+.cr-q-card.pulse{animation:crpulse .9s}@keyframes crpulse{0%{box-shadow:0 0 0 0 rgba(11,27,77,.5)}100%{box-shadow:0 0 0 14px rgba(11,27,77,0)}}
+.cr-st.a{color:var(--ok,#1a9d5c)}.cr-st.n{color:var(--bad,#c0392b)}.cr-st.p{color:#b7791f}
+.cr-mapbox{margin-top:6px}
+/* puzzles */
+.cr-ordi,.cr-mati{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line,#cbd5e1);border-radius:10px;margin:6px 0;background:var(--card,#fff)}
+.cr-mati select{max-width:55%}.cr-mati.is-right{border-color:var(--ok,#1a9d5c);background:rgba(26,157,92,.08)}.cr-mati.wrongpick{border-color:var(--bad,#c0392b);background:rgba(192,57,43,.07)}
+.cr-ol{margin:4px 0 0 20px;padding:0}
