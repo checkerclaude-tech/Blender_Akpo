@@ -15,7 +15,7 @@ function crc_flat(int $cid): array {
 /** Create the module tables on first use, so the feature works even if /upgrade.php was not opened yet. */
 function crc_ensure(): void {
     static $done = false; if ($done) return; $done = true;
-    try { db()->query('SELECT 1 FROM course_modules LIMIT 1'); if (col_exists('course_questions', 'qtype')) return; } catch (Throwable $e) {}
+    try { db()->query('SELECT 1 FROM course_modules LIMIT 1'); return; } catch (Throwable $e) {}
     require_once __DIR__ . '/migrate.php'; migrate_course_content();
 }
 function crc_modules(int $cid, int $uid): array {

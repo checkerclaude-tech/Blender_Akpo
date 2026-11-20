@@ -213,6 +213,8 @@ function me(): ?array {
         $u['head_of'] = head_dept_ids((int)$u['id']); try { $u['is_root'] = (int)(one('SELECT is_root FROM users WHERE id=?', [$u['id']])['is_root'] ?? 0); } catch (Throwable $e) { $u['is_root'] = 0; } try { $ga = games_access($u); $u['games'] = $ga['visible']; $u['games_open'] = $ga['open']; } catch (Throwable $e) { $u['games'] = false; $u['games_open'] = false; } $u['campaigns'] = can_campaigns($u); $u['finance'] = can_finance($u); $u['tabs'] = tab_map($u); try { require_once __DIR__ . '/approvals.php'; $u['approvals'] = ap_pending_count((int)$u['id']); } catch (Throwable $e) { $u['approvals'] = 0; } $u['ro_tabs'] = array_values(array_filter(array_keys(tab_ro_map($u)), fn($k) => !empty($u['tabs'][$k])));
         $u['av'] = 0; try { $r0 = one('SELECT UNIX_TIMESTAMP(updated_at) t FROM user_avatars WHERE user_id=?', [$u['id']]); $u['av'] = $r0 ? (int)$r0['t'] : 0; } catch (Throwable $e) {} }
     if ($id && !$u) { session_destroy(); remember_forget(); } elseif ($u) remember_touch();
+    // Read-only requests release the session lock at once, so the many requests the app sends together run in parallel instead of one after another.
+    if ($u && ($_SERVER['REQUEST_METHOD'] ?? '') === 'GET' && !empty($_SESSION['csrf']) && !isset($_SESSION['agent_epoch']) && session_status() === PHP_SESSION_ACTIVE) session_write_close();
     return $u;
 }
 function need_user(): array { $u = me(); if (!$u) fail('Not signed in', 401); return $u; }

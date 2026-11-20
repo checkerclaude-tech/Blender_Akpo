@@ -98,3 +98,8 @@ Check its output: it must say `Root Admin account: dev.aaerosub@…`. If it says
 - **Exam.** Live counters (answered / not answered / flagged), a **question map** (tap a number to jump to that question, colours show the state), filters (All, Not answered, Flagged, Answered), a flag button on each question, and a warning on submit that lists the unanswered question numbers. Answers autosave and resume.
 - **Editable questions of every kind.** Each question can have extra text, a picture (link or upload), a video and a hint. Types: multiple choice, **puzzle: put in order** (2–8 steps) and **puzzle: match pairs** (2–6 pairs). Questions can be edited, duplicated and re-ordered. Results show puzzles with the correct order / pairs.
 - **Signatures.** When signing a document you can now also **upload a PNG** of your signature (a transparent PNG is best; white backgrounds are made transparent). It can be saved as your signature for next time.
+
+## Speed
+- `.htaccess` now compresses pages, scripts, styles and API answers, and lets the browser keep static files for an hour (replace your `.htaccess` with this one).
+- Read-only API calls release the PHP session lock immediately, so the screen's parallel requests no longer queue behind each other.
+- Opening a course no longer runs a database schema lookup.
