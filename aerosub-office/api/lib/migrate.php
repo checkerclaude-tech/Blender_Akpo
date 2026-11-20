@@ -484,3 +484,11 @@ function migrate_share_msgs(): array {
     db()->exec("CREATE TABLE IF NOT EXISTS share_files (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, msg_id INT UNSIGNED NOT NULL, name VARCHAR(200) NOT NULL, mime VARCHAR(100) NOT NULL DEFAULT 'application/octet-stream', size INT UNSIGNED NOT NULL DEFAULT 0, path VARCHAR(64) NOT NULL, inline TINYINT(1) NOT NULL DEFAULT 0, KEY (msg_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     return ['Report sharing: rich messages, pictures and attachments ready.'];
 }
+
+
+// Requisitions: a fourth finance document type (purchase / payment request) that goes through the same review and signature chain. Safe to run repeatedly.
+function migrate_requisitions(): array {
+    $r = one("SELECT COLUMN_TYPE ct FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='fin_docs' AND COLUMN_NAME='doc_type'");
+    if ($r && strpos((string)$r['ct'], 'requisition') === false) db()->exec("ALTER TABLE fin_docs MODIFY doc_type ENUM('commercial','proforma','invoice','receipt','requisition') NOT NULL");
+    return ['Finance: requisitions ready.'];
+}

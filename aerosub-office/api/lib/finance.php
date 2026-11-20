@@ -29,7 +29,7 @@ function fx_number(string $type): string {
     if ($type === 'invoice') { // plain running number (100026706, 100026707, ...) like the invoice template; Finance can change the next number in Company details
         try { for ($k = 0; $k < 20; $k++) { q('UPDATE fin_settings SET inv_next = LAST_INSERT_ID(inv_next) + 1 WHERE id=1'); $n = (int)one('SELECT LAST_INSERT_ID() n')['n']; if ($n > 0 && !one('SELECT 1 FROM fin_docs WHERE number=?', [(string)$n])) return (string)$n; } } catch (Throwable $e) {}
     }
-    $pre = ['commercial' => 'COM', 'proforma' => 'PRO', 'invoice' => 'INV', 'receipt' => 'REC'][$type]; $y = date('Y');
+    $pre = ['commercial' => 'COM', 'proforma' => 'PRO', 'invoice' => 'INV', 'receipt' => 'REC', 'requisition' => 'REQ'][$type]; $y = date('Y');
     $r = one("SELECT MAX(CAST(SUBSTRING_INDEX(number,'-',-1) AS UNSIGNED)) m FROM fin_docs WHERE number LIKE ?", ["$pre-$y-%"]); return sprintf('%s-%s-%04d', $pre, $y, ((int)($r['m'] ?? 0)) + 1);
 }
 function fx_task_visible(array $u, int $tid): bool {
@@ -79,7 +79,7 @@ if ($seg[0] === 'finance') {
     }
     if ($sub === 'summary') { if (!$fin && !$ro) fail('Not allowed', 403);
         $rows = all("SELECT d.id,d.doc_type,d.status,d.discount,d.tax_rate,d.amount_paid,d.currency,d.issue_date," . fx_sub_sql() . " AS sub FROM fin_docs d WHERE d.status<>'void'");
-        $o = ['outstanding' => [], 'paid_month' => [], 'counts' => ['commercial' => 0, 'proforma' => 0, 'invoice' => 0, 'receipt' => 0], 'unpaid_invoices' => 0];
+        $o = ['outstanding' => [], 'paid_month' => [], 'counts' => ['commercial' => 0, 'proforma' => 0, 'invoice' => 0, 'receipt' => 0, 'requisition' => 0], 'unpaid_invoices' => 0];
         foreach ($rows as $r) { $o['counts'][$r['doc_type']]++; $net = (float)$r['sub'] - min((float)$r['discount'], (float)$r['sub']); $tot = round($net + $net * (float)$r['tax_rate'] / 100, 2); $c = $r['currency'];
             if ($r['doc_type'] === 'invoice' && in_array($r['status'], ['draft', 'sent'], true)) { $paid = (float)(one("SELECT COALESCE(SUM(amount_paid),0) s FROM fin_docs WHERE doc_type='receipt' AND parent_id=? AND status<>'void'", [$r['id']])['s'] ?? 0); $o['outstanding'][$c] = round(($o['outstanding'][$c] ?? 0) + max(0, $tot - $paid), 2); if ($r['status'] === 'sent') $o['unpaid_invoices']++; }
             if ($r['doc_type'] === 'receipt' && substr((string)$r['issue_date'], 0, 7) === date('Y-m')) $o['paid_month'][$c] = round(($o['paid_month'][$c] ?? 0) + (float)$r['amount_paid'], 2); }
@@ -97,7 +97,7 @@ if ($seg[0] === 'finance') {
         }
         if ($method === 'POST' && !$sid) {
             if (!$fin) fail('Only Finance can create these documents', 403); $st = fx_settings();
-            $type = in((string)($b['doc_type'] ?? ''), ['commercial', 'proforma', 'invoice'], ''); if ($type === '') fail('Choose the document type');
+            $type = in((string)($b['doc_type'] ?? ''), ['commercial', 'proforma', 'invoice', 'requisition'], ''); if ($type === '') fail('Choose the document type');
             $client = fx_s($b['client_name'] ?? '', 190); if (!$client) fail('Enter the client name'); $items = fx_clean_items($b['items'] ?? []); if (!$items) fail('Add at least one line item');
             $tid = !empty($b['task_id']) ? (int)$b['task_id'] : null; if ($tid && !one('SELECT id FROM tasks WHERE id=?', [$tid])) $tid = null;
             $cid = !empty($b['company_id']) && one('SELECT id FROM companies WHERE id=?', [(int)$b['company_id']]) ? (int)$b['company_id'] : null;
@@ -113,7 +113,7 @@ if ($seg[0] === 'finance') {
         if (!$sid) fail('Not found', 404);
         $d = fx_doc($sid); if (!$d) fail('Not found', 404);
         if (!$fin && !$ro && !($d['task_id'] && fx_task_visible($u, (int)$d['task_id'])) && !ap_is_in_chain($uid, (int)$d['id'])) fail('Not found', 404);
-        if ($method === 'GET' && $act === '') { $d['seller'] = fx_settings(); $d['can_edit'] = $fin; $d['children'] = all('SELECT id,doc_type,number,status FROM fin_docs WHERE parent_id=? ORDER BY id', [$sid]);
+        if ($method === 'GET' && $act === '') { $d['seller'] = fx_settings(); $d['can_edit'] = $fin; $d['can_correspond'] = !$ro && ($fin || (int)($d['created_by'] ?? 0) === $uid || ap_is_in_chain($uid, (int)$d['id'])); $d['children'] = all('SELECT id,doc_type,number,status FROM fin_docs WHERE parent_id=? ORDER BY id', [$sid]);
             $d['parent'] = $d['parent_id'] ? one('SELECT id,doc_type,number FROM fin_docs WHERE id=?', [$d['parent_id']]) : null;
             if ($d['doc_type'] === 'invoice') { $d['paid_total'] = (float)one("SELECT COALESCE(SUM(amount_paid),0) s FROM fin_docs WHERE doc_type='receipt' AND parent_id=? AND status<>'void'", [$sid])['s']; $d['balance'] = round($d['totals']['total'] - $d['paid_total'], 2); }
             $d['approval'] = ap_summary($u, $d, $fin && !$ro); $d['locked'] = $d['approval']['locked'];
@@ -125,10 +125,10 @@ if ($seg[0] === 'finance') {
             if ($method === 'POST' && $x === 'act') out(ap_act($u, $d, $b));
             fail('Bad request', 404);
         }
-        if (!$fin) fail('Only Finance can change these documents', 403);
+        $corr = !$ro && ($fin || (int)($d['created_by'] ?? 0) === $uid || ap_is_in_chain($uid, (int)$d['id']));   // the author and everyone in the approval chain may edit and save
+        if (!$fin && !($method === 'PATCH' && $act === '' && $corr)) fail('Only Finance can change these documents', 403);
         if ($method === 'PATCH' && $act === '') {
             if ($d['status'] === 'void') fail('This document is void'); if ($d['doc_type'] === 'receipt') fail('Receipts cannot be edited; void it and issue a new one');
-            if (in_array($d['approval_status'] ?? '', ['in_review', 'awaiting_sign', 'signed'], true)) fail('This document is in the approval chain or already signed, so it cannot be edited. Withdraw or revert the approval first, or void it and issue a new one.');
             if ($d['status'] === 'paid') fail('A paid invoice cannot be edited');
             $items = array_key_exists('items', $b) ? fx_clean_items($b['items']) : null; if ($items !== null && !$items) fail('Add at least one line item');
             $client = array_key_exists('client_name', $b) ? fx_s($b['client_name'], 190) : $d['client_name']; if (!$client) fail('Enter the client name');
@@ -137,7 +137,8 @@ if ($seg[0] === 'finance') {
                array_key_exists('currency', $b) ? fx_cur($b['currency']) : $d['currency'], fx_date($b['issue_date'] ?? null) ?: $d['issue_date'], array_key_exists('due_date', $b) ? fx_date($b['due_date']) : $d['due_date'], array_key_exists('valid_until', $b) ? fx_date($b['valid_until']) : $d['valid_until'],
                array_key_exists('tax_label', $b) ? (fx_s($b['tax_label'], 30) ?: 'VAT') : $d['tax_label'], array_key_exists('tax_rate', $b) ? max(0, min(100, fx_num($b['tax_rate']))) : $d['tax_rate'], array_key_exists('discount', $b) ? max(0, fx_num($b['discount'])) : $d['discount'],
                array_key_exists('notes', $b) ? fx_s($b['notes'], 3000) : $d['notes'], array_key_exists('terms', $b) ? fx_s($b['terms'], 3000) : $d['terms'], $sid]);
-            if ($items !== null) fx_save_items($sid, $items); fx_save_extra($sid, $b); out(['ok' => true]);
+            if ($items !== null) fx_save_items($sid, $items); fx_save_extra($sid, $b);
+            $after = fx_doc($sid); $res = $after ? ap_after_edit($u, $d, $after, $b) : ['changed' => false]; out(['ok' => true] + $res);
         }
         if ($method === 'POST' && $act === 'status') { $ns = in((string)($b['status'] ?? ''), ['draft', 'sent', 'void'], ''); if ($ns === '') fail('Bad status'); if ($d['status'] === 'paid' && $ns !== 'void') fail('This invoice is already paid'); q('UPDATE fin_docs SET status=? WHERE id=?', [$ns, $sid]);
             if ($ns === 'void' && $d['doc_type'] === 'receipt' && $d['parent_id']) { $paid = (float)one("SELECT COALESCE(SUM(amount_paid),0) s FROM fin_docs WHERE doc_type='receipt' AND parent_id=? AND status<>'void'", [$d['parent_id']])['s']; $par = fx_doc((int)$d['parent_id']); if ($par && $par['status'] === 'paid' && $paid < $par['totals']['total'] - 0.005) q("UPDATE fin_docs SET status='sent' WHERE id=?", [$d['parent_id']]); }

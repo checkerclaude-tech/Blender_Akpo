@@ -14,7 +14,8 @@
 /* ---------- invoice ---------- */
 .fin-sheet.inv{width:210mm;min-height:297mm}
 .inv-bg{position:absolute;inset:0;background:url(../img/invoice-page.png) 0 0/100% 100% no-repeat;z-index:0}
-.inv-title-cover{position:absolute;right:8.5%;top:3.6%;width:36%;height:7.6%;background:#E5F5FC;color:#0A1F5C;font:800 17px/1.05 Poppins,Arial,sans-serif;text-align:center;display:flex;align-items:center;justify-content:center;letter-spacing:.02em;z-index:1}
+.inv-bg.pro{background-image:url(../img/proforma-page.png)}
+.inv-title-cover{display:none;position:absolute;right:8.5%;top:3.6%;width:36%;height:7.6%;background:#E5F5FC;color:#0A1F5C;font:800 17px/1.05 Poppins,Arial,sans-serif;text-align:center;display:flex;align-items:center;justify-content:center;letter-spacing:.02em;z-index:1}
 .inv-body{position:relative;z-index:2;padding:45mm 19mm 26mm}
 .inv-meta{text-align:right;font-size:11.5px;margin-bottom:5px}
 .inv-grid,.inv-items,.inv-bank{width:100%;border-collapse:collapse;table-layout:fixed}
@@ -75,3 +76,15 @@
 .inv-grid tr.tall2 td{height:19mm;font-size:10.5px;font-weight:400}.inv-grid tr.tall2 td b{font-weight:700}
 .inv-words{line-height:1.5}.inv-words.strong{margin:6px 0 4px;font-size:10.5px}.inv-words.strong,.inv-words.strong b{font-weight:700}.inv-words.strong{text-decoration:underline}
 .inv-bank{margin-top:2mm}
+
+/* requisition */
+.fin-sheet.req{width:210mm;min-height:297mm;background:#fff;position:relative;overflow:hidden}
+.rq-head{display:flex;align-items:center;justify-content:space-between;background:#EAF7FD;padding:9mm 15mm 7mm}
+.rq-head img{height:15mm;width:auto}.rq-title{font:800 26px/1 Poppins,Arial,sans-serif;color:#0B1F5C;letter-spacing:.01em}
+.rq-bar{background:#0B1F5C;color:#fff;text-align:center;font-size:11px;padding:3mm 10mm}
+.rq-body{position:relative;padding:8mm 19mm 20mm}
+.rq-kv{width:100%;border-collapse:collapse;margin:6px 0 10px;table-layout:fixed}
+.rq-kv td{border:1px solid var(--inv-line,#0AA0D8);padding:4px 8px;font-size:11px;vertical-align:top}
+.rq-kv tr.h td{background:var(--inv-cyan,#BDEBFF);font-weight:700;font-size:10px}.rq-kv td.k{width:34%;font-weight:600}
+.rq-why{border:1px solid var(--inv-line,#0AA0D8);padding:6px 8px;font-size:11px;margin-bottom:10px}
+.fin-tabs{display:flex;flex-wrap:wrap;gap:6px}.fin-tabs .chip{cursor:pointer;border:0}

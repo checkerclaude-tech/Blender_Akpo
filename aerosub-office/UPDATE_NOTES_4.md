@@ -110,3 +110,15 @@ Check its output: it must say `Root Admin account: dev.aaerosub@…`. If it says
 - **Email:** tick "Also email it". The email shows the sender's name, the report, the formatted message with pictures shown inline, the attached documents (and the Excel file for weekly reports) and a link back. Replies go to the sender. Recipients also get an in-app notification.
 - Recipients see the messages inside the report (daily: report window, weekly: under the sheet), can open pictures and download documents, and the sender (or a Super Admin) can remove a message.
 - Only the sender, the recipients, the report owner and Super Admins can read a message or download its files. Pasted text is cleaned so scripts cannot get in.
+
+## Finance, mobile and printing round
+**Open `/upgrade.php` once** (adds the Requisition document type).
+- **Mail notification blank screen fixed.** A new email used to rebuild the page frame without redrawing the screen. Now only the little number on the menu changes.
+- **Finance on mobile.** It now appears under More for everyone who has Finance access (before, only Super Admin and Founder saw it).
+- **Take back my signature.** A signee can remove their own signature at any time (Approval card > "Take back my signature…"), with an optional reason and a choice to tell the others.
+- **Edit finance documents.** The author, Finance and everyone in the approval chain can edit and save, even after review or signing. Saving a change clears existing signatures (they are given on the old text), renews the fingerprint, and records it in the history. The editor can add a note. The others are told about the change; a **signee** can choose to stay quiet.
+- **Requisitions.** New document type with its own tab in Finance (All · Commercials · Proformas · Invoices · Receipts · Requisitions), numbered REQ-YYYY-NNNN, printable, and it goes through the same review and signature chain.
+- **New Proforma Invoice template.** New page art (title in the header), "Sales Rep ID", SUBTOTAL / Discount / SUBTOTAL / VAT / TOTAL, "Leadtime", bank details then the two signature lines on page 2.
+- **Screen sleep (phones only).** After a quiet moment: clock, the task you are on, the latest notification and a scrolling news bar. It follows the phone when rotated; touch to wake. Set the delay or switch it off under More > Screen sleep.
+- **Printing fixed.** Team performance (and the daily reports page) printed blank because a print rule hid everything except finance documents. They print properly now.
+- Speed files from the previous round are included.

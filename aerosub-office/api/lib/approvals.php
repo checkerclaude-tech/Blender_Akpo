@@ -13,7 +13,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/accounts.php';
 
 const AP_ACTIVE = ['in_review', 'awaiting_sign'];
-const AP_TYPES = ['commercial' => 'Commercial', 'proforma' => 'Proforma / quotation', 'invoice' => 'Invoice'];
+const AP_TYPES = ['commercial' => 'Commercial', 'proforma' => 'Proforma / quotation', 'invoice' => 'Invoice', 'requisition' => 'Requisition'];
 
 function ap_role_label(array $r): string { return ['super_admin' => 'Super Admin', 'founder' => 'Founder / CEO', 'manager' => 'Manager', 'employee' => 'Employee'][$r['role']] ?? $r['role']; }
 /** People who may review or sign: administrators, the Founder, managers and heads of department (the chain of command). */
@@ -89,8 +89,43 @@ function ap_request(array $u, array $d, array $b): array {
     [$k0, $to0] = $steps[0]; ap_tell($to0, $u, $k0 === 'sign' ? 'approval_sign' : 'approval_review', ($k0 === 'sign' ? 'Signature requested' : 'Review requested') . ' by ' . $u['name'], (AP_TYPES[$d['doc_type']]) . ' ' . $d['number'] . ' · ' . $d['client_name'], $d, true, (string)($b['note'] ?? ''));
     log_act($uid, 'approval_requested', $d['number']); return ['ok' => true, 'approval' => ap_out(ap_current((int)$d['id']), $uid)];
 }
+/** The signee takes their own signature back (any time, even after everything was signed). They choose whether the others are told. */
+function ap_unsign(array $u, array $d, array $b): array {
+    $uid = (int)$u['id']; $a = ap_current((int)$d['id']); if (!$a) fail('Nothing to unsign on this document');
+    $mine = one("SELECT * FROM doc_approval_steps WHERE approval_id=? AND user_id=? AND kind='sign' AND status='signed' ORDER BY position LIMIT 1", [$a['id'], $uid]); if (!$mine) fail('You have not signed this document', 403);
+    $comment = s($b['comment'] ?? '', 1000); $aid = (int)$a['id'];
+    q("UPDATE doc_approval_steps SET status='pending', acted_at=NULL, comment=NULL, signature=NULL, sig_hash=NULL WHERE id=?", [$mine['id']]);
+    if ($a['status'] === 'signed') { q("UPDATE doc_approvals SET status='awaiting_sign', closed_at=NULL WHERE id=?", [$aid]); q("UPDATE fin_docs SET approval_status='awaiting_sign', signed_at=NULL WHERE id=?", [$d['id']]); }
+    ap_event($aid, $uid, 'unsigned', $comment); $told = 0;
+    if (!array_key_exists('notify', $b) || !empty($b['notify'])) { $who = array_unique(array_merge([(int)$a['created_by']], array_map(fn($s) => (int)$s['user_id'], ap_steps($aid)))); foreach ($who as $w) if ($w !== $uid) { ap_tell($w, $u, 'approval_unsigned', $u['name'] . ' took back their signature on ' . $d['number'], $comment !== '' ? mb_substr($comment, 0, 140) : 'It needs to be signed again.', $d, true, $comment); $told++; } }
+    log_act($uid, 'document_unsigned', $d['number']); return ['ok' => true, 'status' => $a['status'] === 'signed' ? 'awaiting_sign' : $a['status'], 'notified' => $told];
+}
+/** Everything that can change what a person signs, so an edit is always noticed (the fingerprint above only covers the main fields). */
+function ap_fullhash(array $d): string {
+    $core = $d; foreach (['approval', 'approval_status', 'approval_id', 'signed_at', 'seller', 'children', 'parent', 'can_edit', 'locked', 'status', 'amount_paid', 'totals', 'task_title', 'created_at', 'updated_at'] as $k) unset($core[$k]);
+    return hash('sha256', json_encode($core, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR));
+}
+/**
+ * A correspondent (author, Finance, anyone in the chain) saved a change. Signatures were given on the old text, so they are taken back
+ * (the signees sign again) and the fingerprint is renewed. Signees choose whether to tell the others; everybody else always tells them.
+ */
+function ap_after_edit(array $u, array $before, array $after, array $b): array {
+    $uid = (int)$u['id']; $a = ap_current((int)$after['id']); $reset = 0; $told = 0;
+    $changed = ap_fullhash($before) !== ap_fullhash($after); if (!$changed) return ['changed' => false, 'signatures_cleared' => 0, 'notified' => 0];
+    $aid = $a ? (int)$a['id'] : 0; $steps = $a ? ap_steps($aid) : []; $isSignee = false; foreach ($steps as $s) if ((int)$s['user_id'] === $uid && $s['kind'] === 'sign') $isSignee = true;
+    if ($a && in_array($a['status'], ['in_review', 'awaiting_sign', 'signed'], true)) {
+        foreach ($steps as $s) if ($s['status'] === 'signed') { q("UPDATE doc_approval_steps SET status='pending', acted_at=NULL, comment=NULL, signature=NULL, sig_hash=NULL WHERE id=?", [$s['id']]); $reset++; }
+        q('UPDATE doc_approvals SET content_hash=? WHERE id=?', [ap_hash($after), $aid]);
+        if ($a['status'] === 'signed') { q("UPDATE doc_approvals SET status='awaiting_sign', closed_at=NULL WHERE id=?", [$aid]); q("UPDATE fin_docs SET approval_status='awaiting_sign', signed_at=NULL WHERE id=?", [$after['id']]); }
+    }
+    $note = s($b['edit_note'] ?? '', 500); if ($aid) ap_event($aid, $uid, 'edited', ($reset ? $reset . ' signature' . ($reset > 1 ? 's' : '') . ' cleared. ' : '') . $note);
+    $tell = $isSignee ? (!array_key_exists('notify', $b) || !empty($b['notify'])) : true;   // the choice to stay quiet belongs to the signee
+    if ($tell) { $who = array_unique(array_merge($a ? [(int)$a['created_by']] : [(int)($after['created_by'] ?? 0)], array_map(fn($s) => (int)$s['user_id'], $steps)));
+        foreach ($who as $w) if ($w && $w !== $uid) { ap_tell($w, $u, 'document_edited', $u['name'] . ' edited ' . $after['number'], ($reset ? 'Signatures were cleared; it needs to be signed again. ' : '') . ($note !== '' ? mb_substr($note, 0, 140) : 'Open it to see the changes.'), $after, true, $note); $told++; } }
+    log_act($uid, 'document_edited', $after['number']); return ['changed' => true, 'signatures_cleared' => $reset, 'notified' => $told];
+}
 function ap_act(array $u, array $d, array $b): array {
-    $uid = (int)$u['id']; $a = ap_current((int)$d['id']); if (!$a || !in_array($a['status'], AP_ACTIVE, true)) fail('Nothing is waiting for approval on this document');
+    $uid = (int)$u['id']; if ((string)($b['action'] ?? '') === 'unsign') return ap_unsign($u, $d, $b); $a = ap_current((int)$d['id']); if (!$a || !in_array($a['status'], AP_ACTIVE, true)) fail('Nothing is waiting for approval on this document');
     $action = (string)($b['action'] ?? ''); $comment = s($b['comment'] ?? '', 1000); $steps = ap_steps((int)$a['id']); $cur = ap_next_pending($steps); $aid = (int)$a['id'];
     if ($action === 'cancel') {   // the person who asked (or Finance) withdraws the request
         if ((int)$a['created_by'] !== $uid && !can_finance($u) && !is_root($u)) fail('Only the person who asked for approval can withdraw it', 403);
@@ -130,7 +165,7 @@ function ap_act(array $u, array $d, array $b): array {
 function ap_pending_count(int $uid): int {
     try { return (int)one("SELECT COUNT(*) c FROM doc_approval_steps s JOIN doc_approvals a ON a.id=s.approval_id WHERE s.user_id=? AND s.status='pending' AND a.status IN ('in_review','awaiting_sign') AND s.position=(SELECT MIN(s2.position) FROM doc_approval_steps s2 WHERE s2.approval_id=a.id AND s2.status='pending')", [$uid])['c']; } catch (Throwable $e) { return 0; }
 }
-function ap_is_in_chain(int $uid, int $docId): bool { try { return (bool)one('SELECT 1 FROM doc_approval_steps s JOIN doc_approvals a ON a.id=s.approval_id WHERE a.doc_id=? AND s.user_id=? LIMIT 1', [$docId, $uid]); } catch (Throwable $e) { return false; } }
+function ap_is_in_chain(int $uid, int $docId): bool { try { return (bool)one('SELECT 1 FROM doc_approvals a LEFT JOIN doc_approval_steps s ON s.approval_id=a.id WHERE a.doc_id=? AND (s.user_id=? OR a.created_by=?) LIMIT 1', [$docId, $uid, $uid]); } catch (Throwable $e) { return false; } }
 /** finance/approvals and finance/signature */
 function ap_global(array $u, string $what, string $method, array $b): void {
     $uid = (int)$u['id'];

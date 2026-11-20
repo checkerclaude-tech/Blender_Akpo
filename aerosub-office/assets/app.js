@@ -408,7 +408,7 @@ async function mailToTask() {
 }
 
 /* ---------- Finance: commercials, proformas, invoices, receipts ---------- */
-const FTYPE = { commercial: 'Commercial', proforma: 'Proforma invoice', invoice: 'Invoice', receipt: 'Receipt' };
+const FTYPE = { commercial: 'Commercial', proforma: 'Proforma invoice', invoice: 'Invoice', receipt: 'Receipt', requisition: 'Requisition' };
 const FSTAT = { draft: 'Draft', sent: 'Sent', paid: 'Paid', void: 'Void' };
 const CUR_SIGN = { NGN: '₦', USD: '$', GBP: '£', EUR: '€' };
 const fmoney = (n, cur, sym) => { n = Number(n || 0); const s = CUR_SIGN[String(cur || '').toUpperCase()] || sym; const body = Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); return (n < 0 ? '−' : '') + (s ? s : (cur ? cur + ' ' : '')) + body; };
@@ -422,11 +422,11 @@ views.finance = async () => {
   const can = S.user.finance, money = o => Object.keys(o).length ? Object.entries(o).map(([c, n]) => fmoney(n, c)).join(' · ') : '—';
   v.innerHTML = '<div class="top"><div><h1>Finance</h1><div class="muted">Commercials, proformas, invoices and receipts for RFQs and purchase orders</div></div>' + (can ? '<span class="right row"><button class="btn ghost" id="fset">Company details</button><button class="btn" id="fnew">+ New document</button></span>' : '') + '</div>' +
     '<div class="cards" style="margin-bottom:14px"><div class="card"><div class="muted small">Outstanding invoices</div><h2>' + esc(money(sm.outstanding)) + '</h2></div><div class="card"><div class="muted small">Received this month</div><h2>' + esc(money(sm.paid_month)) + '</h2></div><div class="card"><div class="muted small">Invoices awaiting payment</div><h2>' + sm.unpaid_invoices + '</h2></div><div class="card"><div class="muted small">Documents</div><div class="small">' + Object.entries(sm.counts).map(([k, n]) => n + ' ' + FTYPE[k].toLowerCase() + (n == 1 ? '' : 's')).join(' · ') + '</div></div></div>' +
-    '<div class="row" style="margin-bottom:12px"><input id="fq" placeholder="Search number, client, PO, RFQ…" style="max-width:300px" value="' + esc(FF.q) + '"><select id="ft" style="width:auto">' + opts(Object.entries(FTYPE), FF.type, 'All types') + '</select><select id="fs" style="width:auto">' + opts(Object.entries(FSTAT), FF.status, 'All statuses') + '</select></div><div class="card"><div class="tablewrap"><table><thead><tr><th>Number</th><th>Client</th><th>PO / RFQ</th><th>Date</th><th>Status</th><th style="text-align:right">Total</th></tr></thead><tbody id="fr"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody></table></div></div>';
+    '<div class="chips fin-tabs" id="ftabs" role="tablist" style="margin-bottom:10px">' + [['', 'All documents'], ['commercial', 'Commercials'], ['proforma', 'Proformas'], ['invoice', 'Invoices'], ['receipt', 'Receipts'], ['requisition', 'Requisitions']].map(([k, l]) => '<button type="button" role="tab" class="chip' + (FF.type === k ? ' on' : '') + '" data-ft="' + k + '">' + l + '</button>').join('') + '</div><div class="row" style="margin-bottom:12px"><input id="fq" placeholder="Search number, client, PO, RFQ…" style="max-width:300px" value="' + esc(FF.q) + '"><select id="fs" style="width:auto">' + opts(Object.entries(FSTAT), FF.status, 'All statuses') + '</select></div><div class="card"><div class="tablewrap"><table><thead><tr><th>Number</th><th>Client</th><th>PO / RFQ</th><th>Date</th><th>Status</th><th style="text-align:right">Total</th></tr></thead><tbody id="fr"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody></table></div></div>';
   const load = async () => { const q = []; if (FF.q) q.push('q=' + encodeURIComponent(FF.q)); if (FF.type) q.push('type=' + FF.type); if (FF.status) q.push('status=' + FF.status); const d = await api('finance/docs' + (q.length ? '?' + q.join('&') : ''));
     $('#fr').innerHTML = d.docs.length ? d.docs.map(x => '<tr style="cursor:pointer" data-d="' + x.id + '"><td><b>' + esc(x.number) + '</b><div class="muted small">' + FTYPE[x.doc_type] + '</div></td><td>' + esc(x.client_name) + '</td><td class="small">' + esc([x.po_number && 'PO ' + x.po_number, x.rfq_ref && 'RFQ ' + x.rfq_ref].filter(Boolean).join(' · ')) + '</td><td>' + fmtDate(x.issue_date) + '</td><td>' + fstag(x.status) + '</td><td style="text-align:right">' + fmoney(x.total, x.currency, x.currency_symbol) + '</td></tr>').join('') : '<tr><td colspan="6" class="empty">No documents found.</td></tr>';
     $('#fr').querySelectorAll('[data-d]').forEach(r => r.onclick = () => location.hash = '#/finance/' + r.dataset.d); };
-  load(); let tm; $('#fq').oninput = e => { FF.q = e.target.value.trim(); clearTimeout(tm); tm = setTimeout(load, 300); }; $('#ft').onchange = e => { FF.type = e.target.value; load(); }; $('#fs').onchange = e => { FF.status = e.target.value; load(); };
+  load(); let tm; $('#fq').oninput = e => { FF.q = e.target.value.trim(); clearTimeout(tm); tm = setTimeout(load, 300); }; $('#ftabs').querySelectorAll('[data-ft]').forEach(b => b.onclick = () => { FF.type = b.dataset.ft; $('#ftabs').querySelectorAll('[data-ft]').forEach(x => x.classList.toggle('on', x === b)); load(); }); $('#fs').onchange = e => { FF.status = e.target.value; load(); };
   if (can) { $('#fnew').onclick = () => finForm(null, {}); $('#fset').onclick = finSettings; }
 };
 async function finSettings() {
@@ -470,7 +470,7 @@ async function finDocPage(id) {
   const v = $('#view'); v.innerHTML = '<div class="empty">Loading…</div>'; let d; try { d = await api('finance/doc/' + id); } catch (e) { v.innerHTML = '<a href="#/finance" class="small">‹ Finance</a><div class="empty">' + esc(e.message) + '</div>'; return; }
   const can = d.can_edit, conv = { commercial: ['proforma', 'invoice'], proforma: ['invoice'] }[d.doc_type] || [];
   v.innerHTML = '<div style="margin-bottom:6px" class="row noprint"><a href="#/finance" class="small">‹ Finance</a>' + (d.task_id ? '<a href="#/tasks/' + d.task_id + '" class="small">· Related task: ' + esc(d.task_title || '#' + d.task_id) + '</a>' : '') + '</div><div class="row noprint" style="margin-bottom:12px;flex-wrap:wrap">' + fstag(d.status) + (d.children.length ? '<span class="small muted">Leads to: ' + d.children.map(c => '<a href="#/finance/' + c.id + '">' + esc(c.number) + '</a>').join(', ') + '</span>' : '') + '<span class="right row" style="flex-wrap:wrap"><button class="btn ghost sm" id="fpr">Print / save PDF</button>' + (d.client_email && S.mail ? '<button class="btn ghost sm" id="fem">Email client</button>' : '') +
-    (can && d.status !== 'void' ? (d.doc_type !== 'receipt' && d.status !== 'paid' ? '<button class="btn ghost sm" id="fed">Edit</button>' : '') + (d.status === 'draft' && d.doc_type !== 'receipt' ? '<button class="btn ghost sm" id="fsn">Mark as sent</button>' : '') + conv.map(t => '<button class="btn ghost sm" data-cv="' + t + '">Make ' + FTYPE[t].toLowerCase() + '</button>').join('') + (d.doc_type === 'invoice' && d.status !== 'paid' ? '<button class="btn sm" id="fpay">Record payment</button>' : '') + '<button class="btn ghost sm" id="fvd" style="color:var(--bad)">Void</button>' + (d.status === 'draft' && d.doc_type !== 'receipt' ? '<button class="btn ghost sm" id="fdl" style="color:var(--bad)">Delete</button>' : '') : '') + '</span></div>' + finDocHtml(d);
+    ((d.can_correspond || can) && d.status !== 'void' && d.doc_type !== 'receipt' && d.status !== 'paid' ? '<button class="btn ghost sm" id="fed">Edit</button>' : '') + (can && d.status !== 'void' ? ((d.status === 'draft' && d.doc_type !== 'receipt' ? '<button class="btn ghost sm" id="fsn">Mark as sent</button>' : '') + conv.map(t => '<button class="btn ghost sm" data-cv="' + t + '">Make ' + FTYPE[t].toLowerCase() + '</button>').join('') + (d.doc_type === 'invoice' && d.status !== 'paid' ? '<button class="btn sm" id="fpay">Record payment</button>' : '') + '<button class="btn ghost sm" id="fvd" style="color:var(--bad)">Void</button>' + (d.status === 'draft' && d.doc_type !== 'receipt' ? '<button class="btn ghost sm" id="fdl" style="color:var(--bad)">Delete</button>' : '')) : '') + '</span></div>' + finDocHtml(d);
   $('#fpr').onclick = () => window.print();
   try { if (window.OfficeExt && window.OfficeExt.finDocHook) window.OfficeExt.finDocHook(d, v, id); } catch (e) { console.error(e); }
   const act = async (path, data, msg) => { try { await api('finance/doc/' + id + path, { method: 'POST', data }); toast(msg); render(); } catch (er) { toast(er.message); } };
@@ -704,7 +704,7 @@ async function evPage(id) {
 }
 
 views.more = async () => {
-  const items = [['campaigns', 'Campaigns', null], ['schedule', 'Schedule', null], ['team', 'Team / Snapshot', ['super_admin', 'founder', 'manager']], ['learn', 'Learn (SOPs)', null], ['competition', 'Competition', null], ['events', 'Events', null], ['research', 'Research', null], ['projects', 'Projects', null], ['products', 'Products & services', null], ['news', 'News', null], ['finance', 'Finance', ['super_admin', 'founder']], ['admin', 'Admin', ['super_admin']], ['me', 'My profile & settings', null]].filter(x => (!x[2] || x[2].includes(S.user.role)) && (!(S.user.tabs) || !(x[0] in S.user.tabs) || S.user.tabs[x[0]]) && (x[0] !== 'campaigns' || S.user.campaigns) && (x[0] !== 'finance' || S.user.finance || ['super_admin', 'founder'].includes(S.user.role)));
+  const items = [['campaigns', 'Campaigns', null], ['schedule', 'Schedule', null], ['team', 'Team / Snapshot', ['super_admin', 'founder', 'manager']], ['learn', 'Learn (SOPs)', null], ['competition', 'Competition', null], ['events', 'Events', null], ['research', 'Research', null], ['projects', 'Projects', null], ['products', 'Products & services', null], ['news', 'News', null], ['finance', 'Finance', null], ['admin', 'Admin', ['super_admin']], ['me', 'My profile & settings', null]].filter(x => (!x[2] || x[2].includes(S.user.role)) && (!(S.user.tabs) || !(x[0] in S.user.tabs) || S.user.tabs[x[0]]) && (x[0] !== 'campaigns' || S.user.campaigns) && (x[0] !== 'finance' || S.user.finance || ['super_admin', 'founder'].includes(S.user.role)));
   if (window.OfficeExt && window.OfficeExt.more) window.OfficeExt.more(items); // Agents area hook 5 of 6: Mail moves here for the owner
   $('#view').innerHTML = '<h1 style="margin-bottom:16px">More</h1><div class="card list">' + items.map(x => '<a class="item" href="#/' + x[0] + '" style="color:inherit"><b>' + x[1] + '</b><span class="right muted">›</span></a>').join('') + '</div>';
 };
@@ -1395,17 +1395,21 @@ async function render() {
 }
 window.addEventListener('hashchange', () => { if (!location.hash.startsWith('#/tasks/') || !$('#tl')) render(); else { const id = +location.hash.split('/')[2]; if (id) taskDetail(id); } });
 
+/** Change the little number on a menu item (side menu and phone tab bar) without redrawing anything else. */
+function paintBadge(key, n) {
+  document.querySelectorAll('a[href="#/' + key + '"]').forEach(l => { let b = l.querySelector('.badge'); if (n) { if (!b) { b = document.createElement('span'); b.className = 'badge'; l.appendChild(b); } b.textContent = n; } else if (b) b.remove(); });
+}
 async function poll() {
   if (!S.user || document.hidden) return;
   try {
     const m = await api('me'); if (!m.user) { S.user = null; return render(); }
     S.csrf = m.csrf; S.mail = !!m.mail;
-    if (S.mail && ++S.mailTick % 2 === 0 && !location.hash.startsWith('#/mail')) { try { const u = await api('mail/unread'); if (u.unseen > S.mailUnread) { toast('New email (' + u.unseen + ' unread)'); } if (u.unseen !== S.mailUnread) { S.mailUnread = u.unseen; shell(); } } catch {} }
+    if (S.mail && ++S.mailTick % 2 === 0 && !location.hash.startsWith('#/mail')) { try { const u = await api('mail/unread'); if (u.unseen > S.mailUnread) { toast('New email (' + u.unseen + ' unread)'); } if (u.unseen !== S.mailUnread) { S.mailUnread = u.unseen; paintBadge('mail', S.mailUnread); } } catch {} }
     if (m.unread > S.unread && 'Notification' in window && Notification.permission === 'granted') {
       const n = (await api('notifications'))[0];
       if (n && !n.read_at) { const reg = await navigator.serviceWorker?.getRegistration(); const o = { body: n.body || '', icon: 'assets/icon-192.png', tag: 'n' + n.id, data: { link: n.link } }; reg ? reg.showNotification(n.title, o) : new Notification(n.title, o); }
     }
-    if (m.unread !== S.unread) { S.unread = m.unread; const b = $('.nav .badge'); if (!b && S.unread) shell(), render(); else if (b) b.textContent = S.unread; }
+    if (m.unread !== S.unread) { S.unread = m.unread; paintBadge('alerts', S.unread); }
     flushQueue();
   } catch {}
 }

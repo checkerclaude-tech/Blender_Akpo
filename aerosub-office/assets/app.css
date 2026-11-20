@@ -164,7 +164,7 @@ td{padding:11px 6px;border-top:1px solid var(--line)} .tablewrap{overflow-x:auto
 .fdoc table{width:100%;border-collapse:collapse}.fdoc .ft{margin-top:18px}.fdoc .ft th{background:#f1f5f9;text-align:left;padding:8px;font-size:12px;text-transform:uppercase;letter-spacing:.04em}.fdoc .ft td{padding:8px;border-bottom:1px solid #e5e7eb;vertical-align:top}
 .fdoc .ftot{width:auto;margin:14px 0 0 auto;min-width:260px}.fdoc .ftot td{padding:4px 8px;text-align:right}.fdoc .ftot td:first-child{text-align:left;color:#555}.fdoc .ftot .g td{font-weight:800;font-size:16px;color:#111;border-top:2px solid #111}
 .pcard img{width:100%;height:130px;object-fit:cover;border-radius:10px;margin-bottom:8px}
-@media print{body *{visibility:hidden}.fdoc,.fdoc *{visibility:visible}.fdoc{position:absolute;left:0;top:0;width:100%;max-width:none;border:0;border-radius:0}}
+@media print{body:has(.fdoc) *{visibility:hidden}.fdoc,.fdoc *{visibility:visible}.fdoc{position:absolute;left:0;top:0;width:100%;max-width:none;border:0;border-radius:0}}
 
 /* show / hide eye on password boxes */
 .pw{position:relative;display:block}

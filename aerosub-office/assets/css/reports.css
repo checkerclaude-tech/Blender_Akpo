@@ -85,7 +85,7 @@ input[type=range]{padding:0;height:28px;accent-color:var(--cyan)}
 .pf-track{display:flex;height:18px;background:var(--mist);border:1px solid var(--line);border-radius:6px;overflow:hidden}.pf-track i{display:block;height:100%}
 .pf-table td,.pf-table th{white-space:nowrap}.pf-sort{background:none;border:0;padding:0;font:inherit;text-transform:inherit;letter-spacing:inherit;color:inherit;font-weight:700;cursor:pointer}.pf-sort:hover{color:var(--link)}
 @media (max-width:760px){.pf-two{grid-template-columns:1fr}}
-@media print{.pf-two{grid-template-columns:1fr 1fr}.pf-sort{font-weight:700}}
+@media print{.pf-two{grid-template-columns:1fr 1fr}.pf-sort{font-weight:700}.pf-svg,.pf-svg *,.pf-bars i,.pf-leg i,.pf-donut svg *,.cards .card{-webkit-print-color-adjust:exact;print-color-adjust:exact}.pf-two>.card,.cards .card{break-inside:avoid;box-shadow:none}.rp-filters,#pfp{display:none!important}body{-webkit-print-color-adjust:exact}}
 
 .wr-sheet,.wr-sheet td,.wr-sheet th,.wr-sheet b{color:#111}.wr-sheet .btn.ghost{background:#fff;color:#0C1F61;border-color:#c9d2e6}.wr-sheet select{color:#111}
 /* a longer range: one compact row of bars, the day numbers only at the ends */

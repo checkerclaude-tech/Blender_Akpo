@@ -7,7 +7,7 @@
   const { api, modal, toast, esc, S, views } = X;
   const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => [...r.querySelectorAll(s)];
   const ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16M6 16c2-6 4-9 5-9s0 5 2 5 2-3 5-3"/></svg>';
-  const TYPE = { commercial: 'Commercial', proforma: 'Proforma / quotation', invoice: 'Invoice', receipt: 'Receipt' };
+  const TYPE = { commercial: 'Commercial', proforma: 'Proforma / quotation', invoice: 'Invoice', receipt: 'Receipt', requisition: 'Requisition' };
   const ST = { in_review: ['In review', 'warn'], awaiting_sign: ['Waiting for signature', 'warn'], signed: ['Signed', 'done'], reverted: ['Reverted', 'blocked'], canceled: ['Withdrawn', ''] };
   const when = v => { if (!v) return ''; const d = new Date(String(v).replace(' ', 'T')); return isNaN(d) ? '' : d.toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }); };
   const tag = s => '<span class="tag ' + (ST[s] ? ST[s][1] : '') + '">' + esc(ST[s] ? ST[s][0] : s) + '</span>';
@@ -77,7 +77,8 @@
     else {
       h += '<div class="muted small" style="margin:4px 0 8px">Requested by ' + esc(c.requester) + ' · ' + esc(when(c.created_at)) + ' · fingerprint <code>' + esc(c.fingerprint) + '</code></div>' + chainHtml(c);
       if (c.status === 'reverted') { const rv = c.steps.find(s => s.status === 'reverted'); h += '<div class="banner" style="margin-top:8px;background:rgba(200,69,63,.12);color:var(--ink);border:1px solid rgba(200,69,63,.35)"><span><b>Sent back by ' + esc(rv ? rv.name : 'a reviewer') + '.</b> ' + esc(rv && rv.comment ? rv.comment : '') + '<br><span class="small">Edit the document, then ask for approval again.</span></span></div>' + (A.can_request ? '<div class="row" style="margin-top:10px"><button class="btn" id="apreq">Request approval again…</button></div>' : ''); }
-      if (c.status === 'signed') h += '<div class="banner" style="margin-top:8px;background:rgba(31,166,122,.12);color:var(--ink);border:1px solid rgba(31,166,122,.35)"><span>🔒 <b>Signed.</b> The document is locked and exactly as it was when it was approved. To change anything, void it and issue a new one.</span></div>';
+      if (c.status === 'signed') h += '<div class="banner" style="margin-top:8px;background:rgba(31,166,122,.12);color:var(--ink);border:1px solid rgba(31,166,122,.35)"><span>🔒 <b>Signed.</b> It is exactly as it was when it was approved. Anyone involved can still edit it; doing so clears the signatures so everyone signs again. A signee can also take their own signature back.</span></div>';
+      if (c.steps.some(s => s.status === 'signed' && +s.user_id === +S.user.id)) h += '<div class="row" style="margin-top:10px"><button class="btn ghost sm" id="apunsign" style="color:var(--bad)">Take back my signature…</button></div>';
       if (c.my_turn) h += '<div class="row" style="margin-top:12px;gap:8px;flex-wrap:wrap">' + (c.my_turn.kind === 'review' ? '<button class="btn" id="apok">' + (c.my_turn.next_is_sign ? 'Approve and request signature' : 'Approve review') + '</button>' : '<button class="btn" id="apsign">Sign…</button>') + '<button class="btn ghost" id="aprev" style="color:var(--bad)">Revert…</button></div>';
       else if (['in_review', 'awaiting_sign'].includes(c.status) && (S.user.id === c.created_by || S.user.finance || S.user.is_root)) h += '<div class="row" style="margin-top:12px"><button class="btn ghost sm" id="apcan">Withdraw request</button></div>';
     }
@@ -112,11 +113,14 @@
     if (!d.approval || d.doc_type === 'receipt') return; const A = d.approval; const doc = v.children[2];
     const holder = document.createElement('div'); holder.innerHTML = cardHtml(d); if (doc) v.insertBefore(holder.firstChild, doc); else v.appendChild(holder.firstChild);
     stamp(v, d);
-    if (A.locked) ['#fed', '#fdl'].forEach(s => { const b = $(s, v); if (b) b.style.display = 'none'; });
+    if (A.locked) ['#fdl'].forEach(s => { const b = $(s, v); if (b) b.style.display = 'none'; });
     const q = s => $(s, v), title = (TYPE[d.doc_type] || 'document') + ' ' + d.number;
     const rq = q('#apreq'); if (rq) rq.onclick = () => request(d, id);
     const ok = q('#apok'); if (ok) ok.onclick = () => act(id, { action: 'approve' }, 'Review approved');
     const sg = q('#apsign'); if (sg) sg.onclick = async () => { const r = await signPad({ title }); if (r) act(id, { action: 'sign', comment: r.comment, signature: { mode: r.mode, image: r.image, save: r.save } }, 'Signed'); };
+    const us = q('#apunsign'); if (us) us.onclick = () => {
+      const m = modal('<h2>Take back my signature</h2><div class="muted small" style="margin:4px 0 8px">' + esc(title) + '. Your signature is removed and the document goes back to waiting for you to sign. It stays unsigned until you sign again.</div><div class="field"><label>Reason (optional)</label><textarea id="ur" rows="3" maxlength="1000"></textarea></div><label class="small" style="display:block;margin:8px 0"><input type="checkbox" id="un" style="width:auto" checked> Tell the others involved (notification and email)</label><div class="err" id="er"></div><div class="row"><button class="btn" id="ug" style="background:var(--bad)">Take it back</button><button class="btn ghost" id="uc" type="button">Cancel</button></div>');
+      $('#uc', m).onclick = () => m.close(); $('#ug', m).onclick = () => { const f = { action: 'unsign', comment: $('#ur', m).value, notify: $('#un', m).checked ? 1 : 0 }; m.close(); act(id, f, 'Signature taken back'); }; };
     const rv = q('#aprev'); if (rv) rv.onclick = () => askReason('Revert ' + title, 'It goes back to ' + (A.current.requester || 'the author') + ' with your reason, who can fix it and ask again.', t => act(id, { action: 'revert', comment: t }, 'Sent back'));
     const cn = q('#apcan'); if (cn) cn.onclick = () => { if (confirm('Withdraw the approval request? The document becomes editable again.')) act(id, { action: 'cancel' }, 'Request withdrawn'); };
   };
