@@ -217,3 +217,8 @@ body{overflow-x:hidden;max-width:100%;position:relative}
   input,select,textarea{font-size:16px}   /* iOS zooms the whole page when a field is smaller than 16px */
 }
 @media(display-mode:standalone){html,body{overscroll-behavior-y:none}}
+
+/* @mentions */
+.mn{background:var(--mist);color:var(--cyan-d,#0A6EA8);border-radius:5px;padding:0 4px;font-weight:600;white-space:nowrap}
+.mn-menu{position:fixed;z-index:100000;background:var(--card,#fff);color:var(--ink);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 34px rgba(0,0,0,.22);padding:4px;max-height:260px;overflow:auto}
+.mn-o{display:flex;gap:8px;align-items:center;padding:7px 9px;border-radius:8px;cursor:pointer;font-size:14px}.mn-o.on,.mn-o:hover{background:var(--mist)}.mn-ic{width:22px;text-align:center}

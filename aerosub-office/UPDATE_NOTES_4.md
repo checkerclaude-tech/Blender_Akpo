@@ -148,3 +148,9 @@ A requisition now runs through three signatures, in order: the **requester signs
 - A person cannot sign before the people ahead of them. Anyone who signed can take their signature back, and any edit clears the signatures so they are signed again.
 - The printed requisition now has three signature boxes (Requested by, Finance head, Approved by top head). Each signature appears in its own box with the signer's name, title and date.
 - To use "Finance head" automatically, set the head of the Finance department under Departments.
+
+## @mentions in tasks
+- In a task's **Details** and in **comments**, type **@** and pick a person, a department, or **everyone**. Arrow keys and Enter/Tab choose, Esc closes; on a phone just tap.
+- A tagged **person** is added to the task (so they can open it) and gets a notification with a link. A tagged **department** notifies all its members and its head. **@everyone** notifies every active person; it is offered only to the Super Admin, Founder, managers, department heads and the Root Admin (others' @everyone is treated as plain text).
+- When you edit the details, only people **newly** tagged are told. You are never notified about your own tag, and the assignee is not told twice. Email addresses (name@company.co) are never mistaken for tags.
+- Tags show highlighted in the task and its comments.

@@ -335,6 +335,7 @@ case 'tasks':
            !empty($b['company_id']) ? (int)$b['company_id'] : null, !empty($b['contact_id']) ? (int)$b['contact_id'] : null, $ttype, $st_at, $en_at]);
         $tid = (int)db()->lastInsertId();
         if ($assignee !== $uid) notify($assignee, 'task_assigned', 'New task: ' . $title, 'Assigned by ' . $u['name'], '#/tasks/' . $tid);
+        require_once __DIR__ . '/lib/mentions.php'; mn_apply(['id' => $tid, 'title' => $title, 'assignee_id' => $assignee, 'creator_id' => $uid], $u, (string)($b['description'] ?? ''), '', 'task_new');   // @Person, @Department, @everyone
         log_act($uid, 'task_created', $title);
         if ($ttype === 'meeting') {   // invite the people chosen (a whole department, heads included) and send calendar invites
             require_once __DIR__ . '/lib/ics.php'; if (!empty($b['meeting_place'])) q('UPDATE tasks SET meeting_place=? WHERE id=?', [s($b['meeting_place'], 190), $tid]);
@@ -349,6 +350,7 @@ case 'tasks':
         if ($sub === 'comments' && $method === 'POST') {
             $c = s(body()['body'] ?? '', 3000); if ($c === '') fail('Comment is empty');
             q('INSERT INTO task_comments (task_id,user_id,body) VALUES (?,?,?)', [$id, $uid, $c]);
+            require_once __DIR__ . '/lib/mentions.php'; $mnTold = mn_apply($t, $u, $c, '', 'comment');
             foreach (array_unique(array_filter([$t['assignee_id'], $t['creator_id']])) as $nid) if ((int)$nid !== $uid)
                 notify((int)$nid, 'task_comment', $u['name'] . ' commented on: ' . $t['title'], mb_substr($c, 0, 140), '#/tasks/' . $id);
             out(['ok' => true], 201);
@@ -392,6 +394,7 @@ case 'tasks':
             $sets[] = 'completed_at=' . ($status === 'done' ? ($t['completed_at'] ? 'completed_at' : 'NOW()') : 'NULL');
             $vals[] = $id;
             q('UPDATE tasks SET ' . implode(',', $sets) . ' WHERE id=?', $vals);
+            if ($full && array_key_exists('description', $b)) { require_once __DIR__ . '/lib/mentions.php'; mn_apply($t, $u, (string)($new['description'] ?? ''), (string)($t['description'] ?? ''), 'task'); }   // only people newly tagged are told
             if ($status !== $t['status']) {
                 log_act($uid, 'task_' . $status, $t['title']);
                 if ((int)$t['creator_id'] !== $uid) notify((int)$t['creator_id'], 'task_status', $u['name'] . ' marked "' . $t['title'] . '" ' . str_replace('_', ' ', $status), '', '#/tasks/' . $id);
