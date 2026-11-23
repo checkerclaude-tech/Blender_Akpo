@@ -30,7 +30,7 @@ function fx_number(string $type): string {
     if ($type === 'invoice') { // plain running number (100026706, 100026707, ...) like the invoice template; Finance can change the next number in Company details
         try { for ($k = 0; $k < 20; $k++) { q('UPDATE fin_settings SET inv_next = LAST_INSERT_ID(inv_next) + 1 WHERE id=1'); $n = (int)one('SELECT LAST_INSERT_ID() n')['n']; if ($n > 0 && !one('SELECT 1 FROM fin_docs WHERE number=?', [(string)$n])) return (string)$n; } } catch (Throwable $e) {}
     }
-    if ($type === 'requisition') { $r = one("SELECT MAX(CAST(SUBSTRING_INDEX(number,'-',-1) AS UNSIGNED)) m FROM fin_docs WHERE number LIKE 'REQ-%'"); return sprintf('REQ-%s-%s-%d', date('Y'), date('m'), ((int)($r['m'] ?? 0)) + 1); }   // REQ-Year-Month-N, N counts the requisitions made
+    if ($type === 'requisition') { $r = one("SELECT MAX(CAST(SUBSTRING_INDEX(number,'-',-1) AS UNSIGNED)) m FROM fin_docs WHERE number LIKE 'REQ-%'"); return sprintf('REQ-%s-%s-%03d', date('Y'), date('m'), ((int)($r['m'] ?? 0)) + 1); }   // REQ-YEAR-MONTH-SN, SN counts the requisitions made
     $pre = ['commercial' => 'COM', 'proforma' => 'PRO', 'invoice' => 'INV', 'receipt' => 'REC', 'requisition' => 'REQ'][$type]; $y = date('Y');
     $r = one("SELECT MAX(CAST(SUBSTRING_INDEX(number,'-',-1) AS UNSIGNED)) m FROM fin_docs WHERE number LIKE ?", ["$pre-$y-%"]); return sprintf('%s-%s-%04d', $pre, $y, ((int)($r['m'] ?? 0)) + 1);
 }

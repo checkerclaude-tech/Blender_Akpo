@@ -199,3 +199,5 @@ After copying the files, open `/upgrade.php` as Super Admin once (adds the new c
 
 ## Requisition template
 - Requisitions use the previous layout again (logo header, request details table, items, three signature boxes), now with the **requisition code (REQ-Year-Month-N)** under the title and a **footer** (address and "Better Data. Better Insights. Better Decisions." band).
+
+- Requisition numbers are now REQ-YEAR-MONTH-SN with a 3-digit serial, e.g. REQ-2026-11-001. This needs api/lib/finance.php from this zip (the zip holds every file changed in the last two rounds, so extract all of it).
