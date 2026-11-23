@@ -196,3 +196,6 @@ A requisition now runs through three signatures, in order: the **requester signs
 - Campaigns > Test your emails. Open mail-tester.com, copy the address it shows, paste it, choose the sample message or one of your campaigns, press Send test. The score out of 10 appears here with the full report link. Limited to 10 tests an hour (Mail-Tester's free tier also limits daily tests). A button checks SPF, DKIM, DMARC and MX for your sending domain.
 
 After copying the files, open `/upgrade.php` as Super Admin once (adds the new columns and the test history table), then hard-refresh.
+
+## Requisition template
+- Requisitions use the previous layout again (logo header, request details table, items, three signature boxes), now with the **requisition code (REQ-Year-Month-N)** under the title and a **footer** (address and "Better Data. Better Insights. Better Decisions." band).
