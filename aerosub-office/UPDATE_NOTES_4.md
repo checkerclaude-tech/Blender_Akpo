@@ -162,3 +162,10 @@ A requisition now runs through three signatures, in order: the **requester signs
 - **Company code.** Add a **Company code** (and address) when creating or editing a company (Pipeline). It fills the **Customer ID** on every document for that company by itself, and the "Customer (CODE) RFQ Number" heading uses it.
 - **Proforma / quotation code on invoices.** An invoice made from a proforma or commercial carries its number automatically, shown on the invoice as "Proforma/Quotation: PRO-…". On a new invoice you can type or pick the code.
 - **Attach documents** when creating or editing any finance document, including a requisition (vendor quotes, scans, supporting files; up to 15 per document, 8 MB each). They show on the document page (not on the printout) and can be downloaded or removed by the people working on the document.
+
+## Screen sleep: each person's own settings (More > Screen sleep)
+- **Start after:** Never, 15 s, 30 s, 1, 2, 3, 5, 10, 15 or 30 minutes. It now starts by itself even if you never touch the phone after opening the app.
+- **Theme:** Ocean, Midnight, Sunrise, Forest, Graphite or Daylight.
+- **Wallpaper:** upload your own **picture** (scaled to fit) or a short **video** that plays on a loop (live wallpaper; MP4 works on iPhone and Android; keep it under 60 MB, 10 to 20 seconds is best). The wallpaper is kept on that phone only and is never uploaded. **Dim** slider keeps the words readable.
+- **What to show:** the task you are on, the latest notification, the news bar, seconds, and 12/24-hour clock.
+- **Preview now** shows it at once.
