@@ -17,7 +17,7 @@ if ($method !== 'GET' && $method !== 'OPTIONS' && !($r === 'login' || $r === 'in
 
 // Sections the Root Admin can switch off per person are refused here as well as hidden in the menu.
 $GATED = ['campaigns' => 'campaigns', 'mail' => 'mail', 'learn' => 'learn', 'courses' => 'learn', 'companies' => 'pipeline', 'contacts' => 'pipeline', 'pipeline' => 'pipeline', 'competitors' => 'competition', 'trade-events' => 'events',
-          'snapshot' => 'team', 'documents' => 'documents', 'reports' => 'reports', 'share' => 'reports', 'inbox-auto' => 'campaigns', 'prospecting' => 'campaigns', 'myfiles' => 'myfiles'];
+          'snapshot' => 'team', 'documents' => 'documents', 'reports' => 'reports', 'share' => 'reports', 'inbox-auto' => 'campaigns', 'prospecting' => 'campaigns', 'mail-test' => 'campaigns', 'myfiles' => 'myfiles'];
 if (isset($GATED[$r])) { $gu = me(); if ($gu && !tab_access($gu, $GATED[$r])) fail('You do not have access to this section', 403); }
 // "Read only" (set by the Root Admin): the person may open and use the tab (look, search, print, take a course, play) but every change is refused here.
 $WRITE_TAB = ['campaigns' => 'campaigns', 'mail' => 'mail', 'learn' => 'learn', 'courses' => 'learn', 'companies' => 'pipeline', 'contacts' => 'pipeline', 'pipeline' => 'pipeline', 'competitors' => 'competition', 'trade-events' => 'events', 'events' => 'schedule',
@@ -584,6 +584,10 @@ case 'inbox-auto':
 
 case 'prospecting':
     require __DIR__ . '/lib/prospect.php';
+    break;
+
+case 'mail-test':
+    require __DIR__ . '/lib/mailtest.php';
     break;
 
 case 'share':

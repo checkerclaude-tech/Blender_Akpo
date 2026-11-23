@@ -518,5 +518,14 @@ function migrate_prospecting(): array {
     db()->exec("INSERT IGNORE INTO pr_settings (id) VALUES (1)");
     db()->exec("CREATE TABLE IF NOT EXISTS pr_watches (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, user_id INT UNSIGNED NOT NULL, name VARCHAR(120) NOT NULL, keywords VARCHAR(300) NOT NULL, region VARCHAR(120) NULL, signals VARCHAR(200) NULL, days SMALLINT UNSIGNED NOT NULL DEFAULT 30, active TINYINT(1) NOT NULL DEFAULT 1, last_run_at DATETIME NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     db()->exec("CREATE TABLE IF NOT EXISTS pr_signals (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, watch_id INT UNSIGNED NULL, user_id INT UNSIGNED NULL, type VARCHAR(20) NOT NULL, title VARCHAR(300) NOT NULL, url VARCHAR(600) NOT NULL, url_hash CHAR(40) NOT NULL, domain VARCHAR(120) NULL, published_at DATETIME NULL, snippet TEXT NULL, score DECIMAL(6,2) NOT NULL DEFAULT 0, company_guess VARCHAR(190) NULL, keywords VARCHAR(300) NULL, status ENUM('new','lead','saved','dismissed') NOT NULL DEFAULT 'new', company_id INT UNSIGNED NULL, task_id INT UNSIGNED NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE KEY uq_url (url_hash), KEY (status,score), KEY (watch_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    if (!col_exists('pr_signals', 'details')) db()->exec('ALTER TABLE pr_signals ADD COLUMN details MEDIUMTEXT NULL, ADD COLUMN deadline DATE NULL, ADD KEY (deadline)');
     return ['Prospecting ready.'];
+}
+
+
+// Mail-Tester: the tests that were sent and their scores. Safe to run repeatedly.
+function migrate_mailtest(): array {
+    db()->exec("CREATE TABLE IF NOT EXISTS mt_tests (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, user_id INT UNSIGNED NULL, test_id VARCHAR(60) NOT NULL, subject VARCHAR(200) NULL, source VARCHAR(120) NULL, score DECIMAL(3,1) NULL, sent_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, checked_at DATETIME NULL, KEY (test_id), KEY (sent_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    if (!col_exists('pr_settings', 'mt_base')) db()->exec("ALTER TABLE pr_settings ADD COLUMN mt_base VARCHAR(200) NOT NULL DEFAULT ''");
+    return ['Email testing ready.'];
 }

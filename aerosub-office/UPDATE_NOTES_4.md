@@ -177,3 +177,22 @@ A requisition now runs through three signatures, in order: the **requester signs
 - **Save / Dismiss** to keep the list clean. Signals already seen are never shown twice.
 - **Watch this every day.** A saved search runs once a day from `cron.php`, and tells you how many new signals it found.
 - Each search uses a few of your Exa credits (one search per kind of signal). The screen shows how many searches were made this month. Exa returns pages, not email addresses: add the contact's name and email yourself, or use the contact form on the lead.
+
+## Requisition numbers, document viewer and new requisition template
+- Requisition numbers are now **REQ-Year-Month-N** (for example `REQ-2026-11-7`). N is a running count of requisitions made, it does not restart each month.
+- Attached documents on a finance document can be **viewed** in the page (images and PDFs open in a window, with "Open in a new tab" and Download). Other file types still download.
+- The requisition uses the new **AEROSUB REQUISITION** template: three signature boxes (requester, finance head, top head) and account details. Each person's signature appears in their own box as they sign.
+
+## Prospecting: dig deeper
+- Each signal has a **Dig deeper** button. It reads the page and the company's own website and shows: emails and phone numbers (company emails first, tap to mail or call), named people with their role, the **closing date** of an RFQ or tender with a days-left counter, and "Details you can use" grouped as Value & budget, Requirements, How to bid, Scope & timing and Who has it now.
+- **Closing soon** filter lists open tenders, soonest first. Tenders closing within 30 days are ranked higher.
+- "Add as lead" is prefilled from what was found (name, email, phone, position) and the follow-up task is due two days before the closing date.
+- It only reports what is written on the pages. Exa does not sell email addresses, so some companies will show none.
+
+## Campaigns tab redesign
+- The tabs are grouped as steps: **Start here**, 1 Find people, 2 Prepare, 3 Send, Setup. "Start here" shows live counts and a "Do next" list.
+
+## Test your emails (mail-tester.com)
+- Campaigns > Test your emails. Open mail-tester.com, copy the address it shows, paste it, choose the sample message or one of your campaigns, press Send test. The score out of 10 appears here with the full report link. Limited to 10 tests an hour (Mail-Tester's free tier also limits daily tests). A button checks SPF, DKIM, DMARC and MX for your sending domain.
+
+After copying the files, open `/upgrade.php` as Super Admin once (adds the new columns and the test history table), then hard-refresh.

@@ -222,3 +222,9 @@ body{overflow-x:hidden;max-width:100%;position:relative}
 .mn{background:var(--mist);color:var(--cyan-d,#0A6EA8);border-radius:5px;padding:0 4px;font-weight:600;white-space:nowrap}
 .mn-menu{position:fixed;z-index:100000;background:var(--card,#fff);color:var(--ink);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 34px rgba(0,0,0,.22);padding:4px;max-height:260px;overflow:auto}
 .mn-o{display:flex;gap:8px;align-items:center;padding:7px 9px;border-radius:8px;cursor:pointer;font-size:14px}.mn-o.on,.mn-o:hover{background:var(--mist)}.mn-ic{width:22px;text-align:center}
+
+/* Campaigns navigation: grouped steps */
+.cpnav{display:flex;flex-wrap:wrap;gap:6px 18px;margin-bottom:16px;padding:10px 12px;border:1px solid var(--line);border-radius:14px;background:var(--card,#fff)}
+.cpg{min-width:0}.cpgl{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted,#6b7a8c);margin:0 0 4px 2px}
+.cpgi{display:flex;flex-wrap:wrap;gap:6px}.cpnav .chip{cursor:pointer;white-space:nowrap}
+@media(max-width:700px){.cpnav{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;gap:14px}.cpg{flex:none}}

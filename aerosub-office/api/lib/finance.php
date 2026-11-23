@@ -30,6 +30,7 @@ function fx_number(string $type): string {
     if ($type === 'invoice') { // plain running number (100026706, 100026707, ...) like the invoice template; Finance can change the next number in Company details
         try { for ($k = 0; $k < 20; $k++) { q('UPDATE fin_settings SET inv_next = LAST_INSERT_ID(inv_next) + 1 WHERE id=1'); $n = (int)one('SELECT LAST_INSERT_ID() n')['n']; if ($n > 0 && !one('SELECT 1 FROM fin_docs WHERE number=?', [(string)$n])) return (string)$n; } } catch (Throwable $e) {}
     }
+    if ($type === 'requisition') { $r = one("SELECT MAX(CAST(SUBSTRING_INDEX(number,'-',-1) AS UNSIGNED)) m FROM fin_docs WHERE number LIKE 'REQ-%'"); return sprintf('REQ-%s-%s-%d', date('Y'), date('m'), ((int)($r['m'] ?? 0)) + 1); }   // REQ-Year-Month-N, N counts the requisitions made
     $pre = ['commercial' => 'COM', 'proforma' => 'PRO', 'invoice' => 'INV', 'receipt' => 'REC', 'requisition' => 'REQ'][$type]; $y = date('Y');
     $r = one("SELECT MAX(CAST(SUBSTRING_INDEX(number,'-',-1) AS UNSIGNED)) m FROM fin_docs WHERE number LIKE ?", ["$pre-$y-%"]); return sprintf('%s-%s-%04d', $pre, $y, ((int)($r['m'] ?? 0)) + 1);
 }
@@ -171,7 +172,7 @@ if ($seg[0] === 'finance') {
         if ($act === 'files') {   // documents attached to a finance document (quotes, receipts, scans)
             $fid = isset($seg[4]) && ctype_digit($seg[4]) ? (int)$seg[4] : 0;
             if ($method === 'GET' && $fid) { $f = one('SELECT * FROM fin_files WHERE id=? AND doc_id=?', [$fid, $sid]); if (!$f) fail('Not found', 404); $p = fin_dir() . '/' . preg_replace('/[^a-f0-9]/', '', (string)$f['path']); if (!is_file($p)) fail('The file is no longer on the server', 404);
-                $inl = isset($_GET['view']) && preg_match('~^image/(png|jpeg|gif|webp)$~', (string)$f['mime']); $safe = preg_replace('/[^A-Za-z0-9._-]+/', '_', (string)$f['name']) ?: 'file';
+                $inl = isset($_GET['view']) && preg_match('~^(image/(png|jpeg|gif|webp)|application/pdf)$~', (string)$f['mime']); $safe = preg_replace('/[^A-Za-z0-9._-]+/', '_', (string)$f['name']) ?: 'file';
                 header('Content-Type: ' . ($inl ? $f['mime'] : 'application/octet-stream')); header('X-Content-Type-Options: nosniff'); header('Content-Disposition: ' . ($inl ? 'inline' : 'attachment') . '; filename="' . $safe . '"; filename*=UTF-8\'\'' . rawurlencode((string)$f['name'])); header('Content-Length: ' . (string)filesize($p)); readfile($p); exit; }
             if (!$corr) fail('Only the people working on this document can change its files', 403);
             if ($method === 'POST') { $bb = body(); $raw = base64_decode((string)($bb['data'] ?? ''), true); if ($raw === false || $raw === '') fail('The file could not be read'); if (strlen($raw) > 8 * 1048576) fail('Files are limited to 8 MB each');

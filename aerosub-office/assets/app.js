@@ -118,7 +118,7 @@ function shell() {
 /* ---------- views ---------- */
 const views = {};
 /* Agent platform hook 1 of 3 (office-app-changes/README.md): lets assets/js/agent-pipeline.js use the helpers above. */
-window.OfficeExt = { api, modal, toast, esc, S, views, readOnly, render, today };
+window.OfficeExt = { api, modal, toast, esc, S, views, readOnly, render, today, campGo: t => { CP.tab = t; ls.set('cptab', t); if (location.hash !== '#/campaigns') location.hash = '#/campaigns'; else render(); } };
 
 views.home = async () => {
   const v = $('#view'); v.innerHTML = '<div class="empty">Loading…</div>';
@@ -902,7 +902,7 @@ function contactForm(k, companyId) {
 }
 
 /* ================= CAMPAIGNS (email marketing; Marketing department only) ================= */
-const CP = { tab: ls.get('cptab', 'campaigns'), timer: 0 };
+const CP = { tab: ls.get('cptab', 'overview'), timer: 0 };
 const CSTAT = { draft: 'Draft', scheduled: 'Scheduled', sending: 'Sending', paused: 'Paused', sent: 'Sent' };
 const VBADGE = { unchecked: ['Not checked', ''], valid: ['Valid', 'done'], risky: ['Risky', 'warn'], invalid: ['Invalid', 'bad'] };
 const capi = (p, o) => api('campaigns/' + p, o);
@@ -915,10 +915,12 @@ views.campaigns = async () => {
   if (parts[2] === 'c' && parts[3]) return campDetail(+parts[3]);
   if (parts[2] === 'l' && parts[3]) return campList(+parts[3]);
   if (parts[2] === 'a' && parts[3]) return campAuto(+parts[3]);
-  v.innerHTML = '<div class="top"><div><h1>Campaigns</h1><div class="muted">Email marketing: lists, templates and bulk sends</div></div></div><div class="row" style="margin-bottom:14px">' +
-    [['campaigns', 'Campaigns'], ['inbox', 'Inbox automation'], ['prospect', 'Prospecting'], ['autos', 'Auto-responders'], ['lists', 'Lists & contacts'], ['templates', 'Templates'], ['settings', 'Sending settings']].map(([k, l]) => '<span class="chip ' + (CP.tab === k ? 'on' : '') + '" data-ct="' + k + '">' + l + '</span>').join('') + '</div><div id="cpb"><div class="empty">Loading…</div></div>';
-  v.querySelectorAll('[data-ct]').forEach(c => c.onclick = () => { CP.tab = c.dataset.ct; ls.set('cptab', CP.tab); render(); });
-  try { await ({ campaigns: campTabCampaigns, inbox: () => window.OfficeExt.campInbox ? window.OfficeExt.campInbox() : Promise.resolve($('#cpb').innerHTML = '<div class="empty">Loading…</div>'), prospect: () => window.OfficeExt.campProspect ? window.OfficeExt.campProspect() : Promise.resolve(), autos: campTabAutos, lists: campTabLists, templates: campTabTemplates, settings: campTabSettings }[CP.tab] || campTabCampaigns)(); } catch (e) { $('#cpb').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; }
+  const GROUPS = [['Start', [['overview', '🏠 Start here']]], ['1 · Find people', [['prospect', '🔎 Prospecting'], ['inbox', '📥 Inbox automation']]], ['2 · Prepare', [['lists', '👥 Lists & contacts'], ['templates', '🎨 Templates']]], ['3 · Send', [['campaigns', '✉️ Campaigns'], ['autos', '↩️ Auto-responders'], ['mailtest', '✅ Test your emails']]], ['Setup', [['settings', '⚙️ Sending settings']]]];
+  if (!GROUPS.some(g => g[1].some(x => x[0] === CP.tab))) CP.tab = 'overview';
+  v.innerHTML = '<div class="top"><div><h1>Campaigns</h1><div class="muted">Find prospects, build lists, send and test your emails</div></div></div><div class="cpnav">' +
+    GROUPS.map(([g, items]) => '<div class="cpg"><div class="cpgl">' + g + '</div><div class="cpgi">' + items.map(([k, l]) => '<span class="chip ' + (CP.tab === k ? 'on' : '') + '" data-ct="' + k + '" role="button" tabindex="0">' + l + '</span>').join('') + '</div></div>').join('') + '</div><div id="cpb"><div class="empty">Loading…</div></div>';
+  v.querySelectorAll('[data-ct]').forEach(c => { c.onclick = () => { CP.tab = c.dataset.ct; ls.set('cptab', CP.tab); render(); }; c.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); c.click(); } }; });
+  try { await ({ overview: () => window.OfficeExt.campOverview ? window.OfficeExt.campOverview() : Promise.resolve(), mailtest: () => window.OfficeExt.campTest ? window.OfficeExt.campTest() : Promise.resolve(), campaigns: campTabCampaigns, inbox: () => window.OfficeExt.campInbox ? window.OfficeExt.campInbox() : Promise.resolve($('#cpb').innerHTML = '<div class="empty">Loading…</div>'), prospect: () => window.OfficeExt.campProspect ? window.OfficeExt.campProspect() : Promise.resolve(), autos: campTabAutos, lists: campTabLists, templates: campTabTemplates, settings: campTabSettings }[CP.tab] || campTabCampaigns)(); } catch (e) { $('#cpb').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; }
 };
 
 /* ---- campaigns tab ---- */

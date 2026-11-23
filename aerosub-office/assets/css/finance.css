@@ -90,3 +90,16 @@
 .fin-tabs{display:flex;flex-wrap:wrap;gap:6px}.fin-tabs .chip{cursor:pointer;border:0}
 .fin-sheet.req .inv-sign.rq3{gap:8mm;font-size:10px}.fin-sheet.req .inv-sign.rq3 .line{margin-right:0}
 .fin-sheet.req .ap-cap{font-size:8.5px;font-weight:400;margin-top:2px}
+
+/* requisition: the Aerosub requisition form */
+.fin-sheet.req{background:#fff url(../img/requisition-page.png) 0 0/100% 100% no-repeat;-webkit-print-color-adjust:exact;print-color-adjust:exact;overflow:visible}
+.fin-sheet.req .rq-body{padding:55mm 17mm 40mm;position:relative;color:#0B1F5C;font-size:11px}
+.rq-title2{text-align:center;font:400 20px/1.2 Poppins,Arial,sans-serif;color:#0B1F5C;margin:0 0 6mm}
+.rq-top{display:flex;justify-content:space-between;gap:10px;font-size:11.5px;margin-bottom:2mm}.rq-date{border-bottom:1px solid #0AA0D8;padding:0 6px;min-width:40mm;text-align:center}
+.rq-ref{font-size:10px;color:#4a5a86;margin-bottom:4mm}
+.rq-t{width:100%;border-collapse:collapse;table-layout:fixed;border:1px solid #4F81BD}.rq-t th{background:#4F81BD;color:#fff;font-weight:400;font-size:10.5px;text-align:left;padding:6px 6px;vertical-align:top}
+.rq-t td{border:1px solid #4F81BD;padding:6px;font-size:10.5px;vertical-align:top;height:9mm;word-wrap:break-word;color:#111}.rq-t td.c{text-align:center}.rq-t td.r{text-align:right;white-space:nowrap}.rq-t tfoot td{font-weight:700;height:8mm}
+.rq-words{margin:5mm 0 3mm;font-size:11px}.rq-words span{border-bottom:1px solid #0B1F5C;padding:0 4px}.rq-why{font-size:10.5px;margin:2mm 0;color:#111}
+.fin-sheet.req .inv-sign.rq3{display:grid;grid-template-columns:repeat(3,1fr);gap:7mm;margin:7mm 0 5mm;font-weight:400}.rq-lab{font-weight:700;margin-bottom:3mm;font-size:11px}.rq-ln{margin:2.5mm 0;font-size:10.5px;overflow-wrap:anywhere}
+.fin-sheet.req .inv-sign .line{border-bottom:1px solid #0B1F5C;height:12mm;margin:1mm 0 0;display:block}.rq-acct{font-size:10.5px;line-height:1.6}.rq-acct b{display:block;font-size:11.5px;margin-bottom:1mm}
+.fd-th{width:46px;height:46px;object-fit:cover;border-radius:6px;margin-right:8px;cursor:zoom-in}
