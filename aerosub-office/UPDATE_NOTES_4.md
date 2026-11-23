@@ -169,3 +169,11 @@ A requisition now runs through three signatures, in order: the **requester signs
 - **Wallpaper:** upload your own **picture** (scaled to fit) or a short **video** that plays on a loop (live wallpaper; MP4 works on iPhone and Android; keep it under 60 MB, 10 to 20 seconds is best). The wallpaper is kept on that phone only and is never uploaded. **Dim** slider keeps the words readable.
 - **What to show:** the task you are on, the latest notification, the news bar, seconds, and 12/24-hour clock.
 - **Preview now** shows it at once.
+
+## Prospecting: market signals with Exa (Campaigns > Prospecting)
+**Open `/upgrade.php` once.** Then, as Super Admin, open Campaigns > Prospecting > Settings and paste your Exa API key (free account at exa.ai > Dashboard > API keys). The key is stored encrypted and never shown again. Your server must be allowed to make outside connections to `api.exa.ai`.
+- **Search by signal.** Enter keywords (e.g. "ROV inspection, subsea survey") and a region. Five kinds of signal are searched: **contracts and tenders**, **trade shows and events**, **local news**, **new hires and appointments** (LinkedIn) and **social posts** (LinkedIn, X, Facebook: "looking for…", "we need…"). Each result is scored (kind of signal, keywords in the title, how recent) and shown as Intent High / Medium / Low.
+- **Add as lead.** Creates the company in Pipeline (or adds to the existing one, with the signal and link in its notes), saves the contact if you know one, gives Marketing a research task due in 3 days, and can add the contact to a Campaigns list.
+- **Save / Dismiss** to keep the list clean. Signals already seen are never shown twice.
+- **Watch this every day.** A saved search runs once a day from `cron.php`, and tells you how many new signals it found.
+- Each search uses a few of your Exa credits (one search per kind of signal). The screen shows how many searches were made this month. Exa returns pages, not email addresses: add the contact's name and email yourself, or use the contact form on the lead.

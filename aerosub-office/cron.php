@@ -11,6 +11,8 @@ if (PHP_SAPI !== 'cli' && !hash_equals((string)cfg('cron_key'), (string)($_GET['
 $made = 0;
 // Marketing campaigns: send the next batch (and start scheduled campaigns that are due)
 try { require_once __DIR__ . '/api/lib/campcore.php'; if (col_exists('camp_queue', 'status')) { $ct = camp_tick((int)(camp_settings()['batch_size'] ?: 100)); echo 'Campaigns: ' . json_encode($ct) . "\n"; } } catch (Throwable $e) { echo 'Campaigns skipped: ' . $e->getMessage() . "\n"; }
+// Prospecting: run the daily market-signal watches (Exa)
+try { require_once __DIR__ . '/api/lib/prospect.php'; if (col_exists('pr_watches', 'keywords')) echo pr_cron() . "\n"; } catch (Throwable $e) { echo 'Prospecting skipped: ' . $e->getMessage() . "\n"; }
 // Inbox automation: read the info@ mailbox, add senders to the CRM, create tasks and draft replies for approval
 try { require_once __DIR__ . '/api/lib/inboxauto.php'; if (col_exists('ia_items', 'msg_key')) echo ia_cron() . "\n"; } catch (Throwable $e) { echo 'Inbox automation skipped: ' . $e->getMessage() . "\n"; }
 // Agent platform: retry approved items whose pipeline update failed earlier

@@ -510,3 +510,13 @@ function migrate_fin3(): array {
     db()->exec("CREATE TABLE IF NOT EXISTS fin_files (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, doc_id INT UNSIGNED NOT NULL, name VARCHAR(200) NOT NULL, mime VARCHAR(100) NOT NULL DEFAULT 'application/octet-stream', size INT UNSIGNED NOT NULL DEFAULT 0, path VARCHAR(64) NOT NULL, user_id INT UNSIGNED NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, KEY (doc_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     return ['Finance: company codes, quotation references and attachments ready.'];
 }
+
+
+// Prospecting: market signals found with Exa, the daily watches, and the Exa key. Safe to run repeatedly.
+function migrate_prospecting(): array {
+    db()->exec("CREATE TABLE IF NOT EXISTS pr_settings (id TINYINT UNSIGNED PRIMARY KEY, exa_key_enc TEXT NULL, region VARCHAR(120) NULL, endpoint VARCHAR(200) NOT NULL DEFAULT '') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    db()->exec("INSERT IGNORE INTO pr_settings (id) VALUES (1)");
+    db()->exec("CREATE TABLE IF NOT EXISTS pr_watches (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, user_id INT UNSIGNED NOT NULL, name VARCHAR(120) NOT NULL, keywords VARCHAR(300) NOT NULL, region VARCHAR(120) NULL, signals VARCHAR(200) NULL, days SMALLINT UNSIGNED NOT NULL DEFAULT 30, active TINYINT(1) NOT NULL DEFAULT 1, last_run_at DATETIME NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    db()->exec("CREATE TABLE IF NOT EXISTS pr_signals (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, watch_id INT UNSIGNED NULL, user_id INT UNSIGNED NULL, type VARCHAR(20) NOT NULL, title VARCHAR(300) NOT NULL, url VARCHAR(600) NOT NULL, url_hash CHAR(40) NOT NULL, domain VARCHAR(120) NULL, published_at DATETIME NULL, snippet TEXT NULL, score DECIMAL(6,2) NOT NULL DEFAULT 0, company_guess VARCHAR(190) NULL, keywords VARCHAR(300) NULL, status ENUM('new','lead','saved','dismissed') NOT NULL DEFAULT 'new', company_id INT UNSIGNED NULL, task_id INT UNSIGNED NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE KEY uq_url (url_hash), KEY (status,score), KEY (watch_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    return ['Prospecting ready.'];
+}

@@ -916,9 +916,9 @@ views.campaigns = async () => {
   if (parts[2] === 'l' && parts[3]) return campList(+parts[3]);
   if (parts[2] === 'a' && parts[3]) return campAuto(+parts[3]);
   v.innerHTML = '<div class="top"><div><h1>Campaigns</h1><div class="muted">Email marketing: lists, templates and bulk sends</div></div></div><div class="row" style="margin-bottom:14px">' +
-    [['campaigns', 'Campaigns'], ['inbox', 'Inbox automation'], ['autos', 'Auto-responders'], ['lists', 'Lists & contacts'], ['templates', 'Templates'], ['settings', 'Sending settings']].map(([k, l]) => '<span class="chip ' + (CP.tab === k ? 'on' : '') + '" data-ct="' + k + '">' + l + '</span>').join('') + '</div><div id="cpb"><div class="empty">Loading…</div></div>';
+    [['campaigns', 'Campaigns'], ['inbox', 'Inbox automation'], ['prospect', 'Prospecting'], ['autos', 'Auto-responders'], ['lists', 'Lists & contacts'], ['templates', 'Templates'], ['settings', 'Sending settings']].map(([k, l]) => '<span class="chip ' + (CP.tab === k ? 'on' : '') + '" data-ct="' + k + '">' + l + '</span>').join('') + '</div><div id="cpb"><div class="empty">Loading…</div></div>';
   v.querySelectorAll('[data-ct]').forEach(c => c.onclick = () => { CP.tab = c.dataset.ct; ls.set('cptab', CP.tab); render(); });
-  try { await ({ campaigns: campTabCampaigns, inbox: () => window.OfficeExt.campInbox ? window.OfficeExt.campInbox() : Promise.resolve($('#cpb').innerHTML = '<div class="empty">Loading…</div>'), autos: campTabAutos, lists: campTabLists, templates: campTabTemplates, settings: campTabSettings }[CP.tab] || campTabCampaigns)(); } catch (e) { $('#cpb').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; }
+  try { await ({ campaigns: campTabCampaigns, inbox: () => window.OfficeExt.campInbox ? window.OfficeExt.campInbox() : Promise.resolve($('#cpb').innerHTML = '<div class="empty">Loading…</div>'), prospect: () => window.OfficeExt.campProspect ? window.OfficeExt.campProspect() : Promise.resolve(), autos: campTabAutos, lists: campTabLists, templates: campTabTemplates, settings: campTabSettings }[CP.tab] || campTabCampaigns)(); } catch (e) { $('#cpb').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; }
 };
 
 /* ---- campaigns tab ---- */
