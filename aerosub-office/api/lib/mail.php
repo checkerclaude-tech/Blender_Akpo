@@ -192,7 +192,7 @@ class Smtp {
         fwrite($this->fp, "AUTH LOGIN\r\n"); $this->expect(334);
         fwrite($this->fp, base64_encode($user) . "\r\n"); $this->expect(334);
         fwrite($this->fp, base64_encode($pass) . "\r\n");
-        [$code] = $this->read(); if ($code !== 235) throw new MailError('The outgoing mail server refused the mailbox sign-in. Check the email address and password.');
+        [$code, $txt] = $this->read(); if ($code !== 235) throw new MailError('The outgoing mail server refused the mailbox sign-in. Check the email address and password. Server reply: ' . mb_substr(preg_replace('/\s+/', ' ', $txt), 0, 160));
     }
     public function reset(): void { $this->send('RSET', 250); }
     public function deliver(string $from, array $rcpts, string $raw): void {

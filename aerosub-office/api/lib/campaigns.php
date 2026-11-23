@@ -30,7 +30,7 @@ if ($res === 'settings') {
             if ($host !== '' && !preg_match('/^[a-z0-9]([a-z0-9.-]{0,188}[a-z0-9])?$/i', $host)) fail('That server name does not look right.');
             if (!in_array($port, [465, 587, 25, 2525], true)) fail('Use port 587, 465 or 2525.');
             if (!cfg('mail_allow_private') && $host !== '') { $ip = gethostbyname($host); if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) fail('That server address is not allowed.'); }
-            $pass = (string)($b['smtp_pass'] ?? ''); $enc = $pass !== '' ? mail_encrypt($pass) : $o['secret_enc'];
+            $pass = trim((string)($b['smtp_pass'] ?? ''));   // a space or line break picked up when copying a key breaks the sign-in $enc = $pass !== '' ? mail_encrypt($pass) : $o['secret_enc'];
             $fe = camp_clean_email((string)($b['from_email'] ?? '')); if ($fe !== '' && !filter_var($fe, FILTER_VALIDATE_EMAIL)) fail('Enter a valid From email address.');
             $rt = camp_clean_email((string)($b['reply_to'] ?? '')); if ($rt !== '' && !filter_var($rt, FILTER_VALIDATE_EMAIL)) fail('Enter a valid Reply-to address or leave it empty.');
             $au = s($b['app_url'] ?? '', 190); if ($au !== '' && !preg_match('~^https://[a-z0-9.-]+(:\d+)?$~i', rtrim($au, '/'))) fail('The site address must look like https://office.aerosub.co');
