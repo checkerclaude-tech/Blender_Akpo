@@ -122,3 +122,15 @@ Check its output: it must say `Root Admin account: dev.aaerosub@…`. If it says
 - **Screen sleep (phones only).** After a quiet moment: clock, the task you are on, the latest notification and a scrolling news bar. It follows the phone when rotated; touch to wake. Set the delay or switch it off under More > Screen sleep.
 - **Printing fixed.** Team performance (and the daily reports page) printed blank because a print rule hid everything except finance documents. They print properly now.
 - Speed files from the previous round are included.
+
+## Inbox automation (Campaigns > Inbox automation)
+**Open `/upgrade.php` once** (adds the tables). Connect the info@ mailbox under Mail first.
+- **Scan inbox now** reads the mailbox. Each new email is sorted (quote request, service enquiry, meeting, invoice/payment, support, general) with keyword rules you can edit. Automatic mail (no-reply, newsletters, mailing lists, out-of-office, our own team) is skipped and never answered.
+- **CRM and funnel:** the sender becomes a contact, and a company is created from the email domain (free mailboxes such as gmail get an "individual" entry). Business enquiries move the company forward in the Pipeline (never backwards).
+- **Project tracker:** action tasks are created per category (e.g. Send proposal, Prepare and send proforma, Send company profile, Send pitch deck, Schedule follow-up), linked to the company and contact, assigned to the Marketing head or the company owner.
+- **Approval:** a draft reply is written and Marketing gets a task to approve it. "Review & reply" lets you edit it, tick documents to attach and send it from the info@ mailbox (a copy goes to its Sent folder). Or close it out without replying.
+- **Documents:** reply attachments come from **Documents** and **My Documents** (files whose names match "profile", "pitch", "deck" are suggested and pre-ticked), or add a file from your device.
+- **Document creation:** each business email has + Proforma / + Invoice / + Commercial buttons that open the finance form already filled with the sender's company, email and name, linked to the approval task.
+- **Optional instant acknowledgement** ("we received your email") for business enquiries, off by default, once per sender per day.
+- **Settings & rules:** categories, keywords, tasks, funnel stage, suggested documents and reply text are all editable; also who approves, which mailbox the scheduled task (`cron.php`) scans, and a never-process list.
+- Sorting is rule based (keywords), so it costs nothing and nothing leaves your server. It can be switched to an AI model later if you want deeper reading of emails.

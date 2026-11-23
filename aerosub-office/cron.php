@@ -11,6 +11,8 @@ if (PHP_SAPI !== 'cli' && !hash_equals((string)cfg('cron_key'), (string)($_GET['
 $made = 0;
 // Marketing campaigns: send the next batch (and start scheduled campaigns that are due)
 try { require_once __DIR__ . '/api/lib/campcore.php'; if (col_exists('camp_queue', 'status')) { $ct = camp_tick((int)(camp_settings()['batch_size'] ?: 100)); echo 'Campaigns: ' . json_encode($ct) . "\n"; } } catch (Throwable $e) { echo 'Campaigns skipped: ' . $e->getMessage() . "\n"; }
+// Inbox automation: read the info@ mailbox, add senders to the CRM, create tasks and draft replies for approval
+try { require_once __DIR__ . '/api/lib/inboxauto.php'; if (col_exists('ia_items', 'msg_key')) echo ia_cron() . "\n"; } catch (Throwable $e) { echo 'Inbox automation skipped: ' . $e->getMessage() . "\n"; }
 // Agent platform: retry approved items whose pipeline update failed earlier
 try { require_once __DIR__ . '/api/lib/agent_writeback.php'; if (col_exists('agent_items', 'sync_state')) echo 'Agent sync: ' . agent_retry_pending() . " retried.\n"; } catch (Throwable $e) { echo 'Agent sync skipped: ' . $e->getMessage() . "\n"; }
 // Personal agent mailbox: encrypted messages nobody collected for a week are dropped

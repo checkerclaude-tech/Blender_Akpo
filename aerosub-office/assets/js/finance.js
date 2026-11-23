@@ -54,7 +54,7 @@
   /* ---------- the form ---------- */
   async function form(d, pre) {
     pre = pre || {}; await X.loadRefs(); let st = {}; try { st = (await api('finance/settings')).settings; } catch {} let cat = []; try { cat = (await api('catalog')).items.filter(i => i.published == 1); } catch {}
-    const type = d ? d.doc_type : (pre.doc_type || 'commercial'); const x = d || {}, cur = x.currency || st.currency || 'USD', comm = type === 'commercial', req = type === 'requisition';
+    const type = d ? d.doc_type : (pre.doc_type || 'commercial'); const x = d || { client_email: pre.client_email || '', attention: pre.attention || '' }, cur = x.currency || st.currency || 'USD', comm = type === 'commercial', req = type === 'requisition';
     const F = (n, l, v, o) => { o = o || {}; return '<div class="field"' + (o.id ? ' id="' + o.id + '"' : '') + '><label>' + l + '</label>' + (o.ta ? '<textarea name="' + n + '" rows="' + o.ta + '">' + esc(v || '') + '</textarea>' : '<input name="' + n + '"' + (o.type ? ' type="' + o.type + '"' : '') + (o.list ? ' list="' + o.list + '"' : '') + (o.ph ? ' placeholder="' + esc(o.ph) + '"' : '') + (o.req ? ' required' : '') + ' maxlength="' + (o.max || 190) + '" value="' + esc(v ?? '') + '">') + '</div>'; };
     const dl = (id, arr) => '<datalist id="' + id + '">' + arr.map(a => '<option value="' + esc(a) + '">').join('') + '</datalist>';
     const m = modal('<div class="row"><h2 class="grow">' + (d ? 'Edit ' + FTYPE[d.doc_type].toLowerCase() + ' ' + esc(d.number) : 'New ' + (comm ? 'commercial' : FTYPE[type].toLowerCase())) + '</h2><button class="btn ghost sm" id="cx">✕</button></div><form id="ff" style="margin-top:10px">' +
