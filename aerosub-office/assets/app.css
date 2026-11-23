@@ -195,3 +195,25 @@ html.nav-min .side .me>span:not(.avatar){display:none}
 /* Sidebar menu: still scrolls (wheel, touch, keyboard) but the scrollbar is invisible, and scrolling is smooth */
 .nav{overflow-y:auto;scrollbar-width:none;-ms-overflow-style:none;scroll-behavior:smooth;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
 .nav::-webkit-scrollbar{display:none;width:0;height:0}
+
+/* ---- iPhone / small screens: nothing may be wider than the screen, nothing may sit under the status bar or the home bar ---- */
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%;overflow-x:hidden;max-width:100%}
+body{overflow-x:hidden;max-width:100%;position:relative}
+@supports (min-height:100dvh){body{min-height:100dvh}#app{min-height:100dvh}.gate{min-height:100dvh}}
+@media(max-width:860px){
+  #app{max-width:100%;width:100%;overflow-x:clip}
+  .main{padding:calc(14px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) calc(92px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));width:100%;max-width:100%;min-width:0;box-sizing:border-box}
+  .main *{min-width:0}
+  .main :is(img,video,iframe,canvas,svg){max-width:100%}
+  .main :is(h1,h2,h3,p,.muted,.small,b){overflow-wrap:anywhere}
+  .main :is(.card,.cards,.two,.list,.item,.top){max-width:100%;box-sizing:border-box}
+  .main :is(table){display:block;max-width:100%;overflow-x:auto}
+  .top{flex-wrap:wrap;gap:10px}.top .right{margin-left:0}
+  .cards{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tabbar{left:0;right:0;width:100%;box-sizing:border-box;padding:6px calc(4px + env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) calc(4px + env(safe-area-inset-left));gap:0;-webkit-transform:translateZ(0);transform:translateZ(0)}
+  .tabbar a{flex:1 1 0;min-width:0;padding:4px 2px}.tabbar a span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .gate{padding:calc(20px + env(safe-area-inset-top)) 20px calc(20px + env(safe-area-inset-bottom))}
+  .scrim{padding:calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom))}
+  input,select,textarea{font-size:16px}   /* iOS zooms the whole page when a field is smaller than 16px */
+}
+@media(display-mode:standalone){html,body{overscroll-behavior-y:none}}

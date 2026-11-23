@@ -45,3 +45,6 @@
 
 .cr-o,.cr-checks label,.cr-rad{font-weight:400;color:var(--ink);font-size:15px;text-transform:none;letter-spacing:0}
 .cr-checks label{font-size:14px}.cr-rad b{font-weight:700}
+/* phones: the course header stacks (picture on top) instead of squeezing the text into a thin column */
+.cr-hero>.grow{flex:1 1 260px;min-width:0}
+@media(max-width:700px){.cr-hero{flex-direction:column;gap:12px}.cr-himg{width:100%}.cr-hero p{overflow-wrap:anywhere}}

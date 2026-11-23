@@ -134,3 +134,10 @@ Check its output: it must say `Root Admin account: dev.aaerosub@…`. If it says
 - **Optional instant acknowledgement** ("we received your email") for business enquiries, off by default, once per sender per day.
 - **Settings & rules:** categories, keywords, tasks, funnel stage, suggested documents and reply text are all editable; also who approves, which mailbox the scheduled task (`cron.php`) scans, and a never-process list.
 - Sorting is rule based (keywords), so it costs nothing and nothing leaves your server. It can be switched to an AI model later if you want deeper reading of emails.
+
+## iPhone layout fix
+- Content no longer slides under the iPhone status bar or notch: the page now leaves room for the safe areas at the top, sides and bottom, so "+ New task" and the header are tappable.
+- Nothing can be wider than the screen (this was making the bar at the bottom float and the right side get cut off). The bottom tab bar always fits the screen width.
+- Course header stacks on phones (picture on top, text below) instead of squeezing the text into a thin column.
+- Fields use 16px text on phones so iOS no longer zooms the whole page when you tap one.
+- After installing: on iPhone, remove the app from the home screen and add it again (or Settings > Safari > Clear History and Website Data), because iOS keeps the old files.
