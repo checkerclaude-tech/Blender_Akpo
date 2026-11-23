@@ -17,6 +17,13 @@ const AP_TYPES = ['commercial' => 'Commercial', 'proforma' => 'Proforma / quotat
 
 function ap_role_label(array $r): string { return ['super_admin' => 'Super Admin', 'founder' => 'Founder / CEO', 'manager' => 'Manager', 'employee' => 'Employee'][$r['role']] ?? $r['role']; }
 /** People who may review or sign: administrators, the Founder, managers and heads of department (the chain of command). */
+/** A requisition is internal spending: the requester signs, then the finance head, then the top head. Anybody active can be a signer there. */
+function ap_everyone(): array {
+    $heads = []; foreach (all('SELECT id,name,head_id FROM departments WHERE head_id IS NOT NULL') as $d) $heads[(int)$d['head_id']][] = $d['name'];
+    $out = []; foreach (all("SELECT u.id,u.name,u.role,u.job_title FROM users u WHERE u.active=1 AND u.archived_at IS NULL ORDER BY u.name") as $r) { $id = (int)$r['id'];
+        $out[] = ['id' => $id, 'name' => $r['name'], 'title' => isset($heads[$id]) ? 'Head of ' . implode(', ', $heads[$id]) : ($r['job_title'] ?: ap_role_label($r)), 'role' => $r['role'], 'head' => isset($heads[$id])]; }
+    return $out;
+}
 function ap_eligible(): array {
     $heads = []; foreach (all('SELECT id,name,head_id FROM departments WHERE head_id IS NOT NULL') as $d) $heads[(int)$d['head_id']][] = $d['name'];
     $rows = all("SELECT u.id,u.name,u.role,u.job_title,u.department_id FROM users u WHERE u.active=1 AND u.archived_at IS NULL ORDER BY u.name"); $out = [];
@@ -62,13 +69,20 @@ function ap_summary(array $u, array $d, bool $canEdit): array {
     $a = ap_current((int)$d['id']); $uid = (int)$u['id']; $mySig = one('SELECT 1 FROM user_signatures WHERE user_id=?', [$uid]);
     $locked = in_array($d['approval_status'] ?? '', ['in_review', 'awaiting_sign', 'signed'], true);
     $o = ['status' => $d['approval_status'] ?: null, 'locked' => $locked, 'can_request' => $canEdit && in_array($d['doc_type'], array_keys(AP_TYPES), true) && $d['status'] !== 'void' && !$locked && $d['doc_type'] !== 'receipt', 'has_signature' => (bool)$mySig, 'current' => $a ? ap_out($a, $uid) : null];
-    if ($o['can_request']) { $o['eligible'] = array_values(array_filter(ap_eligible(), fn($p) => $p['id'] !== (int)($d['created_by'] ?? 0) || true)); $o['suggest'] = ap_suggest($u, $d); }
+    if ($o['can_request']) { $o['eligible'] = $d['doc_type'] === 'requisition' ? ap_everyone() : array_values(array_filter(ap_eligible(), fn($p) => $p['id'] !== (int)($d['created_by'] ?? 0) || true)); $o['suggest'] = ap_suggest($u, $d); }
     $o['history'] = array_map(fn($h) => ['id' => (int)$h['id'], 'status' => $h['status'], 'created_at' => $h['created_at'], 'closed_at' => $h['closed_at']], all('SELECT id,status,created_at,closed_at FROM doc_approvals WHERE doc_id=? ORDER BY id DESC LIMIT 10', [$d['id']]));
     return $o;
 }
 /** Chain of command suggestion: the author's department head, then the Founder / CEO to sign. */
 function ap_suggest(array $u, array $d): array {
-    $uid = (int)$u['id']; $steps = []; $used = [$uid]; $el = array_column(ap_eligible(), null, 'id');
+    $uid = (int)$u['id'];
+    if (($d['doc_type'] ?? '') === 'requisition') {   // requester signs > finance head signs > top head approves
+        $fh = (int)(one("SELECT head_id FROM departments WHERE name='Finance' AND head_id IS NOT NULL LIMIT 1")['head_id'] ?? 0);
+        if (!$fh) $fh = (int)(one("SELECT u.id FROM users u JOIN departments dp ON dp.id=u.department_id WHERE dp.name='Finance' AND u.active=1 AND u.archived_at IS NULL AND u.role IN ('manager','super_admin') ORDER BY u.id LIMIT 1")['id'] ?? 0);
+        $top = (int)(one("SELECT id FROM users WHERE role='founder' AND active=1 AND archived_at IS NULL ORDER BY id LIMIT 1")['id'] ?? 0) ?: (int)(one("SELECT id FROM users WHERE role='super_admin' AND active=1 AND archived_at IS NULL AND id<>? ORDER BY id LIMIT 1", [$uid])['id'] ?? 0);
+        $rq = (int)($d['created_by'] ?? $uid) ?: $uid; $steps = [['kind' => 'sign', 'user_id' => $rq]]; if ($fh && $fh !== $rq) $steps[] = ['kind' => 'sign', 'user_id' => $fh]; else $steps[] = ['kind' => 'sign', 'user_id' => 0];
+        if ($top && $top !== $rq && $top !== $fh) $steps[] = ['kind' => 'sign', 'user_id' => $top]; else $steps[] = ['kind' => 'sign', 'user_id' => 0]; return $steps;
+    } $steps = []; $used = [$uid]; $el = array_column(ap_eligible(), null, 'id');
     foreach (array_unique(array_map('intval', $u['department_ids'] ?? [])) as $dep) { $h = (int)(one('SELECT head_id FROM departments WHERE id=?', [$dep])['head_id'] ?? 0); if ($h && isset($el[$h]) && !in_array($h, $used, true)) { $steps[] = ['kind' => 'review', 'user_id' => $h]; $used[] = $h; } }
     $fin = (int)(one("SELECT head_id FROM departments WHERE name='Finance' AND head_id IS NOT NULL LIMIT 1")['head_id'] ?? 0); if ($fin && isset($el[$fin]) && !in_array($fin, $used, true)) { $steps[] = ['kind' => 'review', 'user_id' => $fin]; $used[] = $fin; }
     $sg = (int)(one("SELECT id FROM users WHERE role='founder' AND active=1 AND archived_at IS NULL ORDER BY id LIMIT 1")['id'] ?? 0) ?: (int)(one("SELECT id FROM users WHERE role='super_admin' AND active=1 AND archived_at IS NULL AND id<>? ORDER BY id LIMIT 1", [$uid])['id'] ?? 0);
@@ -77,10 +91,10 @@ function ap_suggest(array $u, array $d): array {
 function ap_request(array $u, array $d, array $b): array {
     $uid = (int)$u['id']; if (!isset(AP_TYPES[$d['doc_type']])) fail('Receipts are not approved this way'); if ($d['status'] === 'void') fail('This document is void');
     $cur = ap_current((int)$d['id']); if ($cur && in_array($cur['status'], AP_ACTIVE, true)) fail('This document is already waiting for approval'); if ($cur && $cur['status'] === 'signed') fail('This document is already signed. Void it and issue a new one to change it.');
-    $steps = []; $seen = []; $el = array_column(ap_eligible(), null, 'id'); $sawSign = false;
+    $isReq = $d['doc_type'] === 'requisition'; $steps = []; $seen = []; $el = array_column($isReq ? ap_everyone() : ap_eligible(), null, 'id'); $sawSign = false;
     foreach (array_slice((array)($b['steps'] ?? []), 0, 8) as $s) { $kind = ($s['kind'] ?? '') === 'sign' ? 'sign' : 'review'; $to = (int)($s['user_id'] ?? 0);
-        if (!isset($el[$to])) fail('Choose people who can review and sign (administrators, the Founder, managers and heads of department)'); if ($to === $uid) fail('You cannot approve your own request. Choose someone else.'); if (isset($seen[$to])) fail($el[$to]['name'] . ' is in the chain twice');
-        if ($kind === 'review' && $sawSign) fail('Reviews come first, then signatures'); if ($kind === 'sign') $sawSign = true; $seen[$to] = 1; $steps[] = [$kind, $to]; }
+        if (!isset($el[$to])) fail($isReq ? 'Choose a person for every step' : 'Choose people who can review and sign (administrators, the Founder, managers and heads of department)'); if ($to === $uid && !$isReq) fail('You cannot approve your own request. Choose someone else.'); if (isset($seen[$to])) fail($el[$to]['name'] . ' is in the chain twice');
+        if ($isReq) $kind = 'sign'; if ($kind === 'review' && $sawSign) fail('Reviews come first, then signatures'); if ($kind === 'sign') $sawSign = true; $seen[$to] = 1; $steps[] = [$kind, $to]; }
     if (!$sawSign) fail('Add at least one person to sign');
     $hash = ap_hash($d); $first = $steps[0][0] === 'sign' ? 'awaiting_sign' : 'in_review';
     q('INSERT INTO doc_approvals (doc_id,status,created_by,content_hash) VALUES (?,?,?,?)', [$d['id'], $first, $uid, $hash]); $aid = (int)db()->lastInsertId();

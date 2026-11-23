@@ -116,12 +116,13 @@ if ($seg[0] === 'finance') {
         if ($method === 'GET' && $act === '') { $d['seller'] = fx_settings(); $d['can_edit'] = $fin; $d['can_correspond'] = !$ro && ($fin || (int)($d['created_by'] ?? 0) === $uid || ap_is_in_chain($uid, (int)$d['id'])); $d['children'] = all('SELECT id,doc_type,number,status FROM fin_docs WHERE parent_id=? ORDER BY id', [$sid]);
             $d['parent'] = $d['parent_id'] ? one('SELECT id,doc_type,number FROM fin_docs WHERE id=?', [$d['parent_id']]) : null;
             if ($d['doc_type'] === 'invoice') { $d['paid_total'] = (float)one("SELECT COALESCE(SUM(amount_paid),0) s FROM fin_docs WHERE doc_type='receipt' AND parent_id=? AND status<>'void'", [$sid])['s']; $d['balance'] = round($d['totals']['total'] - $d['paid_total'], 2); }
-            $d['approval'] = ap_summary($u, $d, $fin && !$ro); $d['locked'] = $d['approval']['locked'];
+            $canReq = !$ro && ($fin || ($d['doc_type'] === 'requisition' && (int)($d['created_by'] ?? 0) === $uid)); $d['approval'] = ap_summary($u, $d, $canReq); $d['locked'] = $d['approval']['locked'];
             out($d); }
         if ($act === 'approval') {   // Review > Request signature > Sign (or Revert), along the chain of command
             $x = $seg[4] ?? '';
-            if ($method === 'GET' && $x === '') out(ap_summary($u, $d, $fin && !$ro));
-            if ($method === 'POST' && $x === '') { if (!$fin || $ro) fail('Only Finance can ask for approval', 403); out(ap_request($u, $d, $b)); }
+            $canReq = !$ro && ($fin || ($d['doc_type'] === 'requisition' && (int)($d['created_by'] ?? 0) === $uid));
+            if ($method === 'GET' && $x === '') out(ap_summary($u, $d, $canReq));
+            if ($method === 'POST' && $x === '') { if (!$canReq) fail('Only Finance can ask for approval', 403); out(ap_request($u, $d, $b)); }
             if ($method === 'POST' && $x === 'act') out(ap_act($u, $d, $b));
             fail('Bad request', 404);
         }

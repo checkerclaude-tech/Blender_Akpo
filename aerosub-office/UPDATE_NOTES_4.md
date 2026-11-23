@@ -141,3 +141,10 @@ Check its output: it must say `Root Admin account: dev.aaerosub@…`. If it says
 - Course header stacks on phones (picture on top, text below) instead of squeezing the text into a thin column.
 - Fields use 16px text on phones so iOS no longer zooms the whole page when you tap one.
 - After installing: on iPhone, remove the app from the home screen and add it again (or Settings > Safari > Clear History and Website Data), because iOS keeps the old files.
+
+## Requisition approval chain (internal spending)
+A requisition now runs through three signatures, in order: the **requester signs**, then the **finance head signs**, then the **top head approves and signs**.
+- "Request approval" suggests the chain automatically (requester = whoever raised it, Finance head = head of the Finance department, top head = the Founder/CEO). Every step can be changed, and any active person can be chosen. Each person is notified only when it is their turn.
+- A person cannot sign before the people ahead of them. Anyone who signed can take their signature back, and any edit clears the signatures so they are signed again.
+- The printed requisition now has three signature boxes (Requested by, Finance head, Approved by top head). Each signature appears in its own box with the signer's name, title and date.
+- To use "Finance head" automatically, set the head of the Finance department under Departments.

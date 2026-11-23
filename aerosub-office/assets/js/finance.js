@@ -194,7 +194,7 @@
       (d.client_address ? '<div class="rq-why"><b>Reason / justification</b><br>' + nl(d.client_address) + '</div>' : '') +
       '<table class="inv-items"><colgroup><col style="width:6%"><col style="width:40%"><col style="width:8%"><col style="width:8%"><col style="width:18%"><col style="width:20%"></colgroup><thead><tr class="h"><td class="c">S/N</td><td>Description</td><td class="c">UoM</td><td class="c">Qty</td><td>Unit Price</td><td>Amount</td></tr></thead><tbody>' + rows + '</tbody><tfoot><tr class="tot"><td colspan="5">SUBTOTAL</td><td class="navy">' + fm(t.subtotal) + '</td></tr>' + (t.discount ? '<tr class="tot"><td colspan="5">DISCOUNT</td><td class="navy">−' + fm(t.discount) + '</td></tr>' : '') + (+d.tax_rate ? '<tr class="tot"><td colspan="5">' + esc((d.tax_label || 'VAT').toUpperCase()) + ' (' + num(d.tax_rate) + '%)</td><td class="navy">' + fm(t.tax) + '</td></tr>' : '') + '<tr class="tot"><td colspan="5">TOTAL</td><td class="navy">' + fm(t.total) + '</td></tr></tfoot></table>' +
       '<div class="inv-words strong"><b>AMOUNT IN WORDS:</b> ' + esc(amountWords(t.total, c)) + '.</div>' + (d.notes ? '<div class="inv-notes"><b>Notes</b><br>' + nl(d.notes) + '</div>' : '') +
-      '<div class="inv-sign"><div>REQUESTED BY / SIGNED<div class="line"></div></div><div>APPROVED BY<div class="line"></div></div></div></div></div>';
+      '<div class="inv-sign rq3"><div>REQUESTED BY<div class="line"></div></div><div>FINANCE HEAD<div class="line"></div></div><div>APPROVED BY (TOP HEAD)<div class="line"></div></div></div></div></div>';
   }
   window.OfficeFin = { settings, form, amountWords, words, html: d => d.doc_type === 'commercial' ? commercialHtml(d) : d.doc_type === 'requisition' ? requisitionHtml(d) : invoiceHtml(d) };
 })();
