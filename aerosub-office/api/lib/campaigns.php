@@ -25,12 +25,13 @@ try {
 /* ---------- settings ---------- */
 if ($res === 'settings') {
     if ($method === 'GET' || $act === '') {
+        $plen = null;
         if ($method === 'POST') {
             $b = body(); $o = camp_settings(); $host = s($b['smtp_host'] ?? '', 190); $port = (int)($b['smtp_port'] ?? 587);
             if ($host !== '' && !preg_match('/^[a-z0-9]([a-z0-9.-]{0,188}[a-z0-9])?$/i', $host)) fail('That server name does not look right.');
             if (!in_array($port, [465, 587, 25, 2525], true)) fail('Use port 587, 465 or 2525.');
             if (!cfg('mail_allow_private') && $host !== '') { $ip = gethostbyname($host); if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) fail('That server address is not allowed.'); }
-            $pass = trim((string)($b['smtp_pass'] ?? ''));   // a space or line break picked up when copying a key breaks the sign-in $enc = $pass !== '' ? mail_encrypt($pass) : $o['secret_enc'];
+            $pass = trim((string)($b['smtp_pass'] ?? '')); $enc = $pass !== '' ? mail_encrypt($pass) : $o['secret_enc']; $plen = strlen($pass);
             $fe = camp_clean_email((string)($b['from_email'] ?? '')); if ($fe !== '' && !filter_var($fe, FILTER_VALIDATE_EMAIL)) fail('Enter a valid From email address.');
             $rt = camp_clean_email((string)($b['reply_to'] ?? '')); if ($rt !== '' && !filter_var($rt, FILTER_VALIDATE_EMAIL)) fail('Enter a valid Reply-to address or leave it empty.');
             $au = s($b['app_url'] ?? '', 190); if ($au !== '' && !preg_match('~^https://[a-z0-9.-]+(:\d+)?$~i', rtrim($au, '/'))) fail('The site address must look like https://office.aerosub.co');
@@ -40,7 +41,7 @@ if ($res === 'settings') {
             log_act($uid, 'campaign_settings_saved');
         }
         $o = camp_settings();
-        out(['smtp_host' => $o['smtp_host'], 'smtp_port' => (int)$o['smtp_port'], 'smtp_user' => $o['smtp_user'], 'has_secret' => !empty($o['secret_enc']), 'from_email' => $o['from_email'], 'from_name' => $o['from_name'], 'reply_to' => $o['reply_to'],
+        out(['pass_received' => $plen, 'smtp_host' => $o['smtp_host'], 'smtp_port' => (int)$o['smtp_port'], 'smtp_user' => $o['smtp_user'], 'has_secret' => !empty($o['secret_enc']), 'from_email' => $o['from_email'], 'from_name' => $o['from_name'], 'reply_to' => $o['reply_to'],
              'address' => $o['address'], 'batch_size' => (int)$o['batch_size'], 'hour_cap' => (int)$o['hour_cap'], 'app_url' => $o['app_url'] ?: '', 'base' => camp_base(), 'is_admin' => $u['role'] === 'super_admin']);
     }
     if ($act === 'test' && $method === 'POST') {
