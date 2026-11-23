@@ -192,7 +192,7 @@ class Smtp {
         fwrite($this->fp, "AUTH LOGIN\r\n"); $this->expect(334);
         fwrite($this->fp, base64_encode($user) . "\r\n"); $this->expect(334);
         fwrite($this->fp, base64_encode($pass) . "\r\n");
-        [$code, $txt] = $this->read(); if ($code !== 235) throw new MailError('The outgoing mail server refused the mailbox sign-in. Check the email address and password. Server reply: ' . mb_substr(preg_replace('/\s+/', ' ', $txt), 0, 160));
+        [$code, $txt] = $this->read(); if ($code !== 235) throw new MailError('The outgoing mail server refused the mailbox sign-in. Check the email address and password. Server reply: ' . mb_substr(preg_replace('/\s+/', ' ', $txt), 0, 160) . (stripos($txt, 'IP') !== false ? mail_out_ip_hint() : ''));
     }
     public function reset(): void { $this->send('RSET', 250); }
     public function deliver(string $from, array $rcpts, string $raw): void {
@@ -381,4 +381,11 @@ function build_message(array $o): string { // from, to[], cc[], subject, html, t
     }
     $body .= "--$mix--\r\n";
     return implode("\r\n", $h) . "\r\nContent-Type: multipart/mixed; boundary=\"$mix\"\r\n\r\n" . $body;
+}
+
+/** When a mail service refuses the server's IP address, say which address it is so it can be allowed there. */
+function mail_out_ip_hint(): string {
+    $ctx = stream_context_create(['http' => ['timeout' => 4]]); $ip = '';
+    foreach (['https://api.ipify.org', 'https://ifconfig.me/ip'] as $u) { $r = @file_get_contents($u, false, $ctx); if (is_string($r) && filter_var(trim($r), FILTER_VALIDATE_IP)) { $ip = trim($r); break; } }
+    return $ip !== '' ? ' >> Add this address in your mail service (Brevo: Security > Authorised IPs): ' . $ip : '';
 }
