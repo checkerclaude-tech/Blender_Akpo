@@ -76,8 +76,8 @@ if ($r === 'companies') {
     if ($method === 'POST' && $id === null) {
         must_write(); $b = body(); $name = s($b['name'] ?? '', 190); if ($name === '') fail('Company name required');
         if (one('SELECT id FROM companies WHERE LOWER(name)=LOWER(?)', [$name])) fail('A company with that name already exists');
-        q('INSERT INTO companies (name,sector,location,website,stage,priority,owner_id,pain_points,current_solution,notes,flag_note,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-          [$name, s($b['sector'] ?? '', 80) ?: null, s($b['location'] ?? '', 120) ?: null, url_or_null($b['website'] ?? null, 190), in((string)($b['stage'] ?? ''), STAGES, 'researching'),
+        q('INSERT INTO companies (name,code,address,sector,location,website,stage,priority,owner_id,pain_points,current_solution,notes,flag_note,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+          [$name, s($b['code'] ?? '', 40) ?: null, s($b['address'] ?? '', 800) ?: null, s($b['sector'] ?? '', 80) ?: null, s($b['location'] ?? '', 120) ?: null, url_or_null($b['website'] ?? null, 190), in((string)($b['stage'] ?? ''), STAGES, 'researching'),
            in((string)($b['priority'] ?? ''), PRIOS, 'medium'), !empty($b['owner_id']) ? (int)$b['owner_id'] : $uid, s($b['pain_points'] ?? '', 5000) ?: null,
            s($b['current_solution'] ?? '', 5000) ?: null, s($b['notes'] ?? '', 5000) ?: null, s($b['flag_note'] ?? '', 300) ?: null, $uid]);
         $nid = (int)db()->lastInsertId(); log_act($uid, 'company_added', $name); out(['ok' => true, 'id' => $nid], 201);
@@ -88,8 +88,8 @@ if ($r === 'companies') {
             must_write(); if (!can_edit_owner($c)) fail('Only the owner or a manager can edit this company', 403);
             $b = body(); $g = fn($k, $d) => array_key_exists($k, $b) ? $b[$k] : $d;
             $stage = in((string)$g('stage', $c['stage']), STAGES, $c['stage']);
-            q('UPDATE companies SET name=?,sector=?,location=?,website=?,stage=?,priority=?,owner_id=?,pain_points=?,current_solution=?,notes=?,flag_note=? WHERE id=?',
-              [s($g('name', $c['name']), 190) ?: $c['name'], s($g('sector', $c['sector']), 80) ?: null, s($g('location', $c['location']), 120) ?: null, url_or_null($g('website', $c['website']), 190),
+            q('UPDATE companies SET name=?,code=?,address=?,sector=?,location=?,website=?,stage=?,priority=?,owner_id=?,pain_points=?,current_solution=?,notes=?,flag_note=? WHERE id=?',
+              [s($g('name', $c['name']), 190) ?: $c['name'], s($g('code', $c['code'] ?? ''), 40) ?: null, s($g('address', $c['address'] ?? ''), 800) ?: null, s($g('sector', $c['sector']), 80) ?: null, s($g('location', $c['location']), 120) ?: null, url_or_null($g('website', $c['website']), 190),
                $stage, in((string)$g('priority', $c['priority']), PRIOS, $c['priority']), ($g('owner_id', $c['owner_id']) ?: null),
                s($g('pain_points', $c['pain_points']), 5000) ?: null, s($g('current_solution', $c['current_solution']), 5000) ?: null, s($g('notes', $c['notes']), 5000) ?: null,
                s($g('flag_note', $c['flag_note']), 300) ?: null, $id]);

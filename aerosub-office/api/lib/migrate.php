@@ -501,3 +501,12 @@ function migrate_inbox_auto(): array {
     db()->exec("CREATE TABLE IF NOT EXISTS ia_items (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, account_id INT UNSIGNED NOT NULL, msg_key CHAR(40) NOT NULL, folder VARCHAR(80) NOT NULL DEFAULT 'INBOX', uid INT UNSIGNED NOT NULL DEFAULT 0, message_id VARCHAR(250) NULL, references_h TEXT NULL, from_email VARCHAR(190) NOT NULL, from_name VARCHAR(190) NULL, subject VARCHAR(300) NOT NULL DEFAULT '', snippet TEXT NULL, received_at DATETIME NULL, category VARCHAR(40) NOT NULL DEFAULT 'general', status ENUM('new','awaiting','sent','closed','skipped') NOT NULL DEFAULT 'new', skip_reason VARCHAR(80) NULL, contact_id INT UNSIGNED NULL, company_id INT UNSIGNED NULL, task_id INT UNSIGNED NULL, tasks_json TEXT NULL, draft_subject VARCHAR(300) NULL, draft_body TEXT NULL, acked TINYINT(1) NOT NULL DEFAULT 0, sent_at DATETIME NULL, handled_by INT UNSIGNED NULL, created_by INT UNSIGNED NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE KEY uq_key (msg_key), KEY (status,received_at), KEY (from_email)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     return ['Inbox automation ready.'];
 }
+
+
+// Finance round 3: company code and address, the proforma / quotation code on an invoice, and files attached to a finance document. Safe to run repeatedly.
+function migrate_fin3(): array {
+    if (!col_exists('companies', 'code')) db()->exec('ALTER TABLE companies ADD COLUMN code VARCHAR(40) NULL AFTER name, ADD COLUMN address TEXT NULL AFTER location');
+    if (!col_exists('fin_docs', 'quote_ref')) db()->exec('ALTER TABLE fin_docs ADD COLUMN quote_ref VARCHAR(60) NULL');
+    db()->exec("CREATE TABLE IF NOT EXISTS fin_files (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, doc_id INT UNSIGNED NOT NULL, name VARCHAR(200) NOT NULL, mime VARCHAR(100) NOT NULL DEFAULT 'application/octet-stream', size INT UNSIGNED NOT NULL DEFAULT 0, path VARCHAR(64) NOT NULL, user_id INT UNSIGNED NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, KEY (doc_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    return ['Finance: company codes, quotation references and attachments ready.'];
+}
