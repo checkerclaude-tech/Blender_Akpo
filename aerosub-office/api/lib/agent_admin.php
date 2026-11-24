@@ -13,7 +13,7 @@ if ($method === 'GET' && $id === null) {
 if ($method === 'POST' && $id === null) {
     $label = s(body()['label'] ?? '', 80);
     if ($label === '') fail('Give the token a name, for example "Office laptop"');
-    $scope = (string)(body()['scope'] ?? 'research'); if (!in_array($scope, ['research', 'personal'], true)) $scope = 'research';
+    $scope = (string)(body()['scope'] ?? 'research'); if (!in_array($scope, ['research', 'personal', 'seo'], true)) $scope = 'research';
     $t = agent_token_create($label, (int)$owner['id'], $scope);
     log_act((int)$owner['id'], 'agent_token_created', $label . ' (' . $scope . ')');
     out($t, 201);

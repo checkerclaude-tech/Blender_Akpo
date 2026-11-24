@@ -1,0 +1,25 @@
+/* SEO autopilot feed (assets/js/seo.js). Uses the app's colour variables, so light and dark themes both work. */
+.seo-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:14px 0}
+.seo-stats .stat{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow)}
+.seo-stats .stat span{color:var(--muted);font-size:13px}
+.seo-stats .stat.seo-hot b{color:var(--warn)}
+.seo-tabs{margin:4px 0 14px;max-width:100%;overflow-x:auto;scrollbar-width:none}
+.seo-tabs .ac-b{white-space:nowrap;flex-shrink:0}
+.seo-tabs .ac-b.sel{background:var(--fill);color:#fff;font-weight:600}
+.seo-card{padding:14px 16px;margin-bottom:10px}
+.seo-card.seo-pending{border-left:4px solid var(--warn)}
+.seo-head{gap:8px;align-items:center;flex-wrap:wrap}
+.seo-kind{font-size:12px;font-weight:600;padding:2px 8px;border-radius:99px;background:var(--mist);color:var(--ink)}
+.seo-kind.seo-approval{color:var(--warn)}
+.seo-kind.seo-change{color:var(--ok)}
+.seo-kind.seo-ranking{color:var(--link)}
+.seo-title{margin:8px 0 2px;font-size:16px}
+.seo-url a{color:var(--link);word-break:break-all}
+.seo-body{white-space:pre-wrap;margin:8px 0;font-size:14px;line-height:1.5}
+.seo-act{gap:8px;margin-top:8px}
+@media (max-width:640px){.seo-stats{gap:8px}.seo-stats .stat{padding:10px 12px}.seo-stats .stat b{font-size:22px}.seo-stats .stat span{font-size:12px}}
+.seo-comp{gap:8px;margin:6px 0;flex-wrap:wrap}
+.seo-comp input{min-width:160px}
+.seo-sched{display:flex;gap:16px;flex-wrap:wrap}
+.seo-sched .field{min-width:180px}
+.seo-key{gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)}

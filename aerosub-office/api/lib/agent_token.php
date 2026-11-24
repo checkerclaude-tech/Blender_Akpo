@@ -11,7 +11,7 @@ function agent_hash(string $token): string { return hash('sha256', $token); }
 
 /** Creates a token. The plain text is returned once and never stored. */
 function agent_token_create(string $label, int $createdBy, string $scope = 'research'): array {
-    if (!in_array($scope, ['research', 'personal'], true)) $scope = 'research';
+    if (!in_array($scope, ['research', 'personal', 'seo'], true)) $scope = 'research';
     $plain = 'agt_' . bin2hex(random_bytes(32));
     q('INSERT INTO agent_tokens (label, scope, token_hash, created_by) VALUES (?,?,?,?)', [s($label, 80), $scope, agent_hash($plain), $createdBy]);
     return ['id' => (int)db()->lastInsertId(), 'label' => s($label, 80), 'scope' => $scope, 'token' => $plain];

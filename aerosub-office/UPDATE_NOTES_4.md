@@ -211,3 +211,5 @@ This update does not replace `index.html`, `sw.js`, `upgrade.php` or `api/lib/mi
 - **History:** you see everything between you and the people next to you in the approval chain. Everybody else only sees that it was passed from one person to the next, with no comments, send-backs or edits. The Root Admin sees everything.
 - **Requisition signatures are optional.** When asking for approval there is a tick box "Signatures are required". Untick it and each person just presses Approve. The document then shows "Approved by …" under each name.
 - **Comments fixed.** The message you write when asking for approval is now saved on the document and shown to the person it was sent to. There is a new Comments box on every document: a full text area, to everyone on the document or privately to one person, with replies, a notification and an optional email.
+
+- SEO tab restored (merged with this update): the SEO files are included again. Open /upgrade.php once; it ends with "SEO autopilot feed ready."

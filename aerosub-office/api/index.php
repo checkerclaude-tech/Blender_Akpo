@@ -13,15 +13,15 @@ $sub = $seg[2] ?? ($id === null ? ($seg[1] ?? null) : null);
 
 // Only 'agent' (the laptop) skips the office session check: it authenticates with its own token (agent_token.php).
 // agent-owner and agent-auth use the office session and this CSRF check like any other route.
-if ($method !== 'GET' && $method !== 'OPTIONS' && !($r === 'login' || $r === 'invite' || $r === 'agent' || $r === 'agent-personal' || $r === 'csp-report' || ($r === 'exec' && ($seg[1] ?? '') === 'ingest') || $r === 'forgot' || $r === 'reset')) { cfg(); check_csrf(); }
+if ($method !== 'GET' && $method !== 'OPTIONS' && !($r === 'login' || $r === 'invite' || $r === 'agent' || $r === 'agent-personal' || $r === 'seo-agent' || $r === 'csp-report' || ($r === 'exec' && ($seg[1] ?? '') === 'ingest') || $r === 'forgot' || $r === 'reset')) { cfg(); check_csrf(); }
 
 // Sections the Root Admin can switch off per person are refused here as well as hidden in the menu.
 $GATED = ['campaigns' => 'campaigns', 'mail' => 'mail', 'learn' => 'learn', 'courses' => 'learn', 'companies' => 'pipeline', 'contacts' => 'pipeline', 'pipeline' => 'pipeline', 'competitors' => 'competition', 'trade-events' => 'events',
-          'snapshot' => 'team', 'documents' => 'documents', 'reports' => 'reports', 'share' => 'reports', 'inbox-auto' => 'campaigns', 'prospecting' => 'campaigns', 'mail-test' => 'campaigns', 'myfiles' => 'myfiles'];
+          'snapshot' => 'team', 'documents' => 'documents', 'reports' => 'reports', 'share' => 'reports', 'inbox-auto' => 'campaigns', 'prospecting' => 'campaigns', 'mail-test' => 'campaigns', 'myfiles' => 'myfiles', 'seo' => 'campaigns'];
 if (isset($GATED[$r])) { $gu = me(); if ($gu && !tab_access($gu, $GATED[$r])) fail('You do not have access to this section', 403); }
 // "Read only" (set by the Root Admin): the person may open and use the tab (look, search, print, take a course, play) but every change is refused here.
 $WRITE_TAB = ['campaigns' => 'campaigns', 'mail' => 'mail', 'learn' => 'learn', 'courses' => 'learn', 'companies' => 'pipeline', 'contacts' => 'pipeline', 'pipeline' => 'pipeline', 'competitors' => 'competition', 'trade-events' => 'events', 'events' => 'schedule',
-              'finance' => 'finance', 'catalog' => 'products', 'news' => 'news', 'research' => 'research', 'projects' => 'projects', 'reports' => 'reports', 'myfiles' => 'myfiles', 'games' => 'games', 'snapshot' => 'team', 'documents' => 'documents', 'exec' => 'executive'];
+              'finance' => 'finance', 'catalog' => 'products', 'news' => 'news', 'research' => 'research', 'projects' => 'projects', 'reports' => 'reports', 'myfiles' => 'myfiles', 'games' => 'games', 'snapshot' => 'team', 'documents' => 'documents', 'exec' => 'executive', 'seo' => 'campaigns'];
 if ($method !== 'GET' && $method !== 'OPTIONS' && isset($WRITE_TAB[$r])) { $wu = me();
     if ($wu && tab_readonly($wu, $WRITE_TAB[$r])) {
         $use = ($r === 'courses' && in_array($seg[2] ?? '', ['start', 'attempts'], true)) || ($r === 'games' && ($seg[1] ?? '') !== 'settings') || ($r === 'reports' && ($seg[1] ?? '') === 'weekly-xlsx') || ($r === 'finance' && ($seg[1] ?? '') === 'signature') || ($r === 'finance' && ($seg[3] ?? '') === 'approval' && ($seg[4] ?? '') === 'act');
@@ -546,6 +546,12 @@ case 'myfiles':
 
 case 'reports':
     require __DIR__ . '/lib/reports.php';
+    break;
+
+// SEO autopilot feed (Campaigns): the office app on 'seo', the autopilot with its own token (scope 'seo') on 'seo-agent'.
+case 'seo':
+case 'seo-agent':
+    require __DIR__ . '/lib/seo.php';
     break;
 
 case 'invites':
