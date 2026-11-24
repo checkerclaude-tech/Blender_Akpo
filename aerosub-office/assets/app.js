@@ -37,8 +37,8 @@ async function api(path, { method = 'GET', data } = {}) {
   if (data !== undefined) opt.body = JSON.stringify(data);
   let r;
   try { r = await fetch('api/' + path, opt); }
-  catch {
-    S.offline = true; paintOffline();
+  catch (fe) {
+    S.offline = true; S.failed = { path, why: String((fe && fe.message) || fe || ''), online: navigator.onLine, at: new Date().toLocaleTimeString() }; paintOffline();
     if ((/^(mail|campaigns|competitors|trade-events|research|projects|finance|catalog|news|invites?)(\/|$)/.test(path) || /^tasks\/\d+\/(files|share|defer|updates|report)/.test(path)) && method !== 'GET') throw new Error('You are offline. Connect to the internet to do this.');
     if (method === 'GET') { const c = (path !== 'me' && !path.startsWith('invite') && !path.startsWith('mail/') && !path.startsWith('campaigns/')) ? ls.get(cacheKey(path)) : undefined; if (c !== undefined) return c; throw new Error('You are offline and this page has not been saved yet.'); }
     const q = ls.get('aq:' + (S.user ? S.user.id : 0), []); q.push({ path, method, data }); ls.set('aq:' + (S.user ? S.user.id : 0), q);
@@ -69,7 +69,8 @@ window.addEventListener('offline', () => { S.offline = true; paintOffline(); });
 
 /* ---------- ui helpers ---------- */
 function toast(msg) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 3200); }
-function paintOffline() { let b = $('#offbar'); if (S.offline && !b) { b = document.createElement('div'); b.id = 'offbar'; b.className = 'offline'; b.textContent = 'Offline — showing saved data. Changes will sync automatically.'; document.body.prepend(b); } else if (!S.offline && b) b.remove(); }
+function paintOffline() { let b = $('#offbar'); if (S.offline && !b) { b = document.createElement('div'); b.id = 'offbar'; b.className = 'offline'; document.body.prepend(b); b.style.cursor = 'pointer'; b.title = 'Click to try again'; b.onclick = async () => { try { const m = await api('me'); S.csrf = m.csrf; flushQueue(); render(); } catch {} }; }
+  if (S.offline && b) { const f = S.failed; b.textContent = (navigator.onLine === false || !f ? 'Offline — showing saved data. Changes will sync automatically.' : 'Could not reach the server for “' + f.path + '” (' + (f.why || 'no reply') + ', ' + f.at + '). Showing saved data. Click here to try again.'); } else if (!S.offline && b) b.remove(); }
 function modal(html, onMount) {
   const m = document.createElement('div'); m.className = 'scrim'; m.innerHTML = '<div class="modal" role="dialog" aria-modal="true">' + html + '</div>';
   const close = () => { m.remove(); if (location.hash.startsWith('#/tasks/')) history.replaceState(null, '', '#/tasks'); };
