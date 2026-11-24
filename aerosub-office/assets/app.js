@@ -66,6 +66,10 @@ async function flushQueue() {
 }
 window.addEventListener('online', async () => { try { const m = await api('me'); S.csrf = m.csrf; } catch {} flushQueue(); });
 window.addEventListener('offline', () => { S.offline = true; paintOffline(); });
+// A commercial is printed from a clean copy placed straight under <body>: inside the app's layout boxes the browser prints its table half as wide as the page.
+window.__prePrint = () => { const sh = document.querySelector('#view .fin-sheet.comm'); if (!sh || document.getElementById('printroot')) return; const p = document.createElement('div'); p.id = 'printroot'; p.appendChild(sh.cloneNode(true)); document.body.appendChild(p); document.documentElement.classList.add('printing'); };
+window.__postPrint = () => { const p = document.getElementById('printroot'); if (p) p.remove(); document.documentElement.classList.remove('printing'); };
+window.addEventListener('beforeprint', window.__prePrint); window.addEventListener('afterprint', window.__postPrint);
 
 /* ---------- ui helpers ---------- */
 function toast(msg) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 3200); }

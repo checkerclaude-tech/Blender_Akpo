@@ -34,7 +34,7 @@
 
 /* ---------- commercial ---------- */
 .fin-sheet.comm{width:297mm;background:#fff}
-.comm .cover{height:210mm;background:#001F5F;color:#fff;position:relative;overflow:hidden;page-break-after:always;break-after:page}
+.comm .cover{height:209.5mm;background:#001F5F;color:#fff;position:relative;overflow:hidden;page-break-after:always;break-after:page}
 .comm .cv-band{position:absolute;left:0;top:67mm;width:122mm;height:31mm;background:#fff;display:flex;align-items:center;padding-left:24mm}.comm .cv-band img{height:15mm}
 .comm .cv-text{position:absolute;left:135mm;top:68mm;right:20mm}.comm .cv-k{font:700 21px Poppins,Arial;letter-spacing:.06em}.comm .cv-sub{font-size:13px;margin-top:6px;opacity:.95}.comm .cv-ref{font-size:11px;margin-top:10px;opacity:.8}
 .comm .cv-for{position:absolute;left:26mm;top:135mm;font-size:13px}
@@ -59,15 +59,21 @@
 @page{size:A4 portrait;margin:0}
 @page comm{size:A4 landscape;margin:0}
 @page wr{size:A4 landscape;margin:8mm}
+#printroot{display:none}
+@page commcover{size:A4 landscape;margin:0}
+@page commtbl{size:A4 landscape;margin:12mm 0 14mm 0;@bottom-left{content:"aerosub.co";font:10px Arial,sans-serif;color:#0A5EB0;margin-left:16mm}}
+.comm .tbl{width:297mm;box-sizing:border-box}.comm .cm-web{font:10px Arial;color:#0A5EB0;padding-top:4mm}
 @media print{
   #app{display:block!important;min-height:0!important}.main{max-width:none!important;width:auto!important;padding:0!important}
   .noprint{display:none!important}
   .fin-sheet,.fin-sheet *,.wr-sheet,.wr-sheet *,.print-ok,.print-ok *{visibility:visible}
   html,body{background:#fff!important}
-  body:has(.fin-sheet.comm){page:comm}
-  .fin-sheet{box-shadow:none;margin:0}
+    .fin-sheet{box-shadow:none;margin:0}
   .fin-sheet.inv{break-after:page;page-break-after:always}.fin-sheet.inv:last-of-type{break-after:auto;page-break-after:auto}
-  .comm .tbl{padding:0 16mm}
+  html.printing #root{display:none!important}html.printing #printroot{display:block}
+  .comm .cover{page:commcover}
+  .comm .tbl{page:commtbl;padding:0 16mm;width:auto}   /* the table fills the page from side to side and runs on to further pages when it is long */
+  .comm-t{width:265mm}.comm-t thead{display:table-header-group}.comm-t tr{break-inside:avoid}.comm .cm-web{display:none}
   .inv-sign,.inv-bank{break-inside:avoid}
 }
 

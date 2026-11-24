@@ -213,3 +213,5 @@ This update does not replace `index.html`, `sw.js`, `upgrade.php` or `api/lib/mi
 - **Comments fixed.** The message you write when asking for approval is now saved on the document and shown to the person it was sent to. There is a new Comments box on every document: a full text area, to everyone on the document or privately to one person, with replies, a notification and an optional email.
 
 - SEO tab restored (merged with this update): the SEO files are included again. Open /upgrade.php once; it ends with "SEO autopilot feed ready."
+
+- Commercial printing: the table now fills the A4 landscape page from side to side and continues on further pages when it is long (header row repeated, aerosub.co at the foot of each page). A blank page after the cover is gone. Use Print / Download PDF, or Ctrl+P.
