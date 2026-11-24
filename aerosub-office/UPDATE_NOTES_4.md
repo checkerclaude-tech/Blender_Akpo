@@ -201,3 +201,13 @@ After copying the files, open `/upgrade.php` as Super Admin once (adds the new c
 - Requisitions use the previous layout again (logo header, request details table, items, three signature boxes), now with the **requisition code (REQ-Year-Month-N)** under the title and a **footer** (address and "Better Data. Better Insights. Better Decisions." band).
 
 - Requisition numbers are now REQ-YEAR-MONTH-SN with a 3-digit serial, e.g. REQ-2026-11-001. This needs api/lib/finance.php from this zip (the zip holds every file changed in the last two rounds, so extract all of it).
+
+## Commercials, products and services, history, comments (this update)
+**Open `/upgrade.php` once after copying the files** (adds the product / service type, optional signatures and the comments table).
+- **Product, service or both.** Every line on an invoice, proforma, requisition or commercial is a Product or a Service. A selector at the top of the form ("This document is for") sets all lines at once; each line can still be changed, and the document then counts as "Products and services together". The Finance list has filters (All kinds, Services, Products, Products & services) and a badge on each row; the printed document says what it covers.
+- **Commercial template** now follows `Commercial_Template__Service.xlsx`: sections A, B, C…, an "Estimated N-Day Total" for day-rate sections, "Sub Total" for fixed ones, the estimated total for the scope window, then Standby (as incurred) and Optional lines, then TOTAL.
+- **Export to Excel** on every document (button at the top). The commercial opens in the same layout with working formulas, so you can edit and recalculate it. **Download PDF** (same button as Print) saves the finished document as a PDF.
+- **Client and company:** click the client box and the companies used most recently appear; type to search; pick one and its details fill in (all still editable); or just type a new name, which is saved for next time.
+- **History:** you see everything between you and the people next to you in the approval chain. Everybody else only sees that it was passed from one person to the next, with no comments, send-backs or edits. The Root Admin sees everything.
+- **Requisition signatures are optional.** When asking for approval there is a tick box "Signatures are required". Untick it and each person just presses Approve. The document then shows "Approved by …" under each name.
+- **Comments fixed.** The message you write when asking for approval is now saved on the document and shown to the person it was sent to. There is a new Comments box on every document: a full text area, to everyone on the document or privately to one person, with replies, a notification and an optional email.

@@ -58,10 +58,21 @@ function ap_tell(int $to, array $actor, string $type, string $title, string $bod
 /** The chain as the page needs it. */
 function ap_out(array $a, int $viewer): array {
     $steps = ap_steps((int)$a['id']); $next = $a['status'] === 'in_review' || $a['status'] === 'awaiting_sign' ? ap_next_pending($steps) : null; $o = []; $hd = []; foreach (all('SELECT name,head_id FROM departments WHERE head_id IS NOT NULL') as $dd) $hd[(int)$dd['head_id']][] = $dd['name'];
-    foreach ($steps as $s) $o[] = ['id' => (int)$s['id'], 'position' => (int)$s['position'], 'kind' => $s['kind'], 'status' => $s['status'], 'user_id' => (int)$s['user_id'], 'name' => $s['name'], 'title' => isset($hd[(int)$s['user_id']]) ? 'Head of ' . implode(', ', $hd[(int)$s['user_id']]) : ($s['job_title'] ?: ap_role_label($s)), 'acted_at' => $s['acted_at'], 'comment' => $s['comment'],
+    $creator = (int)$a['created_by']; $rootV = (bool)(one('SELECT is_root FROM users WHERE id=?', [$viewer])['is_root'] ?? 0);
+    // Who an action was handed to: the next person in the chain, or the author when it reaches the end or is sent back. A person sees the detail of
+    // what they did and of what was handed to them; everybody else only sees that it went from one person to the next.
+    $recv = function (int $actor, string $action) use ($steps, $creator): int { if ($action === 'requested') return $steps ? (int)$steps[0]['user_id'] : 0;
+        if (in_array($action, ['reverted', 'unsigned', 'edited', 'canceled'], true)) return $creator; $idx = -1; foreach ($steps as $k => $s) if ((int)$s['user_id'] === $actor) { $idx = $k; break; }
+        return $idx >= 0 && isset($steps[$idx + 1]) ? (int)$steps[$idx + 1]['user_id'] : $creator; };
+    $seeStep = function (array $s) use ($recv, $viewer, $rootV): bool { if ($rootV || (int)$s['user_id'] === $viewer) return true; $act = $s['status'] === 'reverted' ? 'reverted' : 'signed'; return $recv((int)$s['user_id'], $act) === $viewer; };
+    foreach ($steps as $s) $o[] = ['id' => (int)$s['id'], 'position' => (int)$s['position'], 'kind' => $s['kind'], 'status' => $s['status'], 'user_id' => (int)$s['user_id'], 'name' => $s['name'], 'title' => isset($hd[(int)$s['user_id']]) ? 'Head of ' . implode(', ', $hd[(int)$s['user_id']]) : ($s['job_title'] ?: ap_role_label($s)), 'acted_at' => $s['acted_at'], 'comment' => $seeStep($s) ? $s['comment'] : null, 'comment_hidden' => !empty($s['comment']) && !$seeStep($s),
         'signature' => $s['status'] === 'signed' ? $s['signature'] : null, 'fingerprint' => $s['status'] === 'signed' ? substr((string)$s['sig_hash'], 0, 16) : null, 'current' => $next && (int)$next['id'] === (int)$s['id']];
-    $ev = all('SELECT e.action,e.comment,e.created_at,u.name FROM doc_approval_events e LEFT JOIN users u ON u.id=e.user_id WHERE e.approval_id=? ORDER BY e.id', [$a['id']]);
-    return ['id' => (int)$a['id'], 'status' => $a['status'], 'created_by' => (int)$a['created_by'], 'requester' => one('SELECT name FROM users WHERE id=?', [$a['created_by']])['name'] ?? '', 'created_at' => $a['created_at'], 'closed_at' => $a['closed_at'], 'fingerprint' => substr((string)$a['content_hash'], 0, 16),
+    $ev = []; $transfer = ['requested', 'review_approved', 'signed', 'approved'];
+    foreach (all('SELECT e.action,e.comment,e.created_at,e.user_id,u.name FROM doc_approval_events e LEFT JOIN users u ON u.id=e.user_id WHERE e.approval_id=? ORDER BY e.id', [$a['id']]) as $e) { $actor = (int)$e['user_id']; $to = $recv($actor, (string)$e['action']); $mine = $rootV || $actor === $viewer || $to === $viewer;
+        if ($e['action'] === 'signature_requested' && !$mine) continue;   // the same hand-over is already shown by the approval before it
+        if (!$mine && !in_array($e['action'], $transfer, true)) continue;   // other people's edits, send-backs and withdrawals stay between them
+        $ev[] = ['action' => $e['action'], 'name' => $e['name'], 'to' => $to ? (one('SELECT name FROM users WHERE id=?', [$to])['name'] ?? '') : '', 'comment' => $mine ? $e['comment'] : null, 'created_at' => $e['created_at'], 'detail' => $mine]; }
+    return ['id' => (int)$a['id'], 'status' => $a['status'], 'require_sig' => (int)($a['require_sig'] ?? 1) === 1, 'created_by' => (int)$a['created_by'], 'requester' => one('SELECT name FROM users WHERE id=?', [$a['created_by']])['name'] ?? '', 'created_at' => $a['created_at'], 'closed_at' => $a['closed_at'], 'fingerprint' => substr((string)$a['content_hash'], 0, 16),
         'steps' => $o, 'turn_user_id' => $next ? (int)$next['user_id'] : null, 'my_turn' => $next && (int)$next['user_id'] === $viewer ? ['step_id' => (int)$next['id'], 'kind' => $next['kind'], 'next_is_sign' => (function () use ($steps, $next) { foreach ($steps as $s) if ((int)$s['position'] > (int)$next['position'] && $s['status'] === 'pending') return $s['kind'] === 'sign'; return false; })()] : null, 'events' => $ev];
 }
 /** Everything the document page needs about approvals (or null when the person has nothing to do with it). */
@@ -96,11 +107,12 @@ function ap_request(array $u, array $d, array $b): array {
         if (!isset($el[$to])) fail($isReq ? 'Choose a person for every step' : 'Choose people who can review and sign (administrators, the Founder, managers and heads of department)'); if ($to === $uid && !$isReq) fail('You cannot approve your own request. Choose someone else.'); if (isset($seen[$to])) fail($el[$to]['name'] . ' is in the chain twice');
         if ($isReq) $kind = 'sign'; if ($kind === 'review' && $sawSign) fail('Reviews come first, then signatures'); if ($kind === 'sign') $sawSign = true; $seen[$to] = 1; $steps[] = [$kind, $to]; }
     if (!$sawSign) fail('Add at least one person to sign');
-    $hash = ap_hash($d); $first = $steps[0][0] === 'sign' ? 'awaiting_sign' : 'in_review';
-    q('INSERT INTO doc_approvals (doc_id,status,created_by,content_hash) VALUES (?,?,?,?)', [$d['id'], $first, $uid, $hash]); $aid = (int)db()->lastInsertId();
+    $hash = ap_hash($d); $first = $steps[0][0] === 'sign' ? 'awaiting_sign' : 'in_review'; $reqSig = $isReq && array_key_exists('require_sig', $b) ? (!empty($b['require_sig']) ? 1 : 0) : 1;   // only a requisition may be approved without a signature
+    q('INSERT INTO doc_approvals (doc_id,status,created_by,content_hash,require_sig) VALUES (?,?,?,?,?)', [$d['id'], $first, $uid, $hash, $reqSig]); $aid = (int)db()->lastInsertId();
     foreach ($steps as $i => [$kind, $to]) q('INSERT INTO doc_approval_steps (approval_id,position,kind,user_id) VALUES (?,?,?,?)', [$aid, $i + 1, $kind, $to]);
     q('UPDATE fin_docs SET approval_status=?, approval_id=?, signed_at=NULL WHERE id=?', [$first, $aid, $d['id']]); ap_event($aid, $uid, 'requested', implode(' > ', array_map(fn($s) => ($s[0] === 'sign' ? 'sign: ' : 'review: ') . $el[$s[1]]['name'], $steps)));
-    [$k0, $to0] = $steps[0]; ap_tell($to0, $u, $k0 === 'sign' ? 'approval_sign' : 'approval_review', ($k0 === 'sign' ? 'Signature requested' : 'Review requested') . ' by ' . $u['name'], (AP_TYPES[$d['doc_type']]) . ' ' . $d['number'] . ' · ' . $d['client_name'], $d, true, (string)($b['note'] ?? ''));
+    [$k0, $to0] = $steps[0]; $note = trim((string)($b['note'] ?? '')); if ($note !== '') q('INSERT INTO fin_comments (doc_id,user_id,to_user_id,body) VALUES (?,?,?,?)', [$d['id'], $uid, $to0, mb_substr($note, 0, 4000)]);
+    ap_tell($to0, $u, $k0 === 'sign' ? 'approval_sign' : 'approval_review', ($k0 === 'sign' ? ($reqSig ? 'Signature requested' : 'Approval requested') : 'Review requested') . ' by ' . $u['name'], (AP_TYPES[$d['doc_type']]) . ' ' . $d['number'] . ' · ' . $d['client_name'], $d, true, (string)($b['note'] ?? ''));
     log_act($uid, 'approval_requested', $d['number']); return ['ok' => true, 'approval' => ap_out(ap_current((int)$d['id']), $uid)];
 }
 /** The signee takes their own signature back (any time, even after everything was signed). They choose whether the others are told. */
@@ -161,8 +173,16 @@ function ap_act(array $u, array $d, array $b): array {
         if ($nx) ap_tell((int)$nx['user_id'], $u, $nx['kind'] === 'sign' ? 'approval_sign' : 'approval_review', ($nx['kind'] === 'sign' ? 'Signature requested' : 'Review requested') . ' (reviewed by ' . $u['name'] . ')', (AP_TYPES[$d['doc_type']]) . ' ' . $d['number'] . ' · ' . $d['client_name'], $d, true, $comment);
         if ((int)$a['created_by'] !== $uid) ap_tell((int)$a['created_by'], $u, 'approval_progress', $u['name'] . ' approved the review of ' . $d['number'], $nx ? ($nx['kind'] === 'sign' ? 'Now waiting for a signature' : 'Next: review') : '', $d);
         log_act($uid, 'approval_reviewed', $d['number']); return ['ok' => true, 'status' => $nx && $nx['kind'] === 'sign' ? 'awaiting_sign' : 'in_review']; }
-    // signing
-    if ($action !== 'sign') fail('Sign the document, or revert it');
+    // signing (or, when the author turned signatures off for a requisition, approving)
+    $noSig = (int)($a['require_sig'] ?? 1) === 0;
+    if ($noSig && $action === 'approve') {
+        $now = date('Y-m-d H:i:s'); q("UPDATE doc_approval_steps SET status='approved', acted_at=?, comment=? WHERE id=?", [$now, $comment !== '' ? $comment : null, $cur['id']]); ap_event($aid, $uid, 'approved', $comment);
+        if (!$rest) { q("UPDATE doc_approvals SET status='signed', closed_at=NOW() WHERE id=?", [$aid]); q("UPDATE fin_docs SET approval_status='signed', signed_at=NOW() WHERE id=?", [$d['id']]);
+            foreach (array_unique(array_merge([(int)$a['created_by']], array_map(fn($s) => (int)$s['user_id'], $steps))) as $w) if ($w !== $uid) ap_tell($w, $u, 'approval_signed', $d['number'] . ' is approved', 'Approved by ' . $u['name'] . '. The approval is complete.', $d, $w === (int)$a['created_by']);
+            log_act($uid, 'document_approved', $d['number']); return ['ok' => true, 'status' => 'signed']; }
+        $nx = $rest[0]; ap_tell((int)$nx['user_id'], $u, 'approval_sign', 'Approval requested (approved so far by ' . $u['name'] . ')', (AP_TYPES[$d['doc_type']]) . ' ' . $d['number'] . ' · ' . $d['client_name'], $d, true, $comment);
+        log_act($uid, 'document_approved', $d['number']); return ['ok' => true, 'status' => 'awaiting_sign']; }
+    if ($action !== 'sign') fail($noSig ? 'Approve the requisition, or revert it' : 'Sign the document, or revert it');
     $sg = (array)($b['signature'] ?? []); $mode = ($sg['mode'] ?? 'saved') === 'new' ? 'new' : 'saved'; $img = null;
     if ($mode === 'saved') { $r = one('SELECT image FROM user_signatures WHERE user_id=?', [$uid]); if (!$r) fail('Draw or type your signature first'); $img = $r['image']; }
     else { $img = ap_png($sg['image'] ?? ''); if (!empty($sg['save'])) q('INSERT INTO user_signatures (user_id,image) VALUES (?,?) ON DUPLICATE KEY UPDATE image=VALUES(image), updated_at=NOW()', [$uid, $img]); }

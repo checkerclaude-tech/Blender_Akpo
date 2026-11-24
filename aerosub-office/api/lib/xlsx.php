@@ -14,19 +14,20 @@ function xlsx_esc(string $v): string { return htmlspecialchars(preg_replace('/[\
 
 function xlsx_write(array $sheet): string {
     xlsx_need_zip();
-    $fonts = []; $fills = ['<fill><patternFill patternType="none"/></fill>', '<fill><patternFill patternType="gray125"/></fill>']; $borders = ['<border><left/><right/><top/><bottom/><diagonal/></border>']; $xfs = ['<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'];
+    $fonts = []; $fills = ['<fill><patternFill patternType="none"/></fill>', '<fill><patternFill patternType="gray125"/></fill>']; $borders = ['<border><left/><right/><top/><bottom/><diagonal/></border>']; $xfs = ['<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>']; $numFmts = [];
     $fontIdx = []; $fillIdx = []; $borderIdx = []; $xfIdx = [];
     $mkFont = function (array $st) use (&$fonts, &$fontIdx): int {
         $x = '<font>' . (!empty($st['b']) ? '<b/>' : '') . (!empty($st['i']) ? '<i/>' : '') . '<sz val="' . ($st['sz'] ?? 11) . '"/><color rgb="FF' . ($st['color'] ?? '000000') . '"/><name val="' . xlsx_esc($st['font'] ?? 'Poppins') . '"/><family val="2"/></font>';
         return $fontIdx[$x] ??= (function () use (&$fonts, $x) { $fonts[] = $x; return count($fonts) - 1; })();
     };
-    $style = function (array $st) use (&$fills, &$borders, &$xfs, &$fillIdx, &$borderIdx, &$xfIdx, $mkFont): int {
+    $style = function (array $st) use (&$fills, &$borders, &$xfs, &$fillIdx, &$borderIdx, &$xfIdx, &$numFmts, $mkFont): int {
         $key = json_encode($st); if (isset($xfIdx[$key])) return $xfIdx[$key];
         $f = $mkFont($st); $fi = 0; $bi = 0;
         if (!empty($st['fill'])) { $x = '<fill><patternFill patternType="solid"><fgColor rgb="FF' . $st['fill'] . '"/><bgColor indexed="64"/></patternFill></fill>'; $fi = $fillIdx[$x] ??= (function () use (&$fills, $x) { $fills[] = $x; return count($fills) - 1; })(); }
         if (!empty($st['border'])) { $b = $st['border']; $side = fn($n) => "<$n style=\"$b\"><color rgb=\"FF000000\"/></$n>"; $x = '<border>' . $side('left') . $side('right') . $side('top') . $side('bottom') . '<diagonal/></border>'; $bi = $borderIdx[$x] ??= (function () use (&$borders, $x) { $borders[] = $x; return count($borders) - 1; })(); }
         $al = '<alignment' . (!empty($st['h']) ? ' horizontal="' . $st['h'] . '"' : '') . ' vertical="' . ($st['v'] ?? 'center') . '"' . (!empty($st['wrap']) ? ' wrapText="1"' : '') . '/>';
-        $xfs[] = "<xf numFmtId=\"0\" fontId=\"$f\" fillId=\"$fi\" borderId=\"$bi\" xfId=\"0\" applyFont=\"1\" applyFill=\"1\" applyBorder=\"1\" applyAlignment=\"1\">$al</xf>";
+        $nf = 0; if (!empty($st['fmt'])) { $k = array_search($st['fmt'], $numFmts, true); if ($k === false) { $numFmts[] = $st['fmt']; $k = count($numFmts) - 1; } $nf = 164 + $k; }
+        $xfs[] = "<xf numFmtId=\"$nf\" fontId=\"$f\" fillId=\"$fi\" borderId=\"$bi\" xfId=\"0\" applyFont=\"1\" applyFill=\"1\" applyBorder=\"1\" applyAlignment=\"1\"" . ($nf ? ' applyNumberFormat="1"' : '') . ">$al</xf>";
         return $xfIdx[$key] = count($xfs) - 1;
     };
     $mkFont([]); // font 0 is the default
@@ -35,7 +36,8 @@ function xlsx_write(array $sheet): string {
         $cells = $row['cells'] ?? []; ksort($cells); $cx = '';
         foreach ($cells as $cn => $c) {
             $ref = xlsx_col((int)$cn) . $rn; $s = $style($c['s'] ?? []); $v = $c['v'] ?? null;
-            if ($v === null || $v === '') $cx .= "<c r=\"$ref\" s=\"$s\"/>";
+            if (!empty($c['f'])) $cx .= "<c r=\"$ref\" s=\"$s\"><f>" . xlsx_esc(ltrim((string)$c['f'], '=')) . '</f>' . (is_int($v) || is_float($v) ? "<v>$v</v>" : '') . '</c>';
+            elseif ($v === null || $v === '') $cx .= "<c r=\"$ref\" s=\"$s\"/>";
             elseif (is_int($v) || is_float($v)) $cx .= "<c r=\"$ref\" s=\"$s\"><v>$v</v></c>";
             else $cx .= "<c r=\"$ref\" s=\"$s\" t=\"inlineStr\"><is><t xml:space=\"preserve\">" . xlsx_esc((string)$v) . '</t></is></c>';
         }
@@ -47,7 +49,7 @@ function xlsx_write(array $sheet): string {
     $ns = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
     $sheetXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet ' . $ns . '><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><sheetViews><sheetView showGridLines="0" workbookViewId="0"/></sheetViews><sheetFormatPr defaultRowHeight="15"/>' .
         ($cols ? "<cols>$cols</cols>" : '') . "<sheetData>$rowsXml</sheetData>$merges<pageMargins left=\"0.4\" right=\"0.4\" top=\"0.5\" bottom=\"0.5\" header=\"0.3\" footer=\"0.3\"/><pageSetup paperSize=\"9\" orientation=\"" . (!empty($sheet['landscape']) ? 'landscape' : 'portrait') . "\" fitToWidth=\"1\" fitToHeight=\"0\"/>" . ($img ? '<drawing r:id="rId1"/>' : '') . '</worksheet>';
-    $stylesXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="' . count($fonts) . '">' . implode('', $fonts) . '</fonts><fills count="' . count($fills) . '">' . implode('', $fills) . '</fills><borders count="' . count($borders) . '">' . implode('', $borders) . '</borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="' . count($xfs) . '">' . implode('', $xfs) . '</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+    $stylesXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' . ($numFmts ? '<numFmts count="' . count($numFmts) . '">' . implode('', array_map(fn($f, $k) => '<numFmt numFmtId="' . (164 + $k) . '" formatCode="' . xlsx_esc($f) . '"/>', $numFmts, array_keys($numFmts))) . '</numFmts>' : '') . '<fonts count="' . count($fonts) . '">' . implode('', $fonts) . '</fonts><fills count="' . count($fills) . '">' . implode('', $fills) . '</fills><borders count="' . count($borders) . '">' . implode('', $borders) . '</borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="' . count($xfs) . '">' . implode('', $xfs) . '</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
     $name = xlsx_esc(mb_substr(preg_replace('/[\\\\\/?*\[\]:]/', ' ', (string)($sheet['name'] ?? 'Sheet1')), 0, 31));
     $tmp = tempnam(sys_get_temp_dir(), 'xl'); $z = new ZipArchive(); if ($z->open($tmp, ZipArchive::OVERWRITE) !== true) throw new RuntimeException('Could not create the Excel file.');
     $z->addFromString('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' . ($img ? '<Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>' : '') . '</Types>');

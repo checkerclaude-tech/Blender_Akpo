@@ -19,6 +19,8 @@
       box.querySelectorAll('.mn-o').forEach(n => n.onclick = () => pick(+n.dataset.i));
     };
     const pick = i => { const o = items[i]; close(); if (o) onPick(o); };
+    const ask = async q => { const my = ++seq; try { const r = await api('finance/suggest?kind=' + kind + '&q=' + encodeURIComponent(q)); if (my !== seq) return; items = r.items || []; sel = 0; items.length ? draw() : close(); } catch { close(); } };
+    if (kind === 'client') input.addEventListener('focus', () => { if (!input.value.trim()) ask(''); });   // an empty box offers the companies used most recently
     input.addEventListener('input', () => { clearTimeout(tm); const q = input.value.trim(); if (!q) return close(); tm = setTimeout(async () => { const my = ++seq; try { const r = await api('finance/suggest?kind=' + kind + '&q=' + encodeURIComponent(q)); if (my !== seq) return; items = r.items || []; sel = 0; items.length ? draw() : close(); } catch { close(); } }, 150); });
     input.addEventListener('keydown', e => { if (!box) return; if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); return close(); } if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); sel = (sel + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length; draw(); } else if (e.key === 'Enter' || e.key === 'Tab') { if (e.key === 'Enter') e.preventDefault(); pick(sel); } });
     input.addEventListener('blur', () => setTimeout(close, 160));
