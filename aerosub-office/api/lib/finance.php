@@ -320,6 +320,33 @@ if ($seg[0] === 'catalog') {
 /* =============== NEWS BANNERS =============== */
 if ($seg[0] === 'news') {
     $mine = array_map('intval', $u['department_ids'] ?? []); $id = isset($seg[1]) && ctype_digit($seg[1]) ? (int)$seg[1] : 0; $isAdm = $role === 'super_admin'; $canPost = $isAdm || $role === 'manager';
+    if (in_array($seg[1] ?? '', ['feeds', 'feed-items'], true)) {   // outside RSS / Atom feeds
+        require_once __DIR__ . '/newsfeeds.php'; nf_ensure(); $fid = isset($seg[2]) && ctype_digit($seg[2]) ? (int)$seg[2] : 0; $dl = in_array($role, ['super_admin', 'founder'], true) ? '1=1' : ($mine ? '(f.department_id IS NULL OR f.department_id IN (' . implode(',', $mine) . '))' : 'f.department_id IS NULL');
+        if ($seg[1] === 'feed-items') {
+            if ($method === 'GET') { try { if ((int)(one('SELECT COUNT(*) n FROM news_feeds WHERE active=1 AND (last_fetch IS NULL OR last_fetch < (NOW() - INTERVAL every_min MINUTE))')['n'] ?? 0)) nf_run_due(2); } catch (Throwable $e) {}   // hosts without cron still stay fresh
+                out(array_map(fn($r) => ['id' => (int)$r['id'], 'title' => $r['title'], 'summary' => $r['summary'], 'link' => $r['link'], 'published_at' => $r['published_at'], 'matched' => $r['matched'], 'source' => $r['source'], 'feed_id' => (int)$r['feed_id']], all("SELECT i.*, f.name AS source FROM news_items i JOIN news_feeds f ON f.id=i.feed_id WHERE f.active=1 AND ($dl) ORDER BY i.published_at DESC, i.id DESC LIMIT 40"))); }
+            if ($method === 'DELETE' && $fid) { if (!$canPost) fail('Not allowed', 403); q('DELETE FROM news_items WHERE id=?', [$fid]); out(['ok' => true]); }
+            fail('Not found', 404);
+        }
+        if (!$canPost) fail('Only managers and admins can manage feeds', 403);
+        $own = $isAdm ? '1=1' : 'f.created_by=' . $uid . ($mine ? ' OR f.department_id IN (' . implode(',', $mine) . ')' : '');
+        $fmt = function (array $r): array { return ['id' => (int)$r['id'], 'name' => $r['name'], 'url' => $r['url'], 'keywords' => $r['keywords'], 'exclude_words' => $r['exclude_words'], 'department_id' => $r['department_id'] ? (int)$r['department_id'] : null, 'department' => $r['department'] ?? null, 'max_items' => (int)$r['max_items'], 'keep_days' => (int)$r['keep_days'], 'every_min' => (int)$r['every_min'], 'active' => (int)$r['active'], 'last_fetch' => $r['last_fetch'], 'last_error' => $r['last_error'], 'last_added' => (int)$r['last_added'], 'items' => (int)($r['items'] ?? 0)]; };
+        if ($method === 'GET' && !$fid) out(array_map($fmt, all("SELECT f.*, d.name AS department, (SELECT COUNT(*) FROM news_items i WHERE i.feed_id=f.id) AS items FROM news_feeds f LEFT JOIN departments d ON d.id=f.department_id WHERE $own ORDER BY f.name LIMIT 100")));
+        if ($method === 'POST' && ($seg[2] ?? '') === 'test') { $url = fx_s($b['url'] ?? '', 500); if (!$url) fail('Paste the feed address'); if ($e = nf_url_check($url)) fail($e); $r = nf_preview($url, (string)($b['keywords'] ?? ''), (string)($b['exclude_words'] ?? '')); if (isset($r['error'])) fail($r['error']); out($r); }
+        $clean = function (array $b, ?array $o) use ($isAdm, $mine): array {
+            $url = fx_s($b['url'] ?? ($o['url'] ?? ''), 500); if (!$url) fail('Paste the feed address'); if ($e = nf_url_check($url)) fail($e); $dept = array_key_exists('department_id', $b) ? ((int)$b['department_id'] ?: null) : ($o['department_id'] ?? null);
+            if (!$isAdm && (!$dept || !in_array((int)$dept, $mine, true))) fail('Managers can add feeds for their own departments; company-wide feeds are for Super Admins', 403); if ($dept && !one('SELECT id FROM departments WHERE id=?', [$dept])) $dept = null;
+            $kw = implode(', ', nf_terms($b['keywords'] ?? ($o['keywords'] ?? ''))); $ex = implode(', ', nf_terms($b['exclude_words'] ?? ($o['exclude_words'] ?? '')));
+            $name = fx_s($b['name'] ?? ($o['name'] ?? ''), 160) ?: (parse_url($url, PHP_URL_HOST) ?: 'Feed');
+            return [$name, $url, $kw !== '' ? $kw : null, $ex !== '' ? $ex : null, $dept, max(1, min(50, (int)($b['max_items'] ?? ($o['max_items'] ?? 12)))), max(1, min(60, (int)($b['keep_days'] ?? ($o['keep_days'] ?? 7)))), max(15, min(1440, (int)($b['every_min'] ?? ($o['every_min'] ?? 60)))), (int)(bool)($b['active'] ?? ($o['active'] ?? 1))]; };
+        if ($method === 'POST' && !$fid) { $v = $clean($b, null); q('INSERT INTO news_feeds (name,url,keywords,exclude_words,department_id,max_items,keep_days,every_min,active,created_by) VALUES (?,?,?,?,?,?,?,?,?,?)', array_merge($v, [$uid])); $nid = (int)db()->lastInsertId(); $f = one('SELECT * FROM news_feeds WHERE id=?', [$nid]); [$a, $e] = nf_refresh($f); out(['id' => $nid, 'added' => $a, 'error' => $e ?: null], 201); }
+        $o = $fid ? one("SELECT f.* FROM news_feeds f WHERE f.id=? AND ($own)", [$fid]) : null; if (!$o) fail('Not found', 404);
+        if ($method === 'PATCH') { q('UPDATE news_feeds SET name=?,url=?,keywords=?,exclude_words=?,department_id=?,max_items=?,keep_days=?,every_min=?,active=? WHERE id=?', array_merge($clean($b, $o), [$fid])); $f = one('SELECT * FROM news_feeds WHERE id=?', [$fid]);
+            q('DELETE FROM news_items WHERE feed_id=?', [$fid]); [$a, $e] = $f['active'] ? nf_refresh($f) : [0, '']; out(['ok' => true, 'added' => $a, 'error' => $e ?: null]); }   // new keywords: start the list afresh
+        if ($method === 'POST' && ($seg[3] ?? '') === 'refresh') { [$a, $e] = nf_refresh($o); out(['added' => $a, 'error' => $e ?: null]); }
+        if ($method === 'DELETE') { q('DELETE FROM news_items WHERE feed_id=?', [$fid]); q('DELETE FROM news_feeds WHERE id=?', [$fid]); out(['ok' => true]); }
+        fail('Not found', 404);
+    }
     if ($method === 'GET' && ($seg[1] ?? '') === 'manage') { if (!$canPost) fail('Not allowed', 403); $w = $isAdm ? '1=1' : 'b.created_by=' . $uid . ($mine ? ' OR b.department_id IN (' . implode(',', $mine) . ')' : '');
         out(all("SELECT b.*, d.name AS department, u.name AS author FROM banners b LEFT JOIN departments d ON d.id=b.department_id LEFT JOIN users u ON u.id=b.created_by WHERE $w ORDER BY b.id DESC LIMIT 100")); }
     if ($method === 'GET' && !$id) { $dl = $mine ? 'b.department_id IS NULL OR b.department_id IN (' . implode(',', $mine) . ')' : 'b.department_id IS NULL'; if (in_array($role, ['super_admin', 'founder'], true)) $dl = '1=1';

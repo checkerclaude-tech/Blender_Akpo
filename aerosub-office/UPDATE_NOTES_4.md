@@ -240,3 +240,11 @@ This update does not replace `index.html`, `sw.js`, `upgrade.php` or `api/lib/mi
 - **Share a letter:** by email (the .docx attached; from your own mailbox or the Aerosub office sender) or onto a task (attached to the task with a note; the people on the task are notified).
 - **My Documents > Share:** each item has a Share button. Share with colleagues (they are notified, see it under "Shared with me", and you can stop sharing at any time) or email it as an attachment. Nothing else in My Documents becomes visible; administrators still cannot open anyone's documents.
 - Upgrade: open /upgrade.php once (adds fin_letterheads, fin_letters, vault_shares; it also runs by itself the first time Finance is opened).
+
+## News feeds (outside RSS / Atom)
+- **News > News feeds** (managers and admins): press "+ Add a feed", paste the RSS/Atom address, press **Check** to see which stories match, then Save.
+- **Keywords:** only stories whose headline or summary mention one of your words are kept (commas; empty = everything). "Skip stories that mention" removes unwanted ones. Changing the words restarts that feed's list.
+- **It keeps changing, it does not pile up:** each feed keeps only its newest N stories (5-30), drops stories older than your chosen days (1 day to 1 month), and checks for new ones every 30 minutes to once a day. A rotating headline above every page cycles through the latest stories.
+- **Who sees it:** everyone, or one department (managers can add feeds for their own departments). Anyone can hide a story for themselves; managers can delete one.
+- **Safety:** only public http(s) addresses are read (never anything inside our own network), size and time are capped, and the story text is stripped of markup.
+- **Cron:** cron.php reads feeds that are due (the same cPanel cron as before). Without cron, opening News keeps them fresh. Upgrade: open /upgrade.php once (adds news_feeds and news_items; it also runs by itself on first use).
