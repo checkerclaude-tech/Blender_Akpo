@@ -1,0 +1,49 @@
+/* Letters (Word documents on letterheads), sharing */
+.nd-menu{position:absolute;z-index:60;min-width:250px;background:var(--card,#fff);color:inherit;border:1px solid var(--line,#dfe3ea);border-radius:12px;box-shadow:0 12px 32px rgba(10,30,60,.18);padding:6px}
+.nd-menu button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:none;border:0;color:inherit;font:inherit;padding:9px 10px;border-radius:8px;cursor:pointer}
+.nd-menu button:hover,.nd-menu button:focus-visible{background:rgba(10,94,176,.09);outline:none}
+.nd-menu .ic{width:26px;height:26px;border-radius:7px;background:rgba(10,94,176,.12);display:inline-flex;align-items:center;justify-content:center;font-size:14px}
+.nd-menu .sub{display:block;font-size:11.5px;opacity:.65}
+.nd-menu hr{border:0;border-top:1px solid var(--line,#dfe3ea);margin:5px 2px}
+
+.lt-top{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px}
+.lt-top .lt-title{flex:1 1 260px;font-size:1.1rem;font-weight:600}
+.lt-tb{display:flex;flex-wrap:wrap;gap:4px;align-items:center;padding:6px;border:1px solid var(--line,#dfe3ea);border-radius:10px;background:var(--card,#fff);position:sticky;top:0;z-index:5;margin-bottom:10px}
+.lt-tb button,.lt-tb select{height:30px;min-width:30px;padding:0 8px;border:1px solid transparent;border-radius:6px;background:none;color:inherit;font:inherit;cursor:pointer}
+.lt-tb button:hover,.lt-tb select:hover{background:rgba(10,94,176,.09)}
+.lt-tb .sep{width:1px;height:20px;background:var(--line,#dfe3ea);margin:0 4px}
+.lt-tb input[type=color]{width:30px;height:30px;padding:0;border:0;background:none;cursor:pointer}
+.lt-stage{background:#e8ecf2;border-radius:12px;padding:18px;overflow:auto}
+@media (prefers-color-scheme:dark){.lt-stage{background:#1b2230}}
+:root[data-theme=dark] .lt-stage{background:#1b2230}
+.lt-sheet{position:relative;width:210mm;margin:0 auto;background-color:#fff;background-repeat:repeat-y;background-size:210mm 297mm;box-shadow:0 4px 22px rgba(0,0,0,.25);color:#111}
+.lt-body{position:relative;font:11pt/1.3 Calibri,Carlito,Arial,sans-serif;color:#111;outline:none;word-wrap:break-word}
+.lt-body p,.lt-body div{margin:0 0 6pt}.lt-body ul,.lt-body ol{margin:0 0 6pt 22px;padding-left:12px}.lt-body h1{font-size:16pt;margin:0 0 6pt}.lt-body h2{font-size:14pt;margin:0 0 6pt}.lt-body h3{font-size:12pt;margin:0 0 6pt}
+.lt-body table{border-collapse:collapse;margin:0 0 8pt;max-width:100%}.lt-body td,.lt-body th{border:1px solid #888;padding:3px 6px;min-width:40px;vertical-align:top}.lt-body blockquote{margin:0 0 6pt 40px}
+.lt-body a{color:#0563c1}
+.lt-pgmark{position:absolute;left:0;right:0;border-top:1px dashed rgba(10,94,176,.35);pointer-events:none}
+.lt-note{font-size:12px;opacity:.7;margin:8px 2px 0}
+.lt-list .lt-row{display:flex;gap:12px;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line,#dfe3ea);cursor:pointer}
+.lt-list .lt-row:hover{background:rgba(10,94,176,.05)}
+.lt-lh{display:flex;gap:12px;align-items:flex-start;padding:10px;border:1px solid var(--line,#dfe3ea);border-radius:10px;margin-bottom:8px}
+.lt-lh img,.lt-lh .nopic{width:56px;height:79px;object-fit:cover;border:1px solid var(--line,#dfe3ea);border-radius:4px;background:#fff;flex:none}
+.lt-prev{position:relative;width:210px;height:297px;background:#fff center/100% 100% no-repeat;border:1px solid var(--line,#cfd5df);flex:none}
+.lt-safe{position:absolute;border:1.5px dashed #0a5eb0;background:rgba(10,94,176,.06);pointer-events:none}
+.sh-radio{display:block;font-weight:400;margin:4px 0}.sh-list{max-height:220px;overflow:auto;border:1px solid var(--line,#dfe3ea);border-radius:8px}
+.sh-row{display:flex;gap:8px;align-items:center;padding:7px 10px;border-bottom:1px solid var(--line,#eef0f4);cursor:pointer}.sh-row:last-child{border-bottom:0}.sh-row:hover{background:rgba(10,94,176,.05)}
+.sh-row,.sh-radio{justify-content:flex-start;text-align:left;margin-bottom:0}.sh-row input,.sh-radio input{width:auto!important;margin:0 6px 0 0;flex:none}.sh-row .muted{margin-left:auto}.sh-radio{display:flex;align-items:center;gap:4px}
+.sh-have{margin-bottom:10px}.sh-x{border:0;background:none;color:inherit;cursor:pointer;font-size:15px;line-height:1;padding:0 2px}
+.sh-in{display:flex;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--line,#eef0f4)}.sh-in:first-of-type{border-top:0}
+
+/* printing a letter: the letterhead picture sits on every page, the top and bottom spacers keep the writing inside the padding */
+.lt-printroot .lt-bgimg{position:fixed;left:0;top:0;width:210mm;height:297mm;z-index:-1}
+@media print{
+  html.printing.ltprint #printroot{display:block;position:relative;z-index:0}
+  html.printing.ltprint .lt-pt{width:210mm;border-collapse:collapse}
+  html.printing.ltprint .lt-pt td{padding:0}
+  html.printing.ltprint .lt-pt thead{display:table-header-group}html.printing.ltprint .lt-pt tfoot{display:table-footer-group}
+  html.printing.ltprint .lt-body p,html.printing.ltprint .lt-body li{orphans:2;widows:2}
+  html.printing.ltprint .lt-body tr,html.printing.ltprint .lt-body h1,html.printing.ltprint .lt-body h2,html.printing.ltprint .lt-body h3{break-inside:avoid}
+  html.printing .toast,html.printing .scrim,html.printing .offline{display:none!important}
+  html.printing.ltprint *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}

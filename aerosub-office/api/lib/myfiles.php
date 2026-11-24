@@ -26,6 +26,24 @@ function vault_row(array $r): array {
             'image' => $r['kind'] === 'file' && preg_match('~^image/(png|jpe?g|gif|webp)$~', (string)$r['mime']) === 1, 'created_at' => $r['created_at'], 'updated_at' => $r['updated_at']];
 }
 
+/* ---- sharing: only ever something the owner chose to hand over, one person at a time ---- */
+function vault_people(int $uid): array {   // colleagues who have a My Documents tab (administrators do not, so nothing can be shared to them)
+    $out = []; foreach (all('SELECT u.id,u.name,u.role,u.is_root,(SELECT d.name FROM departments d WHERE d.id=u.department_id) AS department FROM users u WHERE u.active=1 AND u.archived_at IS NULL AND u.id<>? ORDER BY u.name', [$uid]) as $r)
+        if (tab_access(['id' => (int)$r['id'], 'role' => $r['role'], 'is_root' => $r['is_root']], 'myfiles')) $out[] = ['id' => (int)$r['id'], 'name' => $r['name'], 'department' => $r['department']];
+    return $out;
+}
+if (($seg[1] ?? '') === 'people' && $method === 'GET') out(['people' => vault_people($uid), 'mail' => (function () use ($u) { require_once __DIR__ . '/sharesend.php'; return share_mail_options($u); })()]);
+if (($seg[1] ?? '') === 'shared') {
+    $shid = isset($seg[2]) && ctype_digit($seg[2]) ? (int)$seg[2] : 0;
+    if ($method === 'GET' && !$shid) out(['items' => array_map(fn($r) => ['share_id' => (int)$r['sid'], 'kind' => $r['kind'], 'title' => $r['title'], 'name' => $r['name'], 'mime' => $r['mime'], 'size' => (int)$r['size'], 'body' => $r['kind'] === 'file' ? null : $r['body'], 'note' => $r['note'], 'owner' => $r['owner'], 'shared_at' => $r['created_at'],
+        'image' => $r['kind'] === 'file' && preg_match('~^image/(png|jpe?g|gif|webp)$~', (string)$r['mime']) === 1], all('SELECT s.id AS sid,s.note,s.created_at,i.kind,i.title,i.name,i.mime,i.size,i.body,o.name AS owner FROM vault_shares s JOIN vault_items i ON i.id=s.item_id JOIN users o ON o.id=s.owner_id WHERE s.user_id=? ORDER BY s.id DESC LIMIT 300', [$uid]))]);
+    $sh = $shid ? one('SELECT s.id,i.kind,i.name,i.mime,i.path FROM vault_shares s JOIN vault_items i ON i.id=s.item_id WHERE s.id=? AND s.user_id=?', [$shid, $uid]) : null; if (!$sh) fail('Not found', 404);
+    if ($method === 'GET' && ($seg[3] ?? '') === 'file' && $sh['kind'] === 'file') { $p = vault_path((string)$sh['path']); if (!is_file($p)) fail('The file is no longer on the server', 404);
+        $inline = isset($_GET['view']) && preg_match('~^image/(png|jpe?g|gif|webp)$~', (string)$sh['mime']); $safe = preg_replace('/[^A-Za-z0-9._-]+/', '_', (string)$sh['name']) ?: 'file';
+        header('Content-Type: ' . ($inline ? $sh['mime'] : 'application/octet-stream')); header('X-Content-Type-Options: nosniff'); header('Cache-Control: private, no-store'); header('Content-Disposition: ' . ($inline ? 'inline' : 'attachment') . '; filename="' . $safe . '"; filename*=UTF-8\'\'' . rawurlencode((string)$sh['name'])); header('Content-Length: ' . filesize($p)); readfile($p); exit; }
+    if ($method === 'DELETE') { q('DELETE FROM vault_shares WHERE id=? AND user_id=?', [$shid, $uid]); out(['ok' => true]); }   // "remove from my shared list"
+    fail('Not found', 404);
+}
 if ($method === 'GET' && !$mid) {
     $w = ['user_id=?']; $p = [$uid];
     if (isset($_GET['folder']) && $_GET['folder'] !== '') { if ($_GET['folder'] === '-') $w[] = '(folder IS NULL OR folder=\'\')'; else { $w[] = 'folder=?'; $p[] = vault_str($_GET['folder'], 80); } }
@@ -50,6 +68,22 @@ if ($method === 'POST' && !$mid) {
     q('INSERT INTO vault_items (user_id,kind,title,folder,name,mime,size,path) VALUES (?,?,?,?,?,?,?,?)', [$uid, 'file', $title ?: $name, $folder, $name, $mime, strlen($data), $rel]); out(['ok' => true, 'id' => (int)db()->lastInsertId()], 201);
 }
 $it = $mid ? one('SELECT * FROM vault_items WHERE id=? AND user_id=?', [$mid, $uid]) : null; if (!$it) fail('Not found', 404);   // someone else's item looks exactly like a missing one
+if ($act === 'shares' && $method === 'GET') out(['shares' => all('SELECT s.user_id,u.name,s.note,s.created_at FROM vault_shares s JOIN users u ON u.id=s.user_id WHERE s.item_id=? ORDER BY u.name', [$mid])]);
+if ($act === 'share' && $method === 'POST') {
+    $b = body(); $ids = array_values(array_unique(array_map('intval', (array)($b['user_ids'] ?? [])))); if (!$ids) fail('Choose who to share it with'); if (count($ids) > 60) fail('Choose up to 60 people at a time');
+    $ok = array_column(vault_people($uid), null, 'id'); $note = vault_str($b['note'] ?? '', 300) ?: null; $n = 0;
+    foreach ($ids as $to) { if (!isset($ok[$to])) continue; $had = one('SELECT id FROM vault_shares WHERE item_id=? AND user_id=?', [$mid, $to]);
+        q('INSERT INTO vault_shares (item_id,owner_id,user_id,note) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE note=VALUES(note)', [$mid, $uid, $to, $note]);
+        if (!$had) { notify($to, 'vault_share', $u['name'] . ' shared “' . $it['title'] . '” with you', $note ?? 'Open My Documents → Shared with me', '#/myfiles'); $n++; } }
+    if (!$n && !array_intersect($ids, array_keys($ok))) fail('Those people cannot receive shared documents'); out(['ok' => true, 'shared' => $n]);
+}
+if ($act === 'share' && $method === 'DELETE') { $to = (int)($seg[3] ?? 0); q('DELETE FROM vault_shares WHERE item_id=? AND user_id=? AND owner_id=?', [$mid, $to, $uid]); out(['ok' => true]); }
+if ($act === 'email' && $method === 'POST') {
+    require_once __DIR__ . '/sharesend.php'; $b = body(); $to = share_emails($b['to'] ?? ''); $via = in((string)($b['via'] ?? ''), ['mine', 'system'], 'system'); $atts = []; $text = (string)($b['message'] ?? '');
+    if ($it['kind'] === 'file') { $p = vault_path((string)$it['path']); if (!is_file($p)) fail('The file is no longer on the server', 404); if (filesize($p) > 10 * 1048576) fail('That file is too large to email (10 MB). Share it with a colleague instead.'); $atts[] = [(string)$it['name'], (string)($it['mime'] ?: 'application/octet-stream'), (string)file_get_contents($p)]; }
+    else $text .= ($text !== '' ? "\n\n" : '') . ($it['kind'] === 'link' ? (string)$it['body'] : (string)$it['body']);
+    out(['ok' => true, 'done' => [share_send_mail($u, $via, $to, (string)($b['subject'] ?? '') ?: (string)$it['title'], $text, $atts)]]);
+}
 if ($method === 'GET' && $act === 'file') {
     if ($it['kind'] !== 'file') fail('Not found', 404); $p = vault_path((string)$it['path']); if (!is_file($p)) fail('The file is no longer on the server', 404);
     $inline = isset($_GET['view']) && preg_match('~^image/(png|jpe?g|gif|webp)$~', (string)$it['mime']); $safe = preg_replace('/[^A-Za-z0-9._-]+/', '_', (string)$it['name']) ?: 'file';

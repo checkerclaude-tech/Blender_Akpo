@@ -46,7 +46,7 @@ function fx_kind(array $i): string { $k = (string)($i['kind'] ?? ''); if ($k ===
     return preg_match('/day|hour|service|survey|inspection|support|training|rental|hire|personnel|standby|mobili|management|consult|labou?r|maintenance/i', ($i['description'] ?? '') . ' ' . ($i['unit'] ?? '') . ' ' . ($i['freq'] ?? '') . ' ' . ($i['category'] ?? '')) ? 'service' : 'product'; }
 /** product | service | both, from the lines on a document. */
 function fx_scope(array $items): string { $k = array_values(array_unique(array_map('fx_kind', $items))); return count($k) > 1 ? 'both' : ($k[0] ?? 'service'); }
-function fx_ensure3(): void { static $done = false; if ($done) return; $done = true; try { if (!one("SHOW TABLES LIKE 'fin_comments'") || !one("SHOW TABLES LIKE 'vendors'") || !one("SHOW TABLES LIKE 'fin_styles'") || !one("SHOW TABLES LIKE 'fin_templates'") || !col_exists_fx('fin_items', 'kind')) { require_once __DIR__ . '/migrate_fin3.php'; migrate_fin_ext(); } } catch (Throwable $e) { error_log('Finance schema: ' . $e->getMessage()); fail('The finance database could not be upgraded automatically (' . mb_substr($e->getMessage(), 0, 160) . '). Open /upgrade.php once as Super Admin.', 500); } }
+function fx_ensure3(): void { static $done = false; if ($done) return; $done = true; try { if (!one("SHOW TABLES LIKE 'fin_comments'") || !one("SHOW TABLES LIKE 'vendors'") || !one("SHOW TABLES LIKE 'fin_styles'") || !one("SHOW TABLES LIKE 'fin_templates'") || !one("SHOW TABLES LIKE 'fin_letters'") || !one("SHOW TABLES LIKE 'vault_shares'") || !col_exists_fx('fin_items', 'kind')) { require_once __DIR__ . '/migrate_fin3.php'; migrate_fin_ext(); } } catch (Throwable $e) { error_log('Finance schema: ' . $e->getMessage()); fail('The finance database could not be upgraded automatically (' . mb_substr($e->getMessage(), 0, 160) . '). Open /upgrade.php once as Super Admin.', 500); } }
 function col_exists_fx(string $t, string $c): bool { return (bool)one('SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME=?', [$t, $c]); }
 function fx_doc(int $id, bool $items = true): ?array {
     $d = one('SELECT d.*, u.name AS created_by_name, t.title AS task_title FROM fin_docs d LEFT JOIN users u ON u.id=d.created_by LEFT JOIN tasks t ON t.id=d.task_id WHERE d.id=?', [$id]); if (!$d) return null;
@@ -97,6 +97,7 @@ function fx_date($v): ?string { $v = trim((string)($v ?? '')); return preg_match
 if ($seg[0] === 'finance') {
     $sub = $seg[1] ?? ''; fx_ensure3();
     require_once __DIR__ . '/approvals.php';
+    if ($sub === 'letters' || $sub === 'letterheads') { require __DIR__ . '/letters.php'; }
     if ($sub === 'approvals' || $sub === 'signature') ap_global($u, $sub, $method, $b);   // my approval queue and my saved signature
     if ($sub === 'settings') {
         if (!$fin && !in_array($role, ['founder'], true)) fail('Not allowed', 403);

@@ -89,6 +89,7 @@
         '<div class="row" style="margin-top:8px;gap:6px"><button class="btn sm" data-open="' + it.id + '">' + (it.kind === 'file' ? 'Open' : it.kind === 'link' ? 'Visit' : 'Read') + '</button>' + (it.kind === 'file' ? '<a class="btn ghost sm" href="api/myfiles/' + it.id + '/file" download>Download</a>' : '') + '<button class="btn ghost sm" data-edit="' + it.id + '">Edit</button><button class="btn ghost sm" data-del="' + it.id + '" style="color:var(--bad)" aria-label="Delete ' + esc(it.title) + '">✕</button></div></div></div>').join('') + '</div>'
         : '<div class="card empty">' + (MY.q || MY.folder ? 'Nothing matches.' : 'Nothing here yet. Upload a file, take a photo or add a note.') + '</div>');
     const items = Object.fromEntries(D.items.map(i => [i.id, i]));
+    if (X.myShareInit) X.myShareInit(v, items);
     const up = async files => { if (!files.length) return; const folder = MY.folder && MY.folder !== '-' ? MY.folder : ''; let ok = 0; toast('Uploading ' + files.length + ' file' + (files.length > 1 ? 's' : '') + '…');
       for (const f of files) { try { if (f.size > D.max_file) throw new Error(f.name + ' is larger than ' + size(D.max_file)); await api('myfiles', { method: 'POST', data: { kind: 'file', title: f.name.replace(/\.[^.]+$/, ''), folder, name: f.name, type: f.type, data: await b64(f) } }); ok++; } catch (er) { toast(er.message); } }
       if (ok) toast(ok + ' file' + (ok > 1 ? 's' : '') + ' saved'); X.render(); };

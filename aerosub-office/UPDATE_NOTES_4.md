@@ -231,3 +231,12 @@ This update does not replace `index.html`, `sw.js`, `upgrade.php` or `api/lib/mi
 - Fixed: "Database needs an upgrade" when saving a look, a template or a vendor. An older copy of the finance upgrade left in api/lib/migrate.php was hiding the new one. The new upgrade has its own name now and runs by itself, and /upgrade.php runs it too.
 
 - The "Services / Products" line under the heading of a commercial is no longer printed (the type is already clear from the document).
+
+## Letters (Word documents on letterheads) and sharing
+- **New document is now a menu:** Commercial, Proforma invoice, Invoice, Requisition and **Letter (Word)**. Finance also has a **Letters** button (list, search, open, download, share).
+- **Letters:** write on a page that shows the Aerosub letterhead with its padding (default: top 52 mm, bottom 44 mm, sides 22 mm, taken from AEROSUB_LETTERS.docx). Bold, italic, underline, colour, font and size, alignment, bullets and numbers, indent, links and tables. Letters autosave.
+- **Word file:** "Word" downloads a real .docx you can keep editing in Word. The letterhead picture sits behind the text on every page and the padding is the page margin, so the writing never runs into the artwork. **Print / PDF** does the same on paper, with the top and bottom padding repeated on every page.
+- **Letterheads:** Finance > Letters > Letterheads. Add as many as you like (upload the full-page PNG/JPG, set the four paddings with a live preview showing where the writing goes, choose the default for new letters).
+- **Share a letter:** by email (the .docx attached; from your own mailbox or the Aerosub office sender) or onto a task (attached to the task with a note; the people on the task are notified).
+- **My Documents > Share:** each item has a Share button. Share with colleagues (they are notified, see it under "Shared with me", and you can stop sharing at any time) or email it as an attachment. Nothing else in My Documents becomes visible; administrators still cannot open anyone's documents.
+- Upgrade: open /upgrade.php once (adds fin_letterheads, fin_letters, vault_shares; it also runs by itself the first time Finance is opened).
