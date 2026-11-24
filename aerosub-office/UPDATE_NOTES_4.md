@@ -227,3 +227,5 @@ This update does not replace `index.html`, `sw.js`, `upgrade.php` or `api/lib/mi
 
 - Commercial money is laid out like an accounting sheet: the currency sign sits at the left edge of each cell and the number at the right (unit rates, line totals, subtotals, the green line and TOTAL); the labels Discount, VAT and TOTAL are centred. The Excel copy uses the same accounting format.
 - Templates: open a document and press Save as template (lines, categories, notes, terms, tax and, if you tick it, the look; never the client, number or dates). Saving under the same name updates the template, so you can edit and re-save. New document > Start from a saved template. Finance > Templates renames, deletes and starts a document from one.
+
+- Fixed: "Database needs an upgrade" when saving a look, a template or a vendor. An older copy of the finance upgrade left in api/lib/migrate.php was hiding the new one. The new upgrade has its own name now and runs by itself, and /upgrade.php runs it too.
