@@ -3,7 +3,7 @@
 // Adds any new tables/columns. Existing data is untouched. Safe to run repeatedly.
 declare(strict_types=1);
 require __DIR__ . '/api/lib/core.php';
-require __DIR__ . '/api/lib/migrate.php';
+require __DIR__ . '/api/lib/migrate.php'; require_once __DIR__ . '/api/lib/migrate_fin3.php';
 require __DIR__ . '/api/lib/migrate_agent.php';
 header('Content-Type: text/plain; charset=utf-8');
 $u = me();

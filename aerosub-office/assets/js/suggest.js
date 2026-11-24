@@ -43,4 +43,5 @@
   };
   X.finUploadFiles = async (docId, files) => { let n = 0; for (const f of files) { try { await api('finance/doc/' + docId + '/files', { method: 'POST', data: { name: f.name, type: f.type, data: f.data } }); n++; } catch (er) { toast(er.message); } } return n; };
   X.fileB64 = b64;
+  if (!document.querySelector('script[src*="fincomments.js"]')) { const sc = document.createElement('script'); sc.src = 'assets/js/fincomments.js?v=1'; sc.defer = true; document.head.appendChild(sc); }   // the comments box on documents
 })();

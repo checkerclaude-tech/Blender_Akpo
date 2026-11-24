@@ -2,7 +2,7 @@
  * A comment to one person is seen only by the sender and that person (and the Root Admin). The receiver is notified and can reply. No inline handlers (CSP). */
 (() => {
   'use strict';
-  const X = window.OfficeExt; if (!X) return;
+  const X = window.OfficeExt; if (!X || X._fcLoaded) return; X._fcLoaded = 1;
   const { api, toast, esc } = X;
   const when = t => t ? new Date(String(t).replace(' ', 'T')).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
   const prev = X.finDocHook;
