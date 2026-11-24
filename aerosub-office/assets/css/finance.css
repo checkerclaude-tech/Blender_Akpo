@@ -45,7 +45,7 @@
 .comm-t{width:100%;border-collapse:collapse;font:400 11px Calibri,Carlito,Arial,sans-serif}
 .comm-t th,.comm-t td{border:1px solid var(--cm-line);padding:2px 5px;vertical-align:middle}
 .comm-t th{background:var(--cm-head);font-weight:700;text-align:center;font-size:11px}
-.comm-t td.c{text-align:center}.comm-t td.r{text-align:right}.comm-t td.b{font-weight:700}.comm-t td.big{font-size:13px}
+.comm-t td.c{text-align:center}.comm-t tr.sub td,.comm-t tr.total td,.comm-t tr.grand td{font-weight:700}.comm-t tr.grand td.g{background:var(--cm-green)}.comm-t tr.grand td{text-align:center}.comm-t td.r{text-align:right}.comm-t td.b{font-weight:700}.comm-t td.big{font-size:13px}
 .comm-t tr.sub td{background:#fff}.comm-t tr.est td{padding:5px}.comm-t tr.est.grand td{background:var(--cm-green)}.comm-t td.blank{border-top:1px solid var(--cm-line)}
 .comm-t tr.total td.g{background:var(--cm-green)}
 .comm-t td{vertical-align:middle}.comm-t td:not(.c):not(.r){text-align:left}.comm-t tr.sub td.r:first-child,.comm-t tr.total td.r:first-child{padding-right:12px}.comm-t tr.sub td,.comm-t tr.total td{padding-top:4px;padding-bottom:4px}.comm-t tr.total td.r:last-child{padding-right:5px}

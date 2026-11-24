@@ -201,10 +201,12 @@
       const short = g.name.split(/\s[–-]\s/)[0]; const span = g.items.length + (g.counted ? 1 : 0);
       g.items.forEach((i, n) => { const note = String(i.amount_note || '').trim();
         body += '<tr>' + (n === 0 ? '<td class="c b" rowspan="' + span + '">' + g.L + '</td><td class="c b" rowspan="' + span + '">' + esc(g.name) + '</td>' : '') + '<td>' + nl(i.description) + '</td><td class="c">' + esc(i.unit || '') + '</td><td class="c">' + (+i.qty ? num(i.qty) : '') + '</td><td class="c">' + esc(i.freq || '') + '</td><td class="r">' + ((+i.unit_price) ? fmoney(i.unit_price, c) : '') + '</td><td class="' + (note ? 'c' : 'r') + '">' + (note ? esc(note) : fmoney(lineOf(i, 'commercial')[1], c)) + '</td></tr>'; });
-      if (g.counted) body += '<tr class="sub"><td colspan="5" class="r b">Sub Total for ' + esc(short) + (nd ? ' (Estimated ' + num(nd) + (nd === 1 ? ' Day' : ' Days') + ')' : '') + '</td><td class="r b">' + fmoney(tot, c) + '</td></tr>';
+      if (g.counted) body += '<tr class="sub"><td colspan="4" class="c b">Sub Total for ' + esc(short) + (nd ? ' (Estimated ' + num(nd) + (nd === 1 ? ' Day' : ' Days') + ')' : '') + '</td><td colspan="2" class="c b">' + fmoney(tot, c) + '</td></tr>';
     };
-    groups.filter(g => g.counted).forEach(renderG);   // standby and optional sections (shown, not counted) follow
-    groups.filter(g => !g.counted).forEach(renderG);
+    const counted = groups.filter(g => g.counted);
+    counted.forEach(renderG);
+    if (counted.length > 1) body += '<tr class="grand"><td colspan="2" class="g"></td><td colspan="4" class="c b g">' + esc(counted.map(g => g.name.split(/\s[–-]\s/)[0]).join(' + ')) + '</td><td colspan="2" class="c b g">' + fmoney(grand, c) + '</td></tr>';   // what the total is made of, from the categories above
+    groups.filter(g => !g.counted).forEach(renderG);   // standby and optional sections (shown, not counted) follow
     const disc = Math.min(+d.discount || 0, grand), tax = Math.round((grand - disc) * (+d.tax_rate || 0)) / 100, total = grand - disc + tax;
     if (disc) body += '<tr class="sub"><td colspan="7" class="r b">Discount</td><td class="r b">−' + fmoney(disc, c) + '</td></tr>';
     if (+d.tax_rate) body += '<tr class="sub"><td colspan="7" class="r b">' + esc(d.tax_label || 'VAT') + ' (' + num(d.tax_rate) + '%)</td><td class="r b">' + fmoney(tax, c) + '</td></tr>';

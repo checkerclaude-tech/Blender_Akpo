@@ -41,20 +41,22 @@ function fx_export_xlsx(array $d): void {
                 $put($r, 4, (string)$i['description'], $base + ['wrap' => true]); $put($r, 5, (string)($i['unit'] ?? ''), $base + ['h' => 'center']); $put($r, 6, (float)$i['qty'], $base + ['h' => 'center']); $put($r, 7, (string)($i['freq'] ?? ''), $base + ['h' => 'center']); $put($r, 8, (float)$i['unit_price'], $m);
                 if ($note !== '') $put($r, 9, $note, $base + ['h' => 'center']); else { $put($r, 9, $val, $m, 'H' . $r . '*F' . $r); $est += $val; } $h($r, 21.4); $r++; }
             $last = $r - 1;
-            if ($g['counted'] > 0) { $ds = $base + ['b' => true, 'h' => 'right', 'wrap' => true, 'fill' => $light, 'color' => $navy];   // one subtotal per category; days run side by side, so the estimate is the longest line
+            if ($g['counted'] > 0) { $ds = $base + ['b' => true, 'h' => 'center', 'wrap' => true, 'fill' => $light, 'color' => $navy];   // one subtotal per category; days run side by side, so the estimate is the longest line
                 $label = 'Sub Total for ' . $short($g['name']) . ($nd > 0 ? ' (Estimated ' . rtrim(rtrim(number_format($nd, 2, '.', ''), '0'), '.') . ($nd == 1.0 ? ' Day)' : ' Days)') : '');
-                $span($r, 4, $r, 8, $label, $ds); $put($r, 9, $est, $ds + ['fmt' => $money], 'SUM(I' . $first . ':I' . $last . ')'); $subRefs[] = ['I' . $r, $est];
+                $span($r, 4, $r, 7, $label, $ds); $span($r, 8, $r, 9, $est, $ds + ['fmt' => $money], 'SUM(I' . $first . ':I' . $last . ')'); $subRefs[] = ['H' . $r, $est];
                 $h($r, 26); $r++; $names[] = $short($g['name']); }
             $span($r0, 2, $r - 1, 2, $g['letter'], $base + ['b' => true, 'h' => 'center']); $span($r0, 3, $r - 1, 3, (string)$g['name'], $base + ['b' => true, 'h' => 'center', 'wrap' => true]); };
         $counted = array_values(array_filter($groups, fn($g) => $g['counted'] > 0)); $rest = array_values(array_filter($groups, fn($g) => $g['counted'] === 0));
         foreach ($counted as $g) $writeGroup($g);
         $grandVal = (float)array_sum(array_column($subRefs, 1)); $grandRef = $subRefs ? 'SUM(' . implode(',', array_column($subRefs, 0)) . ')' : '0';
+        if (count($counted) > 1) { $gs = $base + ['b' => true, 'h' => 'center', 'wrap' => true, 'fill' => 'C6E0B4', 'color' => '000000'];   // the green line: what the total is made of
+            $span($r, 2, $r, 3, '', $gs); $span($r, 4, $r, 7, implode(' + ', $names), $gs); $span($r, 8, $r, 9, $grandVal, $gs + ['fmt' => $money], $grandRef); $h($r, 28); $r++; }
         foreach ($rest as $g) $writeGroup($g);
         $disc = min((float)($d['discount'] ?? 0), $grandVal); $taxRate = (float)($d['tax_rate'] ?? 0); $tax = round(($grandVal - $disc) * $taxRate / 100, 2); $ms = $base + ['b' => true, 'h' => 'right'];
         $ref = $grandRef; $taxRef = null; $discRef = null;
         if ($disc > 0) { $span($r, 2, $r, 8, 'Discount', $ms); $put($r, 9, -$disc, $ms + ['fmt' => $money], '-MIN(' . round((float)$d['discount'], 2) . ',' . $ref . ')'); $discRef = 'I' . $r; $r++; }
         if ($taxRate > 0) { $span($r, 2, $r, 8, ($d['tax_label'] ?: 'VAT') . ' (' . rtrim(rtrim(number_format($taxRate, 2, '.', ''), '0'), '.') . '%)', $ms); $put($r, 9, $tax, $ms + ['fmt' => $money], '(' . $ref . ($discRef ? '+' . $discRef : '') . ')*' . $taxRate . '/100'); $taxRef = 'I' . $r; $r++; }
-        $ts = $base + ['b' => true, 'h' => 'right', 'fill' => $navy, 'color' => 'FFFFFF']; $span($r, 2, $r, 8, 'TOTAL (' . $cur . ')', $ts); $put($r, 9, $grandVal - $disc + $tax, $ts + ['fmt' => $money], $ref . ($discRef ? '+' . $discRef : '') . ($taxRef ? '+' . $taxRef : '')); $h($r, 25.5);
+        $ts = $base + ['b' => true, 'h' => 'right']; $span($r, 2, $r, 8, 'TOTAL (' . $cur . ')', $ts); $put($r, 9, $grandVal - $disc + $tax, ['font' => 'Poppins', 'sz' => 11, 'border' => 'thin', 'v' => 'center', 'b' => true, 'h' => 'right', 'fill' => 'C6E0B4', 'fmt' => $money], $ref . ($discRef ? '+' . $discRef : '') . ($taxRef ? '+' . $taxRef : '')); $h($r, 25.5);
         $sheet = ['name' => mb_substr($title, 0, 28) ?: 'Commercial', 'cols' => [5.1, 6.2, 15.2, 50.5, 7.5, 7.8, 18.8, 15.1, 19.9, 8.6], 'rows' => $rows, 'merges' => $merges, 'landscape' => true, 'image' => $logo];
     } else {
         $label = ['proforma' => 'PROFORMA INVOICE', 'invoice' => 'INVOICE', 'requisition' => 'REQUISITION', 'receipt' => 'RECEIPT'][$type] ?? strtoupper($type);
