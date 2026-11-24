@@ -229,3 +229,5 @@ This update does not replace `index.html`, `sw.js`, `upgrade.php` or `api/lib/mi
 - Templates: open a document and press Save as template (lines, categories, notes, terms, tax and, if you tick it, the look; never the client, number or dates). Saving under the same name updates the template, so you can edit and re-save. New document > Start from a saved template. Finance > Templates renames, deletes and starts a document from one.
 
 - Fixed: "Database needs an upgrade" when saving a look, a template or a vendor. An older copy of the finance upgrade left in api/lib/migrate.php was hiding the new one. The new upgrade has its own name now and runs by itself, and /upgrade.php runs it too.
+
+- The "Services / Products" line under the heading of a commercial is no longer printed (the type is already clear from the document).

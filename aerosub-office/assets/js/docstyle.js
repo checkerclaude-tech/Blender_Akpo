@@ -11,7 +11,7 @@
   const COMMON = [['words', 'Amount in words', '.inv-words'], ['notes', 'Notes', '.inv-notes'], ['sign', 'Signature blocks', '.inv-sign']];
   const EL = {
     commercial: [['coverTitle', 'Cover title', '.cv-k'], ['coverSub', 'Cover subtitle', '.cv-sub'], ['coverRef', 'Cover reference', '.cv-ref'], ['coverFor', 'Cover: prepared for', '.cv-for'],
-      ['title', 'Heading above the table', '.tbl .ct'], ['scope', 'Products / services line', '.tbl div.ci'], ['intro', 'Note under the heading', '.tbl p.ci'],
+      ['title', 'Heading above the table', '.tbl .ct'], ['intro', 'Note under the heading', '.tbl p.ci'],
       ['table', 'The whole table (lines)', '.comm-t', { border: 1 }], ['thead', 'Table header', '.comm-t th', { border: 1 }], ['cells', 'Table rows', '.comm-t td', { border: 1 }], ['cat', 'S/N and category cells', '.comm-t td[rowspan]', { border: 1 }],
       ['sub', 'Sub total rows', '.comm-t tr.sub td', { border: 1 }], ['total', 'TOTAL row', '.comm-t tr.total td', { border: 1 }], ['cmwords', 'Amount in words', '.cm-foot > div:first-child'], ['extra', 'Notes and terms', '.cm-foot > div:not(:first-child):not(.cm-co)'], ['company', 'Company line', '.cm-co']],
     invoice: [['meta', 'Number and date', '.inv-meta'], ['grid', 'Details grid', '.inv-grid td', { border: 1 }], ['gridh', 'Details grid headings', '.inv-grid tr.h td', { border: 1 }], ['thead', 'Items header', '.inv-items thead td', { border: 1 }], ['rows', 'Items rows', '.inv-items tbody td', { border: 1 }], ['totals', 'Totals', '.inv-items tfoot td', { border: 1 }], ['lines', 'Expiry and lead time', '.inv-lines'], ['bank', 'Payment details', '.inv-bank td', { border: 1 }], ['terms', 'Terms', '.inv-terms']].concat(COMMON),
