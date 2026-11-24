@@ -224,3 +224,6 @@ This update does not replace `index.html`, `sw.js`, `upgrade.php` or `api/lib/mi
 - **Prospecting** also looks for Partners, Vendors and suppliers, Franchise and licensing, and Opportunities. A vendor found can be saved straight into the vendor list.
 
 - Commercial subtotals: the label is centred and the amount sits centred across the Unit Rate and Total columns; subtotals, the green line and TOTAL are bold. A green line above TOTAL lists the categories that make it up (e.g. Data Collection + Data Processing & Analysis + Data Reporting) with their sum. Same in the Excel copy.
+
+- Commercial money is laid out like an accounting sheet: the currency sign sits at the left edge of each cell and the number at the right (unit rates, line totals, subtotals, the green line and TOTAL); the labels Discount, VAT and TOTAL are centred. The Excel copy uses the same accounting format.
+- Templates: open a document and press Save as template (lines, categories, notes, terms, tax and, if you tick it, the look; never the client, number or dates). Saving under the same name updates the template, so you can edit and re-save. New document > Start from a saved template. Finance > Templates renames, deletes and starts a document from one.

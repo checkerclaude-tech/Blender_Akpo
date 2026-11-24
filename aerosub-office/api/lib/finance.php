@@ -46,7 +46,7 @@ function fx_kind(array $i): string { $k = (string)($i['kind'] ?? ''); if ($k ===
     return preg_match('/day|hour|service|survey|inspection|support|training|rental|hire|personnel|standby|mobili|management|consult|labou?r|maintenance/i', ($i['description'] ?? '') . ' ' . ($i['unit'] ?? '') . ' ' . ($i['freq'] ?? '') . ' ' . ($i['category'] ?? '')) ? 'service' : 'product'; }
 /** product | service | both, from the lines on a document. */
 function fx_scope(array $items): string { $k = array_values(array_unique(array_map('fx_kind', $items))); return count($k) > 1 ? 'both' : ($k[0] ?? 'service'); }
-function fx_ensure3(): void { static $done = false; if ($done) return; $done = true; try { if (!one("SHOW TABLES LIKE 'fin_comments'") || !one("SHOW TABLES LIKE 'vendors'") || !one("SHOW TABLES LIKE 'fin_styles'") || !col_exists_fx('fin_items', 'kind')) { require_once __DIR__ . '/migrate_fin3.php'; migrate_finance3(); } } catch (Throwable $e) { error_log('Finance schema: ' . $e->getMessage()); } }
+function fx_ensure3(): void { static $done = false; if ($done) return; $done = true; try { if (!one("SHOW TABLES LIKE 'fin_comments'") || !one("SHOW TABLES LIKE 'vendors'") || !one("SHOW TABLES LIKE 'fin_styles'") || !one("SHOW TABLES LIKE 'fin_templates'") || !col_exists_fx('fin_items', 'kind')) { require_once __DIR__ . '/migrate_fin3.php'; migrate_finance3(); } } catch (Throwable $e) { error_log('Finance schema: ' . $e->getMessage()); } }
 function col_exists_fx(string $t, string $c): bool { return (bool)one('SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME=?', [$t, $c]); }
 function fx_doc(int $id, bool $items = true): ?array {
     $d = one('SELECT d.*, u.name AS created_by_name, t.title AS task_title FROM fin_docs d LEFT JOIN users u ON u.id=d.created_by LEFT JOIN tasks t ON t.id=d.task_id WHERE d.id=?', [$id]); if (!$d) return null;
@@ -126,6 +126,26 @@ if ($seg[0] === 'finance') {
             foreach (all("SELECT id,number,doc_type,client_name FROM fin_docs WHERE doc_type IN ('proforma','commercial') AND status<>'void' AND (number LIKE ? OR client_name LIKE ?) ORDER BY id DESC LIMIT 8", [$like, $like]) as $r) $res[] = ['source' => $r['doc_type'] === 'proforma' ? 'Proforma' : 'Commercial', 'name' => $r['number'], 'label' => $r['number'] . ' · ' . $r['client_name'], 'client_name' => $r['client_name']];
         }
         out(['items' => $res]);
+    }
+    if ($sub === 'templates') {   // saved documents to start new ones from: the lines, notes, terms, tax and (optionally) the look. Never the client, number or dates.
+        if (!$fin) fail('Only Finance can use templates', 403); require_once __DIR__ . '/finstyle.php'; $tid = isset($seg[2]) && ctype_digit($seg[2]) ? (int)$seg[2] : 0;
+        $out1 = fn(array $t, bool $full) => ['id' => (int)$t['id'], 'name' => $t['name'], 'doc_type' => $t['doc_type'], 'created_at' => $t['created_at'], 'updated_at' => $t['updated_at'], 'by' => $t['by_name'] ?? null]
+            + ($full ? (function () use ($t) { $d = json_decode((string)$t['data'], true) ?: []; return ['fields' => (object)($d['fields'] ?? []), 'items' => $d['items'] ?? [], 'styles' => (object)fs_clean(json_decode((string)($t['styles'] ?? ''), true))]; })() : []);
+        if ($method === 'GET' && !$tid) { $ty = in((string)($_GET['type'] ?? ''), ['commercial', 'proforma', 'invoice', 'requisition'], ''); $rows = all('SELECT t.id,t.name,t.doc_type,t.created_at,t.updated_at,u.name AS by_name FROM fin_templates t LEFT JOIN users u ON u.id=t.created_by' . ($ty ? ' WHERE t.doc_type=?' : '') . ' ORDER BY t.name LIMIT 200', $ty ? [$ty] : []); out(['templates' => array_map(fn($t) => $out1($t, false), $rows)]); }
+        if ($method === 'GET' && $tid) { $t = one('SELECT * FROM fin_templates WHERE id=?', [$tid]); if (!$t) fail('Not found', 404); out(['template' => $out1($t, true)]); }
+        if ($method === 'POST' && !$tid) {
+            $nm = fx_s($b['name'] ?? '', 120); if (!$nm) fail('Give the template a name'); $src = fx_doc((int)($b['from_doc'] ?? 0)); if (!$src || $src['doc_type'] === 'receipt') fail('Choose a document to save as a template');
+            if ((int)one('SELECT COUNT(*) c FROM fin_templates')['c'] >= 100) fail('You have 100 templates. Delete some first.');
+            $fields = []; foreach (['subject', 'intro', 'notes', 'terms', 'payment_terms', 'terms_instr', 'shipping_method', 'delivery_leadtime', 'tax_label', 'tax_rate', 'discount', 'currency', 'currency_symbol'] as $k) if (($src[$k] ?? null) !== null && $src[$k] !== '') $fields[$k] = $src[$k];
+            $items = array_map(fn($i) => ['description' => $i['description'], 'qty' => (float)$i['qty'], 'unit' => $i['unit'], 'unit_price' => (float)$i['unit_price'], 'category' => $i['category'], 'freq' => $i['freq'], 'amount_note' => $i['amount_note'], 'kind' => $i['kind'] ?? null], $src['items']);
+            $st = !array_key_exists('include_styles', $b) || !empty($b['include_styles']) ? fs_clean(array_replace_recursive(fs_get('type:' . $src['doc_type']), fs_get('doc:' . (int)$src['id']))) : [];
+            $json = json_encode(['fields' => $fields, 'items' => $items], JSON_UNESCAPED_UNICODE); $ex = one('SELECT id FROM fin_templates WHERE doc_type=? AND LOWER(name)=LOWER(?)', [$src['doc_type'], $nm]);
+            if ($ex) { q('UPDATE fin_templates SET data=?, styles=? WHERE id=?', [$json, $st ? json_encode($st) : null, $ex['id']]); log_act($uid, 'fin_template_updated', $nm); out(['ok' => true, 'id' => (int)$ex['id'], 'updated' => true]); }
+            q('INSERT INTO fin_templates (name,doc_type,data,styles,created_by) VALUES (?,?,?,?,?)', [$nm, $src['doc_type'], $json, $st ? json_encode($st) : null, $uid]); $nid = (int)db()->lastInsertId(); log_act($uid, 'fin_template_saved', $nm); out(['ok' => true, 'id' => $nid, 'updated' => false], 201); }
+        if ($tid) { $t = one('SELECT * FROM fin_templates WHERE id=?', [$tid]); if (!$t) fail('Not found', 404);
+            if ($method === 'PATCH') { $nm = fx_s($b['name'] ?? '', 120); if (!$nm) fail('Give the template a name'); q('UPDATE fin_templates SET name=? WHERE id=?', [$nm, $tid]); out(['ok' => true]); }
+            if ($method === 'DELETE') { q('DELETE FROM fin_templates WHERE id=?', [$tid]); out(['ok' => true]); } }
+        fail('Not found', 404);
     }
     if ($sub === 'summary') { if (!$fin && !$ro) fail('Not allowed', 403);
         $rows = all("SELECT d.id,d.doc_type,d.status,d.discount,d.tax_rate,d.amount_paid,d.currency,d.issue_date," . fx_sub_sql() . " AS sub FROM fin_docs d WHERE d.status<>'void'");

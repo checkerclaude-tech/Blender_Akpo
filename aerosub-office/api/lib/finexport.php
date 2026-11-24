@@ -11,7 +11,7 @@ function fx_xl_sym(array $d): string {
 }
 function fx_export_xlsx(array $d): void {
     $type = (string)$d['doc_type']; $comm = $type === 'commercial'; $days = max(1, (int)($d['days'] ?? 1)); $cur = strtoupper((string)$d['currency']);
-    $money = '"' . fx_xl_sym($d) . '"#,##0.00'; $rows = []; $merges = []; $navy = '0B1F5C'; $light = 'BDEBFF';
+    $money = '"' . fx_xl_sym($d) . '"* #,##0.00_);[Red]"' . fx_xl_sym($d) . '"* \\-#,##0.00_)';   // accounting layout: the sign at the left edge, the number at the right $rows = []; $merges = []; $navy = '0B1F5C'; $light = 'BDEBFF';
     $base = ['font' => 'Poppins', 'sz' => 11, 'border' => 'thin', 'v' => 'center'];
     $put = function (int $r, int $c, $v, array $st = [], ?string $f = null) use (&$rows) { $cell = ['v' => $v, 's' => $st]; if ($f !== null) $cell['f'] = $f; $rows[$r]['cells'][$c] = $cell; };
     $span = function (int $r1, int $c1, int $r2, int $c2, $v, array $st = [], ?string $f = null) use (&$put, &$merges) {
@@ -52,11 +52,11 @@ function fx_export_xlsx(array $d): void {
         if (count($counted) > 1) { $gs = $base + ['b' => true, 'h' => 'center', 'wrap' => true, 'fill' => 'C6E0B4', 'color' => '000000'];   // the green line: what the total is made of
             $span($r, 2, $r, 3, '', $gs); $span($r, 4, $r, 7, implode(' + ', $names), $gs); $span($r, 8, $r, 9, $grandVal, $gs + ['fmt' => $money], $grandRef); $h($r, 28); $r++; }
         foreach ($rest as $g) $writeGroup($g);
-        $disc = min((float)($d['discount'] ?? 0), $grandVal); $taxRate = (float)($d['tax_rate'] ?? 0); $tax = round(($grandVal - $disc) * $taxRate / 100, 2); $ms = $base + ['b' => true, 'h' => 'right'];
+        $disc = min((float)($d['discount'] ?? 0), $grandVal); $taxRate = (float)($d['tax_rate'] ?? 0); $tax = round(($grandVal - $disc) * $taxRate / 100, 2); $ms = $base + ['b' => true, 'h' => 'center'];
         $ref = $grandRef; $taxRef = null; $discRef = null;
         if ($disc > 0) { $span($r, 2, $r, 8, 'Discount', $ms); $put($r, 9, -$disc, $ms + ['fmt' => $money], '-MIN(' . round((float)$d['discount'], 2) . ',' . $ref . ')'); $discRef = 'I' . $r; $r++; }
         if ($taxRate > 0) { $span($r, 2, $r, 8, ($d['tax_label'] ?: 'VAT') . ' (' . rtrim(rtrim(number_format($taxRate, 2, '.', ''), '0'), '.') . '%)', $ms); $put($r, 9, $tax, $ms + ['fmt' => $money], '(' . $ref . ($discRef ? '+' . $discRef : '') . ')*' . $taxRate . '/100'); $taxRef = 'I' . $r; $r++; }
-        $ts = $base + ['b' => true, 'h' => 'right']; $span($r, 2, $r, 8, 'TOTAL (' . $cur . ')', $ts); $put($r, 9, $grandVal - $disc + $tax, ['font' => 'Poppins', 'sz' => 11, 'border' => 'thin', 'v' => 'center', 'b' => true, 'h' => 'right', 'fill' => 'C6E0B4', 'fmt' => $money], $ref . ($discRef ? '+' . $discRef : '') . ($taxRef ? '+' . $taxRef : '')); $h($r, 25.5);
+        $ts = $base + ['b' => true, 'h' => 'center']; $span($r, 2, $r, 8, 'TOTAL (' . $cur . ')', $ts); $put($r, 9, $grandVal - $disc + $tax, ['font' => 'Poppins', 'sz' => 11, 'border' => 'thin', 'v' => 'center', 'b' => true, 'h' => 'right', 'fill' => 'C6E0B4', 'fmt' => $money], $ref . ($discRef ? '+' . $discRef : '') . ($taxRef ? '+' . $taxRef : '')); $h($r, 25.5);
         $sheet = ['name' => mb_substr($title, 0, 28) ?: 'Commercial', 'cols' => [5.1, 6.2, 15.2, 50.5, 7.5, 7.8, 18.8, 15.1, 19.9, 8.6], 'rows' => $rows, 'merges' => $merges, 'landscape' => true, 'image' => $logo];
     } else {
         $label = ['proforma' => 'PROFORMA INVOICE', 'invoice' => 'INVOICE', 'requisition' => 'REQUISITION', 'receipt' => 'RECEIPT'][$type] ?? strtoupper($type);
