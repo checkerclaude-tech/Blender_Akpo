@@ -15,11 +15,11 @@ function fx_line(array $i, string $type, int $days): array {
     $base = round((float)$i['qty'] * (float)$i['unit_price'], 2);
     if ($type !== 'commercial') return [$base, $base];
     if (trim((string)($i['amount_note'] ?? '')) !== '') return [0.0, 0.0];
-    return [$base, in_array(strtolower(trim((string)($i['freq'] ?? ''))), FX_DAILY, true) ? round($base * max(1, $days), 2) : $base];
+    return [$base, $base];   // quantity x unit rate. For a day rate the quantity is the number of days; people work the same days side by side, so days are never added up across lines
 }
 /** SQL for the same sum, for lists (needs the fin_docs alias d). */
 function fx_sub_sql(): string {
-    return "(SELECT COALESCE(SUM(CASE WHEN d.doc_type='commercial' THEN (CASE WHEN COALESCE(i.amount_note,'')<>'' THEN 0 WHEN LOWER(TRIM(COALESCE(i.freq,''))) IN ('day rate','per day','daily') THEN i.qty*i.unit_price*GREATEST(d.days,1) ELSE i.qty*i.unit_price END) ELSE i.qty*i.unit_price END),0) FROM fin_items i WHERE i.doc_id=d.id)";
+    return "(SELECT COALESCE(SUM(CASE WHEN d.doc_type='commercial' THEN (CASE WHEN COALESCE(i.amount_note,'')<>'' THEN 0 ELSE i.qty*i.unit_price END) ELSE i.qty*i.unit_price END),0) FROM fin_items i WHERE i.doc_id=d.id)";
 }
 function fx_totals(array $items, float $discount, float $rate, string $type = 'invoice', int $days = 1): array {
     $sub = 0.0; foreach ($items as $i) $sub += fx_line($i, $type, $days)[1];
@@ -46,7 +46,7 @@ function fx_kind(array $i): string { $k = (string)($i['kind'] ?? ''); if ($k ===
     return preg_match('/day|hour|service|survey|inspection|support|training|rental|hire|personnel|standby|mobili|management|consult|labou?r|maintenance/i', ($i['description'] ?? '') . ' ' . ($i['unit'] ?? '') . ' ' . ($i['freq'] ?? '') . ' ' . ($i['category'] ?? '')) ? 'service' : 'product'; }
 /** product | service | both, from the lines on a document. */
 function fx_scope(array $items): string { $k = array_values(array_unique(array_map('fx_kind', $items))); return count($k) > 1 ? 'both' : ($k[0] ?? 'service'); }
-function fx_ensure3(): void { static $done = false; if ($done) return; $done = true; try { if (!one("SHOW TABLES LIKE 'fin_comments'") || !col_exists_fx('fin_items', 'kind')) { require_once __DIR__ . '/migrate_fin3.php'; migrate_finance3(); } } catch (Throwable $e) { error_log('Finance schema: ' . $e->getMessage()); } }
+function fx_ensure3(): void { static $done = false; if ($done) return; $done = true; try { if (!one("SHOW TABLES LIKE 'fin_comments'") || !one("SHOW TABLES LIKE 'vendors'") || !one("SHOW TABLES LIKE 'fin_styles'") || !col_exists_fx('fin_items', 'kind')) { require_once __DIR__ . '/migrate_fin3.php'; migrate_finance3(); } } catch (Throwable $e) { error_log('Finance schema: ' . $e->getMessage()); } }
 function col_exists_fx(string $t, string $c): bool { return (bool)one('SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME=?', [$t, $c]); }
 function fx_doc(int $id, bool $items = true): ?array {
     $d = one('SELECT d.*, u.name AS created_by_name, t.title AS task_title FROM fin_docs d LEFT JOIN users u ON u.id=d.created_by LEFT JOIN tasks t ON t.id=d.task_id WHERE d.id=?', [$id]); if (!$d) return null;
@@ -56,7 +56,7 @@ function fx_doc(int $id, bool $items = true): ?array {
     return $d;
 }
 function fx_clean_items($raw): array {
-    $out = []; foreach (array_slice((array)$raw, 0, 100) as $i) { $desc = fx_s($i['description'] ?? '', 500); if (!$desc) continue; $note = fx_s($i['amount_note'] ?? '', 40); $qty = fx_num($i['qty'] ?? 1, 1); if (($qty <= 0 && !$note) || $qty < 0 || $qty > 1e7) fail('Quantity must be more than zero');
+    $out = []; foreach (array_slice((array)$raw, 0, 100) as $i) { $desc = fx_s($i['description'] ?? '', 500); $catg = fx_s($i['category'] ?? '', 120); if (!$desc && !$catg) continue; $desc = $desc ?? ''; $note = fx_s($i['amount_note'] ?? '', 40); $qty = fx_num($i['qty'] ?? 1, 1); if (($qty <= 0 && !$note) || $qty < 0 || $qty > 1e7) fail('Quantity must be more than zero');
         $price = fx_num($i['unit_price'] ?? 0); if ($price < 0 || $price > 1e10) fail('Unit price is not valid'); $out[] = ['description' => $desc, 'qty' => $qty, 'unit' => fx_s($i['unit'] ?? '', 30), 'unit_price' => $price, 'category' => fx_s($i['category'] ?? '', 120), 'freq' => fx_s($i['freq'] ?? '', 40), 'amount_note' => $note, 'kind' => in_array(($i['kind'] ?? ''), ['product', 'service'], true) ? $i['kind'] : null]; }
     return $out;
 }
@@ -121,7 +121,7 @@ if ($seg[0] === 'finance') {
         } elseif ($kind === 'contact') {
             foreach (all('SELECT ct.name,ct.email,c.name AS company FROM contacts ct LEFT JOIN companies c ON c.id=ct.company_id WHERE ct.name LIKE ? OR ct.email LIKE ? ORDER BY ct.name LIMIT 8', [$like, $like]) as $r) $res[] = ['source' => 'Contact', 'name' => $r['name'], 'email' => $r['email'] ?? '', 'label' => $r['name'] . ($r['company'] ? ' · ' . $r['company'] : '')];
         } elseif ($kind === 'product') {
-            foreach (all('SELECT name,description,unit,price,currency,kind FROM products WHERE name LIKE ? OR sku LIKE ? OR description LIKE ? OR category LIKE ? ORDER BY (name LIKE ?) DESC, name LIMIT 10', [$like, $like, $like, $like, $start]) as $r) $res[] = ['source' => $r['kind'] === 'service' ? 'Service' : 'Product', 'name' => $r['name'], 'description' => $r['description'], 'unit' => $r['unit'], 'price' => $r['price'] !== null ? (float)$r['price'] : null, 'currency' => $r['currency']];
+            foreach (all('SELECT p.name,p.description,p.unit,p.price,p.currency,p.kind,v.name AS vendor,v.email AS vendor_email FROM products p LEFT JOIN vendors v ON v.id=p.vendor_id WHERE p.name LIKE ? OR p.sku LIKE ? OR p.description LIKE ? OR p.category LIKE ? OR v.name LIKE ? ORDER BY (p.name LIKE ?) DESC, p.name LIMIT 10', [$like, $like, $like, $like, $like, $start]) as $r) $res[] = ['source' => $r['kind'] === 'service' ? 'Service' : 'Product', 'name' => $r['name'], 'description' => $r['description'], 'unit' => $r['unit'], 'price' => $r['price'] !== null ? (float)$r['price'] : null, 'currency' => $r['currency'], 'vendor' => $r['vendor'], 'vendor_email' => $r['vendor_email']];
         } else {
             foreach (all("SELECT id,number,doc_type,client_name FROM fin_docs WHERE doc_type IN ('proforma','commercial') AND status<>'void' AND (number LIKE ? OR client_name LIKE ?) ORDER BY id DESC LIMIT 8", [$like, $like]) as $r) $res[] = ['source' => $r['doc_type'] === 'proforma' ? 'Proforma' : 'Commercial', 'name' => $r['number'], 'label' => $r['number'] . ' · ' . $r['client_name'], 'client_name' => $r['client_name']];
         }
@@ -169,6 +169,7 @@ if ($seg[0] === 'finance') {
             $d['parent'] = $d['parent_id'] ? one('SELECT id,doc_type,number FROM fin_docs WHERE id=?', [$d['parent_id']]) : null;
             if ($d['doc_type'] === 'invoice') { $d['paid_total'] = (float)one("SELECT COALESCE(SUM(amount_paid),0) s FROM fin_docs WHERE doc_type='receipt' AND parent_id=? AND status<>'void'", [$sid])['s']; $d['balance'] = round($d['totals']['total'] - $d['paid_total'], 2); }
             $canReq = !$ro && ($fin || ($d['doc_type'] === 'requisition' && (int)($d['created_by'] ?? 0) === $uid)); $d['approval'] = ap_summary($u, $d, $canReq); $d['locked'] = $d['approval']['locked'];
+            require_once __DIR__ . '/finstyle.php'; $d['styles'] = fs_for_doc($d);
             out($d); }
         if ($act === 'approval') {   // Review > Request signature > Sign (or Revert), along the chain of command
             $x = $seg[4] ?? '';
@@ -193,6 +194,14 @@ if ($seg[0] === 'finance') {
                 q('INSERT INTO fin_comments (doc_id,user_id,to_user_id,body) VALUES (?,?,?,?)', [$sid, $uid, $to ?: null, mb_substr($txt, 0, 4000)]); $cid = (int)db()->lastInsertId(); $told = 0;
                 foreach ($to ? [$to] : array_keys($people) as $w) { ap_tell((int)$w, $u, 'doc_comment', $u['name'] . ' commented on ' . $d['number'], mb_substr($txt, 0, 140), $d, !empty($b['email']) || !array_key_exists('email', $b), $txt); $told++; }
                 out(['ok' => true, 'id' => $cid, 'notified' => $told], 201); }
+            fail('Bad request', 404);
+        }
+        if ($act === 'styles') {   // how the document looks (fonts, colours, spacing); Finance changes it, anyone who can open the document sees it
+            require_once __DIR__ . '/finstyle.php';
+            if ($method === 'GET') out(['styles' => fs_for_doc($d), 'can_edit' => $fin]);
+            if (!$fin) fail('Only Finance can change how documents look', 403);
+            if ($method === 'PUT' || $method === 'POST') { if (array_key_exists('type_styles', $b)) fs_put('type:' . $d['doc_type'], fs_clean($b['type_styles']), $uid); if (array_key_exists('doc_styles', $b)) fs_put('doc:' . $sid, fs_clean($b['doc_styles']), $uid); log_act($uid, 'fin_style', $d['number']); out(['ok' => true, 'styles' => fs_for_doc($d)]); }
+            if ($method === 'DELETE') { $sc = (string)($_GET['scope'] ?? ''); if ($sc === 'doc') fs_put('doc:' . $sid, [], $uid); elseif ($sc === 'type') fs_put('type:' . $d['doc_type'], [], $uid); else fail('Say which look to reset'); out(['ok' => true, 'styles' => fs_for_doc($d)]); }
             fail('Bad request', 404);
         }
         if ($act === 'export' && $method === 'GET') {   // Excel copy of a document, to edit or keep
@@ -260,15 +269,29 @@ if ($seg[0] === 'finance') {
 
 /* =============== PRODUCTS & SERVICES =============== */
 if ($seg[0] === 'catalog') {
+    fx_ensure3();
     $edit = $fin || in_array($role, ['super_admin', 'manager'], true); $id = isset($seg[1]) && ctype_digit($seg[1]) ? (int)$seg[1] : 0;
-    if ($method === 'GET' && !$id) out(['items' => all('SELECT * FROM products' . ($edit ? '' : ' WHERE published=1') . ' ORDER BY kind, category, name LIMIT 500'), 'can_edit' => $edit]);
+    if (($seg[1] ?? '') === 'vendors') {   // the suppliers behind products and services (staff who maintain the catalogue only)
+        if (!$edit) fail('Only managers, Finance and admins can see vendors', 403); $vid = isset($seg[2]) && ctype_digit($seg[2]) ? (int)$seg[2] : 0;
+        if ($method === 'GET') out(['vendors' => all('SELECT v.*, (SELECT COUNT(*) FROM products p WHERE p.vendor_id=v.id) AS items FROM vendors v ORDER BY v.name LIMIT 500')]);
+        $vf = function (array $b, ?array $o): array { $nm = fx_s($b['name'] ?? ($o['name'] ?? ''), 190); if (!$nm) fail('Enter the vendor name'); $em = fx_s($b['email'] ?? ($o['email'] ?? ''), 190); if ($em && !filter_var($em, FILTER_VALIDATE_EMAIL)) fail('That email address does not look right');
+            return [$nm, fx_s($b['contact_name'] ?? ($o['contact_name'] ?? ''), 160), $em, fx_s($b['phone'] ?? ($o['phone'] ?? ''), 60), fx_s($b['address'] ?? ($o['address'] ?? ''), 500), fx_s($b['notes'] ?? ($o['notes'] ?? ''), 2000)]; };
+        if ($method === 'POST' && !$vid) { $vals = $vf($b, null); if (one('SELECT id FROM vendors WHERE LOWER(name)=LOWER(?)', [$vals[0]])) fail('There is already a vendor with that name'); q('INSERT INTO vendors (name,contact_name,email,phone,address,notes,created_by) VALUES (?,?,?,?,?,?,?)', array_merge($vals, [$uid])); out(['id' => (int)db()->lastInsertId()], 201); }
+        if ($vid) { $o = one('SELECT * FROM vendors WHERE id=?', [$vid]); if (!$o) fail('Not found', 404);
+            if ($method === 'PATCH') { q('UPDATE vendors SET name=?,contact_name=?,email=?,phone=?,address=?,notes=? WHERE id=?', array_merge($vf($b, $o), [$vid])); out(['ok' => true]); }
+            if ($method === 'DELETE') { q('UPDATE products SET vendor_id=NULL WHERE vendor_id=?', [$vid]); q('DELETE FROM vendors WHERE id=?', [$vid]); out(['ok' => true]); } }
+        fail('Not found', 404);
+    }
+    if ($method === 'GET' && !$id) out(['items' => all('SELECT p.*' . ($edit ? ', v.name AS vendor_name' : '') . ' FROM products p' . ($edit ? ' LEFT JOIN vendors v ON v.id=p.vendor_id' : '') . ($edit ? '' : ' WHERE p.published=1') . ' ORDER BY p.kind, p.category, p.name LIMIT 500'), 'can_edit' => $edit]);
     if (!$edit) fail('Only managers, Finance and admins can change the catalogue', 403);
+    $vendorOf = function (array $b, ?array $o) use ($uid): ?int { if (array_key_exists('vendor_name', $b) && trim((string)$b['vendor_name']) !== '') { $nm = fx_s($b['vendor_name'], 190); $e = one('SELECT id FROM vendors WHERE LOWER(name)=LOWER(?)', [$nm]); if ($e) return (int)$e['id']; q('INSERT INTO vendors (name,created_by) VALUES (?,?)', [$nm, $uid]); return (int)db()->lastInsertId(); }
+        $v = array_key_exists('vendor_id', $b) ? $b['vendor_id'] : ($o['vendor_id'] ?? null); $v = (int)$v; return $v > 0 && one('SELECT id FROM vendors WHERE id=?', [$v]) ? $v : null; };
     $f = function (array $b, ?array $o): array { $name = fx_s($b['name'] ?? ($o['name'] ?? ''), 190); if (!$name) fail('Name is required'); $price = ($b['price'] ?? ($o['price'] ?? '')) === '' || ($b['price'] ?? ($o['price'] ?? null)) === null ? null : max(0, fx_num($b['price'] ?? $o['price']));
         $img = fx_s($b['image_url'] ?? ($o['image_url'] ?? ''), 500); if ($img && !preg_match('~^https://~i', $img)) fail('The picture link must start with https://');
         return [in((string)($b['kind'] ?? ($o['kind'] ?? '')), ['product', 'service'], 'service'), $name, fx_s($b['sku'] ?? ($o['sku'] ?? ''), 60), fx_s($b['category'] ?? ($o['category'] ?? ''), 80), fx_s($b['description'] ?? ($o['description'] ?? ''), 3000), fx_s($b['unit'] ?? ($o['unit'] ?? ''), 30), $price, fx_cur($b['currency'] ?? ($o['currency'] ?? 'USD')), (int)(bool)($b['published'] ?? ($o['published'] ?? 1)), $img]; };
-    if ($method === 'POST' && !$id) { q('INSERT INTO products (kind,name,sku,category,description,unit,price,currency,published,image_url,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)', array_merge($f($b, null), [$uid])); out(['id' => (int)db()->lastInsertId()], 201); }
+    if ($method === 'POST' && !$id) { q('INSERT INTO products (kind,name,sku,category,description,unit,price,currency,published,image_url,vendor_id,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)', array_merge($f($b, null), [$vendorOf($b, null), $uid])); out(['id' => (int)db()->lastInsertId()], 201); }
     if ($id) { $o = one('SELECT * FROM products WHERE id=?', [$id]); if (!$o) fail('Not found', 404);
-        if ($method === 'PATCH') { q('UPDATE products SET kind=?,name=?,sku=?,category=?,description=?,unit=?,price=?,currency=?,published=?,image_url=? WHERE id=?', array_merge($f($b, $o), [$id])); out(['ok' => true]); }
+        if ($method === 'PATCH') { q('UPDATE products SET kind=?,name=?,sku=?,category=?,description=?,unit=?,price=?,currency=?,published=?,image_url=?,vendor_id=? WHERE id=?', array_merge($f($b, $o), [$vendorOf($b, $o), $id])); out(['ok' => true]); }
         if ($method === 'DELETE') { q('DELETE FROM products WHERE id=?', [$id]); out(['ok' => true]); } }
     fail('Not found', 404);
 }

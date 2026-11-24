@@ -17,6 +17,14 @@ const PR_TYPES = [
         'q' => '{kw} {region} project OR investment OR expansion OR commissioning OR new facility'],
     'hires' => ['label' => 'New hires & appointments', 'icon' => '🧑‍💼', 'weight' => 2.0, 'category' => null, 'domains' => ['linkedin.com'],
         'q' => 'appointed OR "joins as" OR "new role" OR "excited to join" head OR manager OR director {kw} {region}'],
+    'partners' => ['label' => 'Partners', 'icon' => '🤝', 'weight' => 2.0, 'category' => null, 'domains' => [],
+        'q' => '{kw} "strategic partner" OR "partnership" OR "joint venture" OR "teaming agreement" OR "looking for partners" OR "local partner" OR distributor OR reseller OR agent {region}'],
+    'vendors' => ['label' => 'Vendors & suppliers', 'icon' => '🏭', 'weight' => 2.5, 'category' => null, 'domains' => [],
+        'q' => '{kw} "vendor registration" OR "supplier registration" OR prequalification OR "pre-qualification" OR "approved vendor list" OR "supplier portal" OR "become a supplier" OR manufacturer OR "authorised dealer" {region}'],
+    'franchise' => ['label' => 'Franchise & licensing', 'icon' => '🏷️', 'weight' => 1.5, 'category' => null, 'domains' => [],
+        'q' => '{kw} franchise OR franchising OR "master franchise" OR "licence agreement" OR licensing OR "master distributor" OR "area developer" {region}'],
+    'opportunities' => ['label' => 'Opportunities', 'icon' => '💡', 'weight' => 2.5, 'category' => null, 'domains' => [],
+        'q' => '{kw} "call for proposals" OR "expression of interest" OR "request for information" OR "invitation to bid" OR grant OR funding OR "business opportunity" OR "new opportunity" {region}'],
     'social' => ['label' => 'Social signals', 'icon' => '💬', 'weight' => 1.0, 'category' => null, 'domains' => ['linkedin.com', 'x.com', 'twitter.com', 'facebook.com'],
         'q' => 'looking for OR "we need" OR "anyone recommend" OR "seeking" OR RFP {kw} {region}'],
 ];
@@ -176,6 +184,11 @@ if (isset($seg) && ($seg[0] ?? '') === 'prospecting') {
     if ($what === 'signals' && ctype_digit($seg[2] ?? '')) {
         $sg = one('SELECT * FROM pr_signals WHERE id=?', [(int)$seg[2]]); if (!$sg) fail('Not found', 404); $act = $seg[3] ?? '';
         if ($method === 'POST' && $act === 'dig') { try { $f = pr_dig($sg); } catch (RuntimeException $e) { fail($e->getMessage(), 400); } log_act($uid, 'prospect_dig', mb_substr($sg['title'], 0, 120)); $row = one('SELECT s.*, NULL AS watch_name FROM pr_signals s WHERE s.id=?', [$sg['id']]); out(['ok' => true, 'signal' => pr_out($row), 'errors' => $f['errors'] ?? []]); }
+        if ($method === 'POST' && $act === 'vendor') {   // a supplier found while prospecting becomes a vendor, ready to be tied to products and services
+            try { one('SELECT 1 FROM vendors LIMIT 1'); } catch (Throwable $e) { require_once __DIR__ . '/migrate_fin3.php'; migrate_finance3(); }
+            $nm = pr_str($b['name'] ?? ($sg['company_guess'] ?: $sg['domain']), 190); if ($nm === '') fail('Enter the vendor name'); $em = pr_str($b['email'] ?? '', 190); if ($em !== '' && !filter_var($em, FILTER_VALIDATE_EMAIL)) fail('That email address does not look right');
+            $ex = one('SELECT id FROM vendors WHERE LOWER(name)=LOWER(?)', [$nm]); if ($ex) $vid = (int)$ex['id']; else { q('INSERT INTO vendors (name,contact_name,email,phone,address,notes,created_by) VALUES (?,?,?,?,?,?,?)', [$nm, pr_str($b['contact_name'] ?? '', 160) ?: null, $em ?: null, pr_str($b['phone'] ?? '', 60) ?: null, null, 'Found while prospecting: ' . $sg['url'], $uid]); $vid = (int)db()->lastInsertId(); }
+            q("UPDATE pr_signals SET status='saved' WHERE id=? AND status='new'", [$sg['id']]); log_act($uid, 'prospect_vendor', $nm); out(['ok' => true, 'vendor_id' => $vid, 'existing' => (bool)$ex]); }
         if ($method === 'POST' && ($act === 'save' || $act === 'dismiss')) { q('UPDATE pr_signals SET status=? WHERE id=?', [$act === 'save' ? 'saved' : 'dismissed', $sg['id']]); out(['ok' => true]); }
         if ($method === 'POST' && $act === 'lead') {   // a signal becomes a company in the Pipeline, an optional contact, and a research task
             $name = pr_str($b['company'] ?? $sg['company_guess'], 190); if ($name === '') fail('Enter the company name'); $note = pr_str($b['note'] ?? '', 4000);
