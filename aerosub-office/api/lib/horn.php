@@ -10,7 +10,7 @@ $u = need_user(); $uid = (int)$u['id']; $sub = $seg[1] ?? ''; $hid = ctype_digit
 try { if (!one("SHOW TABLES LIKE 'task_horns'")) { require_once __DIR__ . '/migrate_fin3.php'; migrate_fin_ext(); } } catch (Throwable $e) { error_log('Horn schema: ' . $e->getMessage()); }
 const HORN_REPLIES = ['on_it' => 'On it 💪', 'paused' => 'Paused ⏸️', 'angry' => '😠', 'almost' => 'Almost done! 🏁'];
 function horn_pub(array $r): array {
-    return ['id' => (int)$r['id'], 'task_id' => (int)$r['task_id'], 'task' => $r['task_title'], 'from' => $r['from_name'], 'message' => $r['message'], 'created_at' => $r['created_at'], 'snoozes' => (int)$r['snoozes'], 'status' => $r['status']];
+    return ['id' => (int)$r['id'], 'task_id' => (int)$r['task_id'], 'task' => $r['task_title'], 'from' => $r['from_name'], 'message' => $r['message'], 'created_at' => $r['created_at'], 'snoozes' => (int)$r['snoozes'], 'status' => $r['status'], 'loud' => (int)($r['task_assignee'] ?? 0) === (int)$r['to_user_id']];   // the trumpet sounds only for the person the task is assigned to
 }
 if ($method === 'POST' && $sub === '') {
     $b = body(); $tid = (int)($b['task_id'] ?? 0); $t = $tid ? one('SELECT id,title,assignee_id,creator_id,status FROM tasks WHERE id=?', [$tid]) : null; if (!$t) fail('Task not found', 404);
@@ -28,7 +28,7 @@ if ($method === 'POST' && $sub === '') {
     out(['ok' => true, 'id' => $id], 201);
 }
 if ($method === 'GET' && $sub === 'inbox') {
-    out(['horns' => array_map('horn_pub', all("SELECT h.*, t.title AS task_title, u.name AS from_name FROM task_horns h JOIN tasks t ON t.id=h.task_id JOIN users u ON u.id=h.from_user_id WHERE h.to_user_id=? AND t.status NOT IN ('done','canceled') AND (h.status='open' OR (h.status='snoozed' AND h.snooze_until <= NOW())) ORDER BY h.id DESC LIMIT 5", [$uid]))]);
+    out(['horns' => array_map('horn_pub', all("SELECT h.*, t.title AS task_title, t.assignee_id AS task_assignee, u.name AS from_name FROM task_horns h JOIN tasks t ON t.id=h.task_id JOIN users u ON u.id=h.from_user_id WHERE h.to_user_id=? AND t.status NOT IN ('done','canceled') AND (h.status='open' OR (h.status='snoozed' AND h.snooze_until <= NOW())) ORDER BY h.id DESC LIMIT 5", [$uid]))]);
 }
 if ($method === 'GET' && $sub === 'task') {
     $tid = (int)($seg[2] ?? 0); $t = one('SELECT creator_id,assignee_id FROM tasks WHERE id=?', [$tid]); if (!$t) fail('Not found', 404); $boss = (int)$t['creator_id'] === $uid || in_array($u['role'], ['super_admin', 'manager'], true);

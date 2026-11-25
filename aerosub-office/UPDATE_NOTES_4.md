@@ -279,3 +279,5 @@ This update does not replace `index.html`, `sw.js`, `upgrade.php` or `api/lib/mi
 - **Assistant bubble:** in ⚙ Settings the Super Admin can untick "Show the ✨ bubble to staff". It disappears for everyone else; the Super Admin keeps a faded one to get back to the settings.
 - **Mail panes:** drag the bars between folders, message list and reading pane to resize them (arrow keys work too), press the ‹ › button on a bar to fold or unfold a pane, double-click a bar to reset. Sizes are remembered on that device.
 - Fixes: picture upload for letterheads used a file helper that another script had replaced; it now has its own.
+
+- **Horn sound:** the trumpet now sounds only on the screen of the person the task is assigned to. The person who blows it no longer hears it, and a horn blown back at the person who gave the task appears as a silent pop-up. If the task moves to someone else, the old assignee no longer hears it.

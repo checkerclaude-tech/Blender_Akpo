@@ -42,7 +42,7 @@
       '<div class="horn-btns">' + REPLIES.map(([k, l]) => '<button class="horn-b" data-r="' + k + '">' + l + '</button>').join('') + '</div>' +
       '<div class="horn-snz"><label class="small" for="hp-s' + h.id + '">😴 Snooze</label><select id="hp-s' + h.id + '"><option value="5">5 minutes</option><option value="15" selected>15 minutes</option><option value="30">30 minutes</option><option value="60">1 hour</option></select><button class="horn-b ghost" data-snz="1">Snooze</button><button class="horn-b ghost" data-snd="1" title="Play the horn again">🔊</button></div><div class="horn-hint small" hidden>🔇 Tap anywhere to let the horn sound on this screen.</div></div>';
     document.body.appendChild(el); const st = { el, plays: 0, timer: null }; shown.set(h.id, st); document.documentElement.classList.add('horn-on');
-    const hint = $('.horn-hint', el); const play = () => { const ok = blare(1); st.plays++; hint.hidden = ok; return ok; };
+    const hint = $('.horn-hint', el); if (!h.loud) { const hh = $('.horn-ic', el); if (hh) hh.style.animation = 'none'; } const play = () => { if (!h.loud) { st.plays++; hint.hidden = true; return true; } const ok = blare(1); st.plays++; hint.hidden = ok; return ok; };   // silent for anyone but the person the task is assigned to
     play(); st.timer = setInterval(() => { if (st.plays < 6) play(); else clearInterval(st.timer); }, 25000);   // keeps calling every 25 s, up to six times, until answered
     const close = () => { clearInterval(st.timer); el.remove(); shown.delete(h.id); if (!shown.size) document.documentElement.classList.remove('horn-on'); };
     const send = async (data, thanks) => { $$('button', el).forEach(b => b.disabled = true); try { await api('horn/' + h.id + '/reply', { method: 'POST', data }); close(); toast(thanks); } catch (e) { $$('button', el).forEach(b => b.disabled = false); toast(e.message); } };
@@ -81,7 +81,7 @@
     $('#cx', m).onclick = () => m.close();
     api('horn/task/' + t.id).then(r => { if (r.horns.length) $('#hh', m).innerHTML = '<b>Earlier</b><br>' + r.horns.slice(0, 4).map(x => esc(x.to) + ': “' + esc(x.message) + '” · ' + (x.reply ? esc(x.reply) : x.status === 'snoozed' ? '😴 snoozed' : x.status === 'open' ? 'waiting for an answer' : 'answered')).join('<br>'); }).catch(() => {});
     $('#hs', m).onclick = async () => { unlock(); $('#hs', m).disabled = true; $('#er', m).textContent = '';
-      try { await api('horn', { method: 'POST', data: { task_id: t.id, message: inp.value.trim() } }); blare(1); m.close(); toast('📯 Horn blown at ' + ((to && to.name) || 'them') + '. You will be told how they answer.'); }
+      try { await api('horn', { method: 'POST', data: { task_id: t.id, message: inp.value.trim() } }); m.close(); toast('📯 Horn blown at ' + ((to && to.name) || 'them') + '. You will be told how they answer.'); }
       catch (e) { $('#er', m).textContent = e.message; $('#hs', m).disabled = false; } };
     inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('#hs', m).click(); } });
   }
