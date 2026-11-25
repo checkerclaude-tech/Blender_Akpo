@@ -305,6 +305,8 @@ case 'tasks':
         if (!empty($_GET['company_id'])) { $where[] = 't.company_id=?'; $p[] = (int)$_GET['company_id']; }
         if (!empty($_GET['type'])) { $where[] = 't.task_type=?'; $p[] = $_GET['type']; }
         if (!empty($_GET['shared'])) { $where[] = 'EXISTS(SELECT 1 FROM task_shares tz WHERE tz.task_id=t.id AND tz.user_id=?)'; $p[] = $uid; }
+        if (!empty($_GET['creator'])) { $where[] = 't.creator_id=? AND (t.assignee_id IS NULL OR t.assignee_id<>?)'; array_push($p, $uid, $uid); }   // tasks I gave to other people
+        if (!empty($_GET['shared_by'])) { $where[] = 'EXISTS(SELECT 1 FROM task_shares tb WHERE tb.task_id=t.id AND tb.shared_by=?)'; $p[] = $uid; }   // tasks I shared with other people
         if (!empty($_GET['meetings'])) { $where[] = "t.task_type='meeting' AND (t.assignee_id=? OR t.creator_id=? OR EXISTS(SELECT 1 FROM task_shares tm WHERE tm.task_id=t.id AND tm.user_id=?))"; array_push($p, $uid, $uid, $uid); }
         out(all("$sel WHERE " . implode(' AND ', $where) . " ORDER BY t.status='done', t.due_date IS NULL, t.due_date, FIELD(t.priority,'urgent','high','medium','low') LIMIT 500", $p));
     }

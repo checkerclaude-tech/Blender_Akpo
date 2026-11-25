@@ -10,8 +10,15 @@ declare(strict_types=1);
 //   GET  finance/rfqs[?status=&q=]   POST finance/rfqs (add by hand)   GET|PATCH finance/rfqs/{id}   POST finance/rfqs/scan   GET|PUT finance/rfqs/settings
 //   POST finance/rfqs/{id}/po {po_number}   POST finance/rfqs/{id}/delivery {delivery_date,delivery_address,items?}   POST finance/rfqs/{id}/payment {amount,date,reference}
 //   GET|PATCH finance/delivery/{id}   POST finance/delivery/{id}/sign   POST finance/delivery/{id}/printed
-require_once __DIR__ . '/mail.php'; require_once __DIR__ . '/inboxauto.php';
+require_once __DIR__ . '/mail.php'; require_once __DIR__ . '/inboxauto.php'; require_once __DIR__ . '/rfqread.php';
 
+/** Only senders on the allowed list are ever read. Entries: an address (buyer@client.com), a whole domain (@client.com or client.com). An empty list allows nobody. */
+function rfq_allow_list(?string $raw): array { $o = []; foreach (preg_split('/[\s,;]+/', strtolower((string)$raw)) as $e) { $e = trim($e, " <>\t\"'"); if ($e === '') continue; $e = preg_replace('/^\*@/', '@', $e); if (preg_match('/^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$/', $e) || preg_match('/^@?[a-z0-9\-]+(\.[a-z0-9\-]+)*\.[a-z]{2,}$/', $e)) $o[$e] = 1; } return array_slice(array_keys($o), 0, 300); }
+function rfq_allowed(string $email, ?string $raw): bool { $email = strtolower(trim($email)); $dom = substr(strrchr($email, '@') ?: '', 1); if ($email === '' || $dom === '') return false; foreach (rfq_allow_list($raw) as $e) { if ($e === $email) return true; $d = ltrim($e, '@'); if (!str_contains($e, '@') || $e[0] === '@') { if ($dom === $d || str_ends_with($dom, '.' . $d)) return true; } } return false; }
+function rfq_dir(): string { $dir = (string)(cfg('storage_dir') ?: dirname(__DIR__) . '/storage') . '/rfq'; if (!is_dir($dir)) @mkdir($dir, 0775, true); $root = dirname($dir); if (!is_file($root . '/.htaccess')) { @file_put_contents($root . '/.htaccess', "Require all denied\nDeny from all\n"); @file_put_contents($root . '/index.html', ''); } return $dir; }
+function rfq_save_files(int $id, string $kind, array $files): void { foreach (array_slice($files, 0, 6) as $f) { $rel = bin2hex(random_bytes(16)); if (@file_put_contents(rfq_dir() . '/' . $rel, $f['data']) === false) continue; q('INSERT INTO rfq_files (rfq_id,kind,name,mime,size,path) VALUES (?,?,?,?,?,?)', [$id, $kind, $f['name'], mb_substr((string)$f['mime'], 0, 100), strlen($f['data']), $rel]); } }
+function rfq_store_items(int $id, array $ex): void { if (!$ex['items']) return; q('UPDATE rfqs SET items_json=?, items_source=? WHERE id=?', [json_encode($ex['items'], JSON_UNESCAPED_UNICODE), mb_substr($ex['source'], 0, 190), $id]); rfq_event($id, 'items', count($ex['items']) . ' item' . (count($ex['items']) === 1 ? '' : 's') . ' read from ' . $ex['source']); }
+function rfq_items_line(array $items): string { $o = []; foreach (array_slice($items, 0, 12) as $i => $it) $o[] = ($i + 1) . '. ' . mb_substr((string)$it['description'], 0, 90) . ' - ' . rtrim(rtrim(number_format((float)$it['qty'], 2, '.', ''), '0'), '.') . ' ' . $it['unit']; return implode("\n", $o) . (count($items) > 12 ? "\n… and " . (count($items) - 12) . ' more' : ''); }
 function rfq_ensure(): void {
     static $d = false; if ($d) return; $d = true;
     try { if (!one("SHOW TABLES LIKE 'rfqs'") || !one("SHOW TABLES LIKE 'delivery_notes'")) { require_once __DIR__ . '/migrate_fin3.php'; migrate_fin_ext(); } } catch (Throwable $e) { error_log('RFQ schema: ' . $e->getMessage()); }
@@ -51,6 +58,7 @@ function rfq_task(int $rfqId, string $title, string $desc, ?string $due, array $
 }
 /** One email. Returns 'rfq' | 'po' | 'followup' | '' */
 function rfq_handle_mail(array $acc, array $actor, array $st, array $m): string {
+    $ex = isset($m['x']) ? rfq_extract($m['x']) : ['items' => [], 'source' => '', 'files' => []];
     $subj = (string)$m['subject']; $body = (string)$m['text']; $from = strtolower((string)$m['from_email']); $all = $subj . "\n" . $body . "\n" . implode(' ', $m['att_names'] ?? []); $norm = rfq_norm($all);
     // a purchase order for one of our open RFQs (its code appears in the mail, or in a file name)
     $open = all("SELECT * FROM rfqs WHERE status IN ('new','quoting','quoted') AND LENGTH(code)>=4 ORDER BY id DESC LIMIT 400"); $hit = null;
@@ -60,32 +68,41 @@ function rfq_handle_mail(array $acc, array $actor, array $st, array $m): string 
         $dd2 = preg_match('/(deliver(?:y|ed)?)[^.\n]{0,40}?(?:by|on|before|date|within|:)[^0-9A-Za-z]{0,6}(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}|\d{4}-\d{2}-\d{2}|\d{1,2}(?:st|nd|rd|th)?\s+(?:of\s+)?[A-Za-z]{3,9},?\s+\d{4})/i', mb_substr($body, 0, 4000), $mm) ? rfq_find_date('due by ' . $mm[2]) : null;
         if ($dd2) q('UPDATE rfqs SET delivery_due=? WHERE id=?', [$dd2, (int)$hit['id']]);
         q("UPDATE rfqs SET status='po_received', po_number=?, po_received_at=?, po_from=?, po_subject=?, po_files=?, po_task_id=? WHERE id=?", [mb_substr($po, 0, 80), $m['date'] ?: date('Y-m-d H:i:s'), mb_substr($m['from_email'], 0, 190), mb_substr($subj, 0, 300), mb_substr(implode(', ', $m['att_names'] ?? []), 0, 480) ?: null, $tid, (int)$hit['id']]);
+        rfq_save_files((int)$hit['id'], 'po', $ex['files']); if ($ex['items'] && !$hit['items_json']) rfq_store_items((int)$hit['id'], $ex);
         if ($hit['task_id']) q("UPDATE tasks SET status='done', completed_at=NOW() WHERE id=? AND status<>'done'", [(int)$hit['task_id']]);
         rfq_event((int)$hit['id'], 'po', 'Purchase order ' . $po . ' received from ' . $m['from_email']); foreach (array_unique(array_filter([(int)$hit['created_by']])) as $n) notify($n, 'rfq_po', '📨 PO received for RFQ ' . $hit['code'], 'PO ' . $po, '#/finance/rfqs'); return 'po';
     }
-    if (!preg_match(RFQ_WORDS, $subj . ' ' . mb_substr($body, 0, 1500))) return '';
+    if (!preg_match(RFQ_WORDS, $subj . ' ' . mb_substr($body, 0, 1500) . ' ' . implode(' ', $m['att_names'] ?? []))) return '';
     $code = rfq_find_code($subj, $body); $src = 'email'; if ($code === null) { $code = rfq_next_code(); $src = 'generated'; }
     $dup = one('SELECT id FROM rfqs WHERE code=? AND (client_email=? OR client_email IS NULL) ORDER BY id DESC LIMIT 1', [$code, $from]);
-    if ($dup) { rfq_event((int)$dup['id'], 'mail', 'Another email about this RFQ from ' . $m['from_email'] . ': ' . mb_substr($subj, 0, 120)); return 'followup'; }
+    if ($dup) { rfq_event((int)$dup['id'], 'mail', 'Another email about this RFQ from ' . $m['from_email'] . ': ' . mb_substr($subj, 0, 120)); rfq_save_files((int)$dup['id'], 'rfq', $ex['files']); if ($ex['items'] && !one('SELECT items_json FROM rfqs WHERE id=?', [(int)$dup['id']])['items_json']) rfq_store_items((int)$dup['id'], $ex); return 'followup'; }
     $name = trim((string)($m['from_name'] ?? '')); $co = ia_company_for($from, $name, false); $client = $co['name'] ?? ($name !== '' ? $name : ucfirst(explode('.', explode('@', substr(strrchr($from, '@') ?: '@', 1))[0])[0]));
     $due = rfq_find_date($subj . "\n" . $body); $snip = mb_substr(trim(preg_replace('/\s+/', ' ', $body)), 0, 600);
     $desc = trim(preg_replace('/^(re|fw|fwd)\s*:\s*|\b(rfq|request for (quotation|quote))\b[\s#:.\-]*' . preg_quote((string)$code, '/') . '[\s:.\-]*/i', '', $subj)) ?: $subj;
     q('INSERT INTO rfqs (code,code_source,client_name,client_email,subject,description,buyer_details,snippet,received_at,due_date,msg_key,account_id,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)', [mb_substr($code, 0, 80), $src, mb_substr($client, 0, 190), mb_substr($from, 0, 190), mb_substr($subj, 0, 300), mb_substr($desc, 0, 500), mb_substr($from, 0, 480), $snip, $m['date'] ?: date('Y-m-d H:i:s'), $due, $m['msg_key'], (int)$acc['id'], (int)$actor['id']]);
-    $id = (int)db()->lastInsertId(); $tid = rfq_task($id, 'Create proforma / quotation: ' . $client . ' (RFQ ' . $code . ')', "Request for quotation received from " . ($name ?: $from) . " <" . $from . ">\nRFQ code: " . $code . ($src === 'generated' ? ' (the sender gave no code, so we made one)' : '') . ($due ? "\nClosing date: " . $due : '') . "\nSubject: " . $subj . "\n\nOpen the RFQ tracker (Finance → RFQs) and press “Create quotation”.", $due, $st, $actor);
+    $id = (int)db()->lastInsertId(); rfq_save_files($id, 'rfq', $ex['files']); rfq_store_items($id, $ex); if (!$ex['items']) rfq_event($id, 'items', 'No list of items could be read from the email or its files. Add the items in the tracker.');
+    $itemsNote = $ex['items'] ? "\n\nItems requested (read from " . $ex['source'] . "):\n" . rfq_items_line($ex['items']) : "\n\nNo list of items could be read from the email or its files: open the RFQ and add them.";
+    $tid = rfq_task($id, 'Create proforma / quotation: ' . $client . ' (RFQ ' . $code . ')', "Request for quotation received from " . ($name ?: $from) . " <" . $from . ">\nRFQ code: " . $code . ($src === 'generated' ? ' (the sender gave no code, so we made one)' : '') . ($due ? "\nClosing date: " . $due : '') . "\nSubject: " . $subj . "" . $itemsNote . "\n\nOpen the RFQ tracker (Finance → RFQs) and press “Create quotation”: the items are copied into it.", $due, $st, $actor);
     q('UPDATE rfqs SET task_id=? WHERE id=?', [$tid, $id]); rfq_event($id, 'new', 'RFQ received from ' . $from . ' · code ' . $code . ($src === 'generated' ? ' (made by us)' : '')); return 'rfq';
 }
 function rfq_scan(array $acc, array $actor, int $days = 7, int $limit = 80): array {
-    rfq_ensure(); $st = rfq_settings(); $im = ia_imap($acc); $im->select('INBOX'); $since = date('d-M-Y', strtotime('-' . max(1, min(60, $days)) . ' days')); $uids = array_slice($im->search('SINCE ' . $since), -max(1, min(200, $limit))); $r = ['rfqs' => 0, 'pos' => 0, 'followups' => 0, 'looked_at' => count($uids)];
-    $skip = (array)(ia_settings()['skip'] ?? []);
-    foreach (array_reverse($uids) as $uid) {
-        try { $raw = $im->fetchRaw((int)$uid, 600000); $x = mime_extract($raw); $h = $x['headers']; $fr = mime_addr_list($h['from'] ?? ''); if (!$fr) continue; $mid = trim((string)($h['message-id'] ?? '')); $key = sha1('rfq|' . $acc['id'] . '|' . ($mid ?: 'INBOX' . $uid));
-            if (one('SELECT msg_key FROM rfq_msgs WHERE msg_key=?', [$key])) continue; $subject = mime_decode_header($h['subject'] ?? ''); $fe = strtolower((string)$fr[0]['email']);
-            q('INSERT IGNORE INTO rfq_msgs (msg_key,kind) VALUES (?,?)', [$key, 'seen']); if (ia_skip_reason($h, $fe, $subject, (string)$acc['email'], $skip) !== '') continue;
-            $res = rfq_handle_mail($acc, $actor, $st, ['subject' => $subject, 'text' => (string)$x['text'], 'from_email' => $fe, 'from_name' => (string)($fr[0]['name'] ?? ''), 'date' => mime_date($h['date'] ?? ''), 'msg_key' => $key, 'att_names' => array_map(fn($a) => (string)$a['name'], $x['attachments'] ?? [])]);
-            if ($res) { q('UPDATE rfq_msgs SET kind=? WHERE msg_key=?', [$res, $key]); $r[$res === 'rfq' ? 'rfqs' : ($res === 'po' ? 'pos' : 'followups')]++; }
-        } catch (Throwable $e) { error_log('RFQ scan: ' . $e->getMessage()); }
+    rfq_ensure(); $st = rfq_settings(); $allow = (string)($st['allowed_senders'] ?? ''); $r = ['rfqs' => 0, 'pos' => 0, 'followups' => 0, 'looked_at' => 0, 'ignored' => []];
+    if (!rfq_allow_list($allow)) return $r + ['no_allowed' => true];   // nobody is allowed yet: nothing is read, nothing is kept
+    $im = ia_imap($acc); $im->select('INBOX'); $since = date('d-M-Y', strtotime('-' . max(1, min(60, $days)) . ' days')); $uids = array_slice($im->search('SINCE ' . $since), -max(1, min(200, $limit))); $r['looked_at'] = count($uids);
+    foreach (array_chunk(array_reverse($uids), 40) as $chunk) {
+        try { $hh = $im->headers($chunk); } catch (Throwable $e) { error_log('RFQ headers: ' . $e->getMessage()); continue; }
+        foreach ($chunk as $uid) {
+            try { $hd = $hh[$uid] ?? null; if (!$hd || empty($hd['from'])) continue; $fe = strtolower((string)$hd['from'][0]['email']);
+                if (!rfq_allowed($fe, $allow)) { $r['ignored'][$fe] = ($r['ignored'][$fe] ?? 0) + 1; continue; }   // not on the list: never opened, never saved
+                $key = sha1('rfq|' . $acc['id'] . '|' . ($hd['message_id'] ?: 'INBOX' . $uid)); if (one('SELECT msg_key FROM rfq_msgs WHERE msg_key=?', [$key])) continue;
+                $raw = $im->fetchRaw((int)$uid, 16000000); $x = mime_extract($raw); $h = $x['headers']; $subject = mime_decode_header($h['subject'] ?? ''); q('INSERT IGNORE INTO rfq_msgs (msg_key,kind) VALUES (?,?)', [$key, 'seen']);
+                $why = ia_skip_reason($h, $fe, $subject, (string)$acc['email'], []); if ($why !== '' && $why !== 'From our own team') continue;   // automatic mail is still skipped; a colleague on the allowed list is fine
+                $res = rfq_handle_mail($acc, $actor, $st, ['subject' => $subject, 'text' => (string)$x['text'], 'from_email' => $fe, 'from_name' => (string)($hd['from'][0]['name'] ?? ''), 'date' => mime_date($h['date'] ?? ''), 'msg_key' => $key, 'att_names' => array_map(fn($a) => (string)$a['name'], $x['attachments'] ?? []), 'x' => $x]);
+                if ($res) { q('UPDATE rfq_msgs SET kind=? WHERE msg_key=?', [$res, $key]); $r[$res === 'rfq' ? 'rfqs' : ($res === 'po' ? 'pos' : 'followups')]++; }
+            } catch (Throwable $e) { error_log('RFQ scan: ' . $e->getMessage()); }
+        }
     }
-    q('UPDATE rfq_settings SET last_scan_at=NOW() WHERE id=1'); return $r;
+    arsort($r['ignored']); $r['ignored'] = array_slice($r['ignored'], 0, 12, true); q('UPDATE rfq_settings SET last_scan_at=NOW() WHERE id=1'); return $r;
 }
 /** The quotation made in Finance for an RFQ: matched by RFQ reference or by the action task. Marks "quoted" once it has been sent. */
 function rfq_sync_quotes(): void {
@@ -162,7 +179,7 @@ if (!$fin) fail('The RFQ tracker is for the finance team', 403);
 function rfq_dto(array $r): array {
     return ['id' => (int)$r['id'], 'code' => $r['code'], 'code_source' => $r['code_source'], 'client_name' => $r['client_name'], 'client_email' => $r['client_email'], 'subject' => $r['subject'], 'received_at' => $r['received_at'], 'due_date' => $r['due_date'], 'status' => $r['status'], 'task_id' => $r['task_id'] ? (int)$r['task_id'] : null,
         'quote_doc_id' => $r['quote_doc_id'] ? (int)$r['quote_doc_id'] : null, 'quote_number' => $r['quote_number'], 'quote_total' => $r['quote_total'] !== null ? (float)$r['quote_total'] : null, 'currency' => $r['currency'], 'quoted_at' => $r['quoted_at'], 'po_number' => $r['po_number'], 'po_received_at' => $r['po_received_at'], 'po_from' => $r['po_from'], 'po_files' => $r['po_files'],
-        'description' => $r['description'] ?? null, 'po_description' => $r['po_description'] ?? null, 'delivery_due' => $r['delivery_due'] ?? null, 'invoice_status' => $r['invoice_status'] ?? null, 'po_comments' => $r['po_comments'] ?? null, 'buyer_details' => $r['buyer_details'] ?? null, 'delivery_date' => $r['delivery_date'], 'paid_at' => $r['paid_at'], 'paid_amount' => $r['paid_amount'] !== null ? (float)$r['paid_amount'] : null, 'pay_ref' => $r['pay_ref'], 'notes' => $r['notes'], 'updated_at' => $r['updated_at']];
+        'items' => json_decode((string)($r['items_json'] ?? ''), true) ?: [], 'items_source' => $r['items_source'] ?? null, 'description' => $r['description'] ?? null, 'po_description' => $r['po_description'] ?? null, 'delivery_due' => $r['delivery_due'] ?? null, 'invoice_status' => $r['invoice_status'] ?? null, 'po_comments' => $r['po_comments'] ?? null, 'buyer_details' => $r['buyer_details'] ?? null, 'delivery_date' => $r['delivery_date'], 'paid_at' => $r['paid_at'], 'paid_amount' => $r['paid_amount'] !== null ? (float)$r['paid_amount'] : null, 'pay_ref' => $r['pay_ref'], 'notes' => $r['notes'], 'updated_at' => $r['updated_at']];
 }
 function dn_dto(array $d): array {
     return ['id' => (int)$d['id'], 'number' => $d['number'], 'rfq_id' => $d['rfq_id'] ? (int)$d['rfq_id'] : null, 'rfq_code' => $d['rfq_code'], 'client_name' => $d['client_name'], 'client_address' => $d['client_address'], 'po_number' => $d['po_number'], 'delivery_date' => $d['delivery_date'], 'delivery_address' => $d['delivery_address'], 'items' => json_decode((string)$d['items'], true) ?: [], 'notes' => $d['notes'],
@@ -173,11 +190,11 @@ if ($sub === 'rfqs') {
     if ($act === 'settings') {
         $st = rfq_settings();
         if ($method === 'GET') { $mine = all('SELECT id,email FROM mail_accounts WHERE user_id=? ORDER BY id', [$uid]); $sel = array_filter(array_map('intval', explode(',', (string)($st['mailbox_ids'] ?? ''))));
-            out(['enabled' => (bool)$st['enabled'], 'mailboxes' => array_map(fn($a) => ['id' => (int)$a['id'], 'email' => $a['email'], 'on' => in_array((int)$a['id'], $sel, true)], $mine), 'others' => all('SELECT id,email FROM mail_accounts WHERE id IN (' . ($sel ? implode(',', $sel) : '0') . ') AND user_id<>?', [$uid]), 'assign_user_id' => $st['assign_user_id'] ? (int)$st['assign_user_id'] : null,
+            out(['enabled' => (bool)$st['enabled'], 'mailboxes' => array_map(fn($a) => ['id' => (int)$a['id'], 'email' => $a['email'], 'on' => in_array((int)$a['id'], $sel, true)], $mine), 'others' => all('SELECT id,email FROM mail_accounts WHERE id IN (' . ($sel ? implode(',', $sel) : '0') . ') AND user_id<>?', [$uid]), 'assign_user_id' => $st['assign_user_id'] ? (int)$st['assign_user_id'] : null, 'allowed_senders' => implode("\n", rfq_allow_list($st['allowed_senders'] ?? '')),
                 'finance_people' => all("SELECT u.id,u.name FROM users u WHERE u.active=1 AND (u.role='super_admin' OR u.department_id=(SELECT id FROM departments WHERE name='Finance' LIMIT 1)) ORDER BY u.name"), 'last_scan_at' => $st['last_scan_at']]); }
         if (!in_array($role, ['super_admin', 'manager'], true) && !can_finance($u)) fail('Not allowed', 403);
         if ($method === 'PUT') { $mine = array_map('intval', array_column(all('SELECT id FROM mail_accounts WHERE user_id=?', [$uid]), 'id')); $keep = array_filter(array_map('intval', explode(',', (string)($st['mailbox_ids'] ?? ''))), fn($i) => !in_array($i, $mine, true)); $on = array_values(array_intersect(array_map('intval', (array)($b['mailbox_ids'] ?? [])), $mine));
-            q('UPDATE rfq_settings SET enabled=?, mailbox_ids=?, assign_user_id=? WHERE id=1', [(int)!empty($b['enabled']), implode(',', array_unique(array_merge($keep, $on))) ?: null, !empty($b['assign_user_id']) ? (int)$b['assign_user_id'] : null]); out(['ok' => true]); }
+            q('UPDATE rfq_settings SET enabled=?, mailbox_ids=?, assign_user_id=? WHERE id=1', [(int)!empty($b['enabled']), implode(',', array_unique(array_merge($keep, $on))) ?: null, !empty($b['assign_user_id']) ? (int)$b['assign_user_id'] : null]); if (array_key_exists('allowed_senders', $b)) q('UPDATE rfq_settings SET allowed_senders=? WHERE id=1', [implode("\n", rfq_allow_list((string)$b['allowed_senders'])) ?: null]); out(['ok' => true]); }
         fail('Not found', 404);
     }
     if ($act === 'export' && $method === 'GET') { rfq_sync_quotes(); require_once __DIR__ . '/xlsx.php'; $bin = rfq_export_xlsx(); header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'); header('Content-Disposition: attachment; filename="LIST_OF_RFQs_AND_POs_' . date('Y') . '.xlsx"'); header('Content-Length: ' . strlen($bin)); header('Cache-Control: private, no-store'); echo $bin; exit; }
@@ -186,9 +203,10 @@ if ($sub === 'rfqs') {
     if ($act === 'scan' && $method === 'POST') {
         rfq_sync_quotes(); $st = rfq_settings(); $ids = array_filter(array_map('intval', explode(',', (string)($st['mailbox_ids'] ?? '')))); $acc = [];
         foreach ($ids as $i) { $a = one('SELECT * FROM mail_accounts WHERE id=?', [$i]); if ($a && (int)$a['user_id'] === $uid) $acc[] = $a; } if (!$acc) { $a = one('SELECT * FROM mail_accounts WHERE user_id=? ORDER BY id LIMIT 1', [$uid]); if ($a) $acc[] = $a; }
-        if (!$acc) fail('Connect the operations@ mailbox in the Mail tab first, then choose it in the tracker settings.', 409); $tot = ['rfqs' => 0, 'pos' => 0, 'followups' => 0, 'looked_at' => 0];
-        try { foreach ($acc as $a) { $r = rfq_scan($a, $u, (int)($b['days'] ?? 14), (int)($b['limit'] ?? 100)); foreach ($tot as $k => $_) $tot[$k] += $r[$k]; } } catch (MailError $e) { fail($e->getMessage(), 502); }
-        out(['ok' => true] + $tot);
+        if (!$acc) fail('Connect the operations@ mailbox in the Mail tab first, then choose it in the tracker settings.', 409); $tot = ['rfqs' => 0, 'pos' => 0, 'followups' => 0, 'looked_at' => 0]; $ign = []; $none = false;
+        try { foreach ($acc as $a) { $r = rfq_scan($a, $u, (int)($b['days'] ?? 14), (int)($b['limit'] ?? 100)); foreach (['rfqs', 'pos', 'followups', 'looked_at'] as $k) $tot[$k] += $r[$k]; foreach ($r['ignored'] as $e => $n) $ign[$e] = ($ign[$e] ?? 0) + $n; if (!empty($r['no_allowed'])) $none = true; } } catch (MailError $e) { fail($e->getMessage(), 502); }
+        if ($none) fail('Nobody is allowed yet. Add the email addresses or domains that RFQs and POs may come from in ⚙ Mailbox → Allowed senders. Nothing else is read.', 409);
+        arsort($ign); out(['ok' => true, 'ignored' => array_slice($ign, 0, 12, true)] + $tot);
     }
     if ($method === 'GET' && !$rid) {
         rfq_sync_quotes(); $w = '1=1'; $p = []; if (!empty($_GET['status']) && $_GET['status'] === 'open') { $w .= " AND status IN ('new','quoting','quoted','revisited','on_hold','po_received','delivered')"; } elseif (!empty($_GET['status']) && in_array($_GET['status'], ['new', 'quoting', 'quoted', 'revisited', 'on_hold', 'po_received', 'delivered', 'paid', 'lost', 'closed'], true)) { $w .= ' AND status=?'; $p[] = $_GET['status']; }
@@ -203,7 +221,7 @@ if ($sub === 'rfqs') {
         $tid = rfq_task($id, 'Create proforma / quotation: ' . $client . ' (RFQ ' . $code . ')', "RFQ added by " . $u['name'] . ".\nRFQ code: " . $code . "\nOpen the RFQ tracker and press “Create quotation”.", $due, $st, $u); q('UPDATE rfqs SET task_id=? WHERE id=?', [$tid, $id]); rfq_event($id, 'new', 'Added by ' . $u['name'], $uid); out(['ok' => true, 'id' => $id], 201);
     }
     $r = $rid ? one('SELECT * FROM rfqs WHERE id=?', [$rid]) : null; if (!$r) fail('Not found', 404);
-    if ($method === 'GET' && $act === '') { rfq_sync_quotes(); $r = one('SELECT * FROM rfqs WHERE id=?', [$rid]); out(['rfq' => rfq_dto($r), 'events' => all('SELECT e.kind,e.text,e.at,u.name AS by_name FROM rfq_events e LEFT JOIN users u ON u.id=e.user_id WHERE e.rfq_id=? ORDER BY e.id DESC LIMIT 60', [$rid]), 'deliveries' => array_map('dn_dto', all('SELECT d.*, u.name AS signed_by_name FROM delivery_notes d LEFT JOIN users u ON u.id=d.signed_by WHERE d.rfq_id=? ORDER BY d.id DESC', [$rid]))]); }
+    if ($method === 'GET' && $act === '') { rfq_sync_quotes(); $r = one('SELECT * FROM rfqs WHERE id=?', [$rid]); out(['rfq' => rfq_dto($r), 'files' => all('SELECT id,kind,name,size,created_at FROM rfq_files WHERE rfq_id=? ORDER BY id', [$rid]), 'events' => all('SELECT e.kind,e.text,e.at,u.name AS by_name FROM rfq_events e LEFT JOIN users u ON u.id=e.user_id WHERE e.rfq_id=? ORDER BY e.id DESC LIMIT 60', [$rid]), 'deliveries' => array_map('dn_dto', all('SELECT d.*, u.name AS signed_by_name FROM delivery_notes d LEFT JOIN users u ON u.id=d.signed_by WHERE d.rfq_id=? ORDER BY d.id DESC', [$rid]))]); }
     if ($method === 'PATCH' && $act === '') {
         $f = []; $p = []; foreach (['client_name' => 190, 'client_email' => 190, 'subject' => 300, 'notes' => 2000, 'code' => 80, 'description' => 500, 'po_description' => 500, 'po_comments' => 2000, 'buyer_details' => 480, 'invoice_status' => 30, 'po_number' => 80] as $k => $n) if (array_key_exists($k, $b)) { $v = fx_s($b[$k], $n); if ($k === 'code' && !$v) continue; $f[] = "$k=?"; $p[] = $v; }
         foreach (['delivery_due', 'delivery_date', 'paid_at'] as $dk) if (array_key_exists($dk, $b)) { $f[] = "$dk=?"; $p[] = $b[$dk] && strtotime((string)$b[$dk]) ? date('Y-m-d', strtotime((string)$b[$dk])) : null; }
@@ -211,10 +229,15 @@ if ($sub === 'rfqs') {
         if (!empty($b['status']) && in_array($b['status'], ['lost', 'closed', 'new', 'quoting', 'quoted', 'revisited', 'on_hold', 'po_received', 'delivered'], true)) { $f[] = 'status=?'; $p[] = $b['status']; rfq_event($rid, 'status', 'Marked ' . $b['status'] . ' by ' . $u['name'], $uid); }
         if ($f) { $p[] = $rid; q('UPDATE rfqs SET ' . implode(',', $f) . ' WHERE id=?', $p); } out(['ok' => true]);
     }
+    if ($method === 'POST' && $act === 'items') { $it = []; foreach (array_slice((array)($b['items'] ?? []), 0, 100) as $i) { $dsc = fx_s($i['description'] ?? '', 500); if (!$dsc) continue; $it[] = ['description' => $dsc, 'qty' => fx_num($i['qty'] ?? 1, 1), 'unit' => fx_s($i['unit'] ?? '', 30) ?? '']; }
+        q('UPDATE rfqs SET items_json=?, items_source=? WHERE id=?', [$it ? json_encode($it, JSON_UNESCAPED_UNICODE) : null, $it ? ($r['items_source'] ?: 'typed in by ' . $u['name']) : null, $rid]); rfq_event($rid, 'items', count($it) . ' item(s) saved by ' . $u['name'], $uid); out(['ok' => true, 'count' => count($it)]); }
+    if ($method === 'GET' && $act === 'file') { $f = one('SELECT * FROM rfq_files WHERE id=? AND rfq_id=?', [(int)($seg[4] ?? 0), $rid]); if (!$f) fail('Not found', 404); $pth = rfq_dir() . '/' . preg_replace('/[^a-f0-9]/', '', (string)$f['path']); if (!is_file($pth)) fail('The file is no longer on the server', 404);
+        header('Content-Type: application/octet-stream'); header('X-Content-Type-Options: nosniff'); header('Cache-Control: private, no-store'); header('Content-Disposition: attachment; filename="' . preg_replace('/[^A-Za-z0-9._-]+/', '_', (string)$f['name']) . '"; filename*=UTF-8\'\'' . rawurlencode((string)$f['name'])); header('Content-Length: ' . filesize($pth)); readfile($pth); exit; }
     if ($method === 'POST' && $act === 'po') { $po = fx_s($b['po_number'] ?? '', 80); if (!$po) fail('Type the PO number'); q("UPDATE rfqs SET status='po_received', po_number=?, po_received_at=NOW() WHERE id=?", [$po, $rid]); rfq_event($rid, 'po', 'PO ' . $po . ' recorded by ' . $u['name'], $uid); out(['ok' => true]); }
     if ($method === 'POST' && $act === 'delivery') {
         $items = []; foreach (array_slice((array)($b['items'] ?? []), 0, 100) as $i) { $dsc = fx_s($i['description'] ?? '', 500); if (!$dsc) continue; $items[] = ['description' => $dsc, 'qty' => fx_num($i['qty'] ?? 1, 1), 'unit' => fx_s($i['unit'] ?? '', 30)]; }
         if (!$items && $r['quote_doc_id']) { $q = fx_doc((int)$r['quote_doc_id']); foreach (($q['items'] ?? []) as $i) { if (trim((string)$i['description']) === '') continue; $items[] = ['description' => (string)$i['description'], 'qty' => (float)$i['qty'], 'unit' => (string)($i['unit'] ?? '')]; } }
+        if (!$items && $r['items_json']) foreach ((array)json_decode((string)$r['items_json'], true) as $i) $items[] = ['description' => (string)$i['description'], 'qty' => (float)$i['qty'], 'unit' => (string)($i['unit'] ?? '')];
         if (!$items) fail('Add what is being delivered (or create the quotation first so its lines can be used)');
         $dd = $b['delivery_date'] ?? null; $dd = $dd && strtotime((string)$dd) ? date('Y-m-d', strtotime((string)$dd)) : date('Y-m-d'); $n = (int)(one('SELECT COUNT(*) n FROM delivery_notes WHERE number LIKE ?', ['DN-' . date('Y') . '-%'])['n'] ?? 0) + 1; do { $num = 'DN-' . date('Y') . '-' . str_pad((string)$n++, 4, '0', STR_PAD_LEFT); } while (one('SELECT id FROM delivery_notes WHERE number=?', [$num]));
         $q = $r['quote_doc_id'] ? fx_doc((int)$r['quote_doc_id']) : null;
