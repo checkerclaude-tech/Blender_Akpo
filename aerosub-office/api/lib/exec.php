@@ -4,7 +4,7 @@ declare(strict_types=1);
 // per organization and combined, to the people the Root Admin allows. Only numbers and organization names are ever stored: no names, e-mail addresses,
 // phone numbers or other personal details of the people using those apps (fields that look personal are refused, and organization names that look like an
 // e-mail or phone number are masked).
-//   PULL  the server asks the other app's JSON API on a schedule (token kept encrypted here, never sent to a browser).
+//   PULL  the server asks the other app's JSON API on a schedule (API key kept encrypted here, never sent to a browser).
 //   PUSH  the other app posts its numbers to  POST /api/exec/ingest  with the source's key.
 // Routes (all JSON):
 //   GET  exec                       dashboard (needs the Executive tab); also says whether you can manage sources
@@ -70,7 +70,7 @@ function ex_pull(array $s): string {
             $ep = (string)$m['endpoint']; if (!isset($cache[$ep])) {
                 $url = preg_match('~^https?://~i', $ep) ? $ep : $base . '/' . ltrim($ep, '/');
                 if (preg_match('~^https?://~i', $ep) && parse_url($ep, PHP_URL_HOST) !== parse_url($base, PHP_URL_HOST)) { $cache[$ep] = ['err' => 'An address must stay on the source\'s own site']; continue; }
-                try { [$code, $body] = ex_http($url, ex_headers($s)); $j = json_decode($body, true); $cache[$ep] = $code >= 200 && $code < 300 ? (is_array($j) ? ['j' => $j] : ['err' => 'The answer was not JSON']) : ['err' => 'The other app answered ' . $code . ($code === 401 || $code === 403 ? ' (check the token)' : '')]; }
+                try { [$code, $body] = ex_http($url, ex_headers($s)); $j = json_decode($body, true); $cache[$ep] = $code >= 200 && $code < 300 ? (is_array($j) ? ['j' => $j] : ['err' => 'The answer was not JSON']) : ['err' => 'The other app answered ' . $code . ($code === 401 || $code === 403 ? ' (check the API key)' : '')]; }
                 catch (RuntimeException $e) { $cache[$ep] = ['err' => $e->getMessage()]; }
             }
             if (isset($cache[$ep]['err'])) { $err = $err ?: $cache[$ep]['err']; continue; }

@@ -281,3 +281,9 @@ This update does not replace `index.html`, `sw.js`, `upgrade.php` or `api/lib/mi
 - Fixes: picture upload for letterheads used a file helper that another script had replaced; it now has its own.
 
 - **Horn sound:** the trumpet now sounds only on the screen of the person the task is assigned to. The person who blows it no longer hears it, and a horn blown back at the person who gave the task appears as a silent pop-up. If the task moves to someone else, the old assignee no longer hears it.
+
+## Aerosub Insight analytics on the Executive dashboard (API key)
+- **Executive → Manage sources → Connect Insight** now sets up every number from Insight's Analytics page in one go (34 numbers): organisations (all, active, suspended), organisation users, feedback / bug reports / feature requests / resolved, SLA breaches and oldest open query, storage (total, managed, own storage, unsynced), campaigns (active, dormant), organisations gone quiet, reports and UT plans generated, failed generations, user activation rate, and per organisation: storage used, files, open queries, campaigns (all / published / draft), users and activated users, days since last activity, reports and UT plans generated and in draft.
+- It uses an **API key** (header `X-API-Key`, kept encrypted here), not a login token. The screens now say "API key".
+- Insight needs one read-only address that returns these numbers: see `INSIGHT_ANALYTICS_API.md` (address, header and the exact JSON). Or choose "They send us numbers": Insight posts the same JSON to /api/exec/ingest with the push key.
+- Only numbers and organisation names are read. The dashboard shows them per organisation and combined, with 30-day trends.
