@@ -27,11 +27,42 @@ function vault_row(array $r): array {
 }
 
 /* ---- sharing: only ever something the owner chose to hand over, one person at a time ---- */
+function vault_ensure(): void {   // the sharing and Google Drive tables, created the first time they are needed
+    static $d = false; if ($d) return; $d = true;
+    try { if (!one("SHOW TABLES LIKE 'vault_shares'") || !one("SHOW TABLES LIKE 'vault_drives'")) { require_once __DIR__ . '/migrate_fin3.php'; migrate_fin_ext(); } } catch (Throwable $e) { error_log('Vault schema: ' . $e->getMessage()); }
+}
 function vault_people(int $uid): array {   // colleagues who have a My Documents tab (administrators do not, so nothing can be shared to them)
     $out = []; foreach (all('SELECT u.id,u.name,u.role,u.is_root,(SELECT d.name FROM departments d WHERE d.id=u.department_id) AS department FROM users u WHERE u.active=1 AND u.archived_at IS NULL AND u.id<>? ORDER BY u.name', [$uid]) as $r)
         if (tab_access(['id' => (int)$r['id'], 'role' => $r['role'], 'is_root' => $r['is_root']], 'myfiles')) $out[] = ['id' => (int)$r['id'], 'name' => $r['name'], 'department' => $r['department']];
     return $out;
 }
+if (($seg[1] ?? '') === 'drive') {   // Google Drive folders shared with "Anyone with the link" (no Google API setup)
+    vault_ensure(); require_once __DIR__ . '/drive.php'; $did = isset($seg[2]) && ctype_digit($seg[2]) ? (int)$seg[2] : 0; $dact = $seg[3] ?? '';
+    if ($method === 'GET' && !$did) out(['drives' => all('SELECT id,name FROM vault_drives WHERE user_id=? ORDER BY name', [$uid])]);
+    if ($method === 'POST' && !$did) {
+        $b = body(); $fid = gd_folder_id((string)($b['url'] ?? '')); if (!$fid) fail('Paste the link of the Google Drive folder (it looks like https://drive.google.com/drive/folders/…)');
+        if ((int)(one('SELECT COUNT(*) n FROM vault_drives WHERE user_id=?', [$uid])['n'] ?? 0) >= 10) fail('You can connect up to 10 Drive folders');
+        if (one('SELECT id FROM vault_drives WHERE user_id=? AND folder_id=?', [$uid, $fid])) fail('That folder is already connected');
+        try { $n = count(gd_list($fid)); } catch (RuntimeException $e) { fail($e->getMessage(), 422); }
+        $name = vault_str($b['name'] ?? '', 160) ?: 'Google Drive folder'; q('INSERT INTO vault_drives (user_id,name,folder_id) VALUES (?,?,?)', [$uid, $name, $fid]); out(['ok' => true, 'id' => (int)db()->lastInsertId(), 'items' => $n], 201);
+    }
+    $dr = $did ? one('SELECT * FROM vault_drives WHERE id=? AND user_id=?', [$did, $uid]) : null; if (!$dr) fail('Not found', 404);
+    if ($method === 'DELETE' && $dact === '') { q('DELETE FROM vault_drives WHERE id=?', [$did]); out(['ok' => true]); }
+    if ($method === 'PATCH' && $dact === '') { $nm = vault_str(body()['name'] ?? '', 160); if ($nm === '') fail('Give it a name'); q('UPDATE vault_drives SET name=? WHERE id=?', [$nm, $did]); out(['ok' => true]); }
+    $fileId = (string)($_GET['file'] ?? (body()['file'] ?? '')); $kind = in((string)($_GET['kind'] ?? (body()['kind'] ?? '')), ['file', 'doc', 'sheet', 'slide', 'folder'], 'file'); $fname = vault_str($_GET['name'] ?? (body()['name'] ?? ''), 190) ?: 'file';
+    if ($method === 'GET' && $dact === 'list') { $f = (string)($_GET['folder'] ?? '') ?: $dr['folder_id']; if (!gd_id_ok($f)) fail('Bad folder'); try { out(['folder' => $f, 'root' => $dr['folder_id'], 'name' => $dr['name'], 'items' => gd_list($f)]); } catch (RuntimeException $e) { fail($e->getMessage(), 502); } }
+    if ($method === 'GET' && $dact === 'file') { try { [$bytes, $fn, $mime] = gd_download($fileId, $kind, $fname); } catch (RuntimeException $e) { fail($e->getMessage(), 502); }
+        header('Content-Type: application/octet-stream'); header('X-Content-Type-Options: nosniff'); header('Cache-Control: private, no-store'); header('Content-Disposition: attachment; filename="' . preg_replace('/[^A-Za-z0-9._-]+/', '_', $fn) . '"; filename*=UTF-8\'\'' . rawurlencode($fn)); header('Content-Length: ' . strlen($bytes)); echo $bytes; exit; }
+    if ($method === 'POST' && $dact === 'email') { require_once __DIR__ . '/sharesend.php'; $b = body(); $to = share_emails($b['to'] ?? ''); $via = in((string)($b['via'] ?? ''), ['mine', 'system'], 'system'); $atts = []; $text = (string)($b['message'] ?? '');
+        if ($kind === 'folder') $text .= ($text !== '' ? "\n\n" : '') . gd_url($fileId, 'folder');
+        else { try { [$bytes, $fn, $mime] = gd_download($fileId, $kind, $fname); } catch (RuntimeException $e) { fail($e->getMessage(), 502); } if (strlen($bytes) > 10 * 1048576) fail('That file is too large to email (10 MB). Send the link instead.'); $atts[] = [$fn, $mime, $bytes]; }
+        out(['ok' => true, 'done' => [share_send_mail($u, $via, $to, (string)($b['subject'] ?? '') ?: $fname, $text, $atts)]]); }
+    if ($method === 'POST' && $dact === 'link') {   // keep a link to the file or folder in My Documents so it can be shared with colleagues like any other item
+        if (!gd_id_ok($fileId)) fail('Bad file'); $url = gd_url($fileId, $kind); $ex = one("SELECT id FROM vault_items WHERE user_id=? AND kind='link' AND body=?", [$uid, $url]);
+        if ($ex) out(['ok' => true, 'id' => (int)$ex['id'], 'title' => $fname]); q('INSERT INTO vault_items (user_id,kind,title,folder,body) VALUES (?,?,?,?,?)', [$uid, 'link', mb_substr($fname, 0, 200), 'Google Drive', $url]); out(['ok' => true, 'id' => (int)db()->lastInsertId(), 'title' => $fname], 201); }
+    fail('Not found', 404);
+}
+if (in_array($seg[1] ?? '', ['people', 'shared'], true) || in_array($act, ['share', 'shares'], true)) vault_ensure();
 if (($seg[1] ?? '') === 'people' && $method === 'GET') out(['people' => vault_people($uid), 'mail' => (function () use ($u) { require_once __DIR__ . '/sharesend.php'; return share_mail_options($u); })()]);
 if (($seg[1] ?? '') === 'shared') {
     $shid = isset($seg[2]) && ctype_digit($seg[2]) ? (int)$seg[2] : 0;

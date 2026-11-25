@@ -16,6 +16,7 @@
       '<label class="sh-radio"><input type="radio" name="sm-via" value="system"' + (mine ? '' : ' checked') + '> Aerosub office sender <span class="muted small">(your name, replies come to you)</span></label></div>',
       get: root => ({ to: $('#sm-to', root).value.trim(), subject: $('#sm-sub', root).value.trim(), message: $('#sm-msg', root).value.trim(), via: ($('input[name=sm-via]:checked', root) || {}).value || 'system' }) };
   }
+  X.shMailPane = mailPane;
   const tabs = (m, names) => { $$('[data-shtab]', m).forEach(b => b.onclick = () => { $$('[data-shtab]', m).forEach(x => x.classList.toggle('on', x === b)); $$('[data-shpane]', m).forEach(p => p.hidden = p.dataset.shpane !== b.dataset.shtab); }); };
 
   /** Share a letter: by email (the .docx attached) or onto a task. */

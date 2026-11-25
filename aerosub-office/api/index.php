@@ -308,18 +308,20 @@ case 'tasks':
         if (!empty($_GET['meetings'])) { $where[] = "t.task_type='meeting' AND (t.assignee_id=? OR t.creator_id=? OR EXISTS(SELECT 1 FROM task_shares tm WHERE tm.task_id=t.id AND tm.user_id=?))"; array_push($p, $uid, $uid, $uid); }
         out(all("$sel WHERE " . implode(' AND ', $where) . " ORDER BY t.status='done', t.due_date IS NULL, t.due_date, FIELD(t.priority,'urgent','high','medium','low') LIMIT 500", $p));
     }
-    if ($method === 'GET' && $id && !in_array($sub, ['files', 'share', 'defer', 'updates', 'report', 'transfer', 'ics', 'ics-links'], true)) {
+    if ($method === 'GET' && $id && !in_array($sub, ['files', 'share', 'defer', 'updates', 'report', 'transfer', 'ics', 'ics-links', 'flow', 'steps', 'step', 'subs'], true)) {
         [$w, $p] = $vis($u); $t = one("$sel WHERE t.id=? AND $w", array_merge([$id], $p)); if (!$t) fail('Not found', 404);
         $t['comments'] = all('SELECT c.id,c.body,c.created_at,u.name FROM task_comments c JOIN users u ON u.id=c.user_id WHERE c.task_id=? ORDER BY c.id', [$id]);
         $t['can_edit'] = $canEdit($t);
         $t['files'] = all('SELECT f.id,f.name,f.mime,f.size,f.created_at,f.user_id,u.name AS user_name FROM task_files f LEFT JOIN users u ON u.id=f.user_id WHERE f.task_id=? ORDER BY f.id', [$id]);
         $t['shares'] = all('SELECT s.user_id AS id,u.name FROM task_shares s JOIN users u ON u.id=s.user_id WHERE s.task_id=? ORDER BY u.name', [$id]);
         $t['updates'] = all('SELECT x.id,x.kind,x.data,x.created_at,u.name AS user_name FROM task_updates x LEFT JOIN users u ON u.id=x.user_id WHERE x.task_id=? ORDER BY x.id DESC LIMIT 100', [$id]);
+        try { require_once __DIR__ . '/lib/flows.php'; $t += flow_task_extra($t, $uid); } catch (Throwable $e) { $t += ['subs' => [], 'flow_info' => null]; }   // sub-tasks and, for dependent tasks, the flow it belongs to
         out($t);
     }
     if ($method === 'POST' && !$id) {
         if ($u['role'] === 'founder') fail('Founder accounts are read-only', 403);
-        $b = body(); $title = s($b['title'] ?? '', 200); if ($title === '') fail('Title required');
+        $b = body(); if (!empty($b['flow']) && is_array($b['flow'])) { require_once __DIR__ . '/lib/flows.php'; flow_create($b, $u); }   // dependent task: a plan of steps
+        $title = s($b['title'] ?? '', 200); if ($title === '') fail('Title required');
         $assignee = !empty($b['assignee_id']) ? (int)$b['assignee_id'] : $uid;
         if ($u['role'] === 'employee' && $assignee !== $uid && !manages_user($u, $assignee)) fail('Employees can only create tasks for themselves', 403);
         $at = one('SELECT id,department_id FROM users WHERE id=? AND active=1', [$assignee]); if (!$at) fail('Assignee not found');
@@ -345,6 +347,7 @@ case 'tasks':
     }
     if ($id) {
         [$w, $p] = $vis($u); $t = one("$sel WHERE t.id=? AND $w", array_merge([$id], $p)); if (!$t) fail('Not found', 404);
+        if (in_array($sub, ['flow', 'steps', 'step', 'subs'], true)) { require_once __DIR__ . '/lib/flows.php'; flow_route($t, $u, $method, $sub, $seg, $canEdit); }
         if (in_array($sub, ['files', 'share', 'defer', 'updates', 'report'], true)) { require __DIR__ . '/lib/taskx.php'; }
         if ($sub === 'transfer' && $method === 'POST') { require_once __DIR__ . '/lib/reports.php'; rp_transfer_task($t, $u, body(), $canEdit($t)); }
         if ($sub === 'comments' && $method === 'POST') {
@@ -363,8 +366,13 @@ case 'tasks':
         if ($method === 'PATCH') {
             $b = body(); $isAssignee = (int)$t['assignee_id'] === $uid; $full = $canEdit($t);
             if ($u['role'] === 'founder') fail('Founder accounts are read-only', 403);
-            if (!$full && !$isAssignee) fail('Not allowed', 403);
+            $isMember = $isAssignee || (bool)one('SELECT 1 FROM task_shares WHERE task_id=? AND user_id=?', [$id, $uid]);   // everyone added to the task can update its status
+            if (!$full && !$isMember) fail('Not allowed', 403);
             $status = in((string)($b['status'] ?? $t['status']), TASK_STATUSES, $t['status']);
+            if ($status !== $t['status'] && !$full) {
+                if (($t['kind'] ?? '') === 'flow') fail('This is the plan itself: it finishes by itself when every step is done', 403);
+                if (($t['kind'] ?? '') === 'step' && in_array($status, ['in_progress', 'done'], true)) { require_once __DIR__ . '/lib/flows.php'; $wt = flow_waiting_on($id); if ($wt) fail('This step starts after: ' . implode(', ', array_column($wt, 'title')), 409); }
+            }
             if ($status !== $t['status']) {
                 if ($status === 'transferred') fail('Use Transfer to move a task to someone else', 400);
                 if ($status === 'canceled' && !$full) fail('Only the person who gave the task, or a department head, can cancel it', 403);
@@ -397,6 +405,7 @@ case 'tasks':
             if ($full && array_key_exists('description', $b)) { require_once __DIR__ . '/lib/mentions.php'; mn_apply($t, $u, (string)($new['description'] ?? ''), (string)($t['description'] ?? ''), 'task'); }   // only people newly tagged are told
             if ($status !== $t['status']) {
                 log_act($uid, 'task_' . $status, $t['title']);
+                if (!empty($t['kind'])) { try { require_once __DIR__ . '/lib/flows.php'; flow_status_changed($t, $status, $u); } catch (Throwable $e) { error_log('flow: ' . $e->getMessage()); } }
                 if ((int)$t['creator_id'] !== $uid) notify((int)$t['creator_id'], 'task_status', $u['name'] . ' marked "' . $t['title'] . '" ' . str_replace('_', ' ', $status), '', '#/tasks/' . $id);
             }
             if (isset($new['assignee_id']) && (int)$new['assignee_id'] && (int)$new['assignee_id'] !== (int)$t['assignee_id'] && (int)$new['assignee_id'] !== $uid)
