@@ -418,7 +418,7 @@ const FTYPE = { commercial: 'Commercial', proforma: 'Proforma invoice', invoice:
 const FSTAT = { draft: 'Draft', sent: 'Sent', paid: 'Paid', void: 'Void' };
 const CUR_SIGN = { NGN: '₦', USD: '$', GBP: '£', EUR: '€' };
 const fmoney = (n, cur, sym) => { n = Number(n || 0); const s = CUR_SIGN[String(cur || '').toUpperCase()] || sym; const body = Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); return (n < 0 ? '−' : '') + (s ? s : (cur ? cur + ' ' : '')) + body; };
-Object.assign(window.OfficeExt, { fmoney, fmtDate, FTYPE, loadRefs }); // lets assets/js/finance.js draw the invoice and commercial templates
+Object.assign(window.OfficeExt, { fmoney, fmtDate, FTYPE, loadRefs, fileObj: fileB64 }); // lets assets/js/finance.js draw the invoice and commercial templates
 const fstag = s => '<span class="tag ' + (s === 'paid' ? 'done' : s === 'sent' ? 'in_progress' : s === 'void' ? 'blocked' : '') + '">' + FSTAT[s] + '</span>';
 let FF = { type: '', status: '', q: '', tab: 'docs' };
 views.finance = async () => {

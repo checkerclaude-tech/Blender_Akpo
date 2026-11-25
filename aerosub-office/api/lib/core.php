@@ -154,7 +154,7 @@ function games_access(array $u): array {
 const TAB_DEFS = [
     'reports' => ['Reports', 1], 'performance' => ['Team performance', 1], 'pipeline' => ['Pipeline', 1], 'documents' => ['Documents (document checks)', 1], 'mail' => ['Mail', 1], 'schedule' => ['Schedule', 1],
     'games' => ['Games', 1], 'campaigns' => ['Campaigns', 1], 'team' => ['Team / Snapshot', 1], 'finance' => ['Finance', 1], 'learn' => ['Learn', 1], 'competition' => ['Competition', 1], 'events' => ['Events', 1],
-    'research' => ['Research', 1], 'projects' => ['Projects', 1], 'products' => ['Products & services', 1], 'news' => ['News', 1], 'myfiles' => ['My Documents', 1], 'executive' => ['Executive dashboard (C-suite)', 1],
+    'research' => ['Research', 1], 'projects' => ['Projects', 1], 'products' => ['Products & services', 1], 'news' => ['News', 1], 'myfiles' => ['My Documents', 1], 'chat' => ['Chat', 1], 'executive' => ['Executive dashboard (C-suite)', 1],
     'admin' => ['Admin (users)', 0], 'departments' => ['Departments', 0], 'logs' => ['Logs', 0], 'access' => ['Access control', 0],
 ];
 function tab_overrides(array $u): array {

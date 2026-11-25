@@ -24,3 +24,4 @@
 @media (prefers-reduced-motion:reduce){.ai-dots i,#ai-bubble{animation:none;transition:none}}
 .horn-on #ai-bubble,.horn-on #ai-panel{display:none}
 @media print{#ai-bubble,#ai-panel{display:none!important}}
+#ai-bubble.dim{opacity:.4;filter:grayscale(.6)}#ai-bubble.dim:hover{opacity:.9}

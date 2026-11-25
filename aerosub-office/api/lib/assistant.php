@@ -9,12 +9,13 @@ declare(strict_types=1);
 //   POST   assistant/messages/{id}/proposal {index, state}   mark a proposal done / dismissed
 //   GET    assistant/settings · PUT assistant/settings · POST assistant/settings/test     (Super Admin)
 require_once __DIR__ . '/mail.php';   // the same key-sealing helpers used for mailbox passwords
+require_once __DIR__ . '/migrate.php';
 
 $u = need_user(); $uid = (int)$u['id']; $sub = $seg[1] ?? '';
 const AI_MODELS = ['claude-haiku-5-5' => 'Haiku 5.5 (fastest, lowest cost)', 'claude-sonnet-5-5' => 'Sonnet 5.5 (balanced)', 'claude-opus-5-5' => 'Opus 5.5 (most capable)'];
 function ai_ensure(): void {
     static $d = false; if ($d) return; $d = true;
-    try { if (!one("SHOW TABLES LIKE 'ai_settings'") || !one("SHOW TABLES LIKE 'ai_messages'")) { require_once __DIR__ . '/migrate_fin3.php'; migrate_fin_ext(); } } catch (Throwable $e) { error_log('Assistant schema: ' . $e->getMessage()); }
+    try { if (!one("SHOW TABLES LIKE 'ai_settings'") || !one("SHOW TABLES LIKE 'ai_messages'") || !col_exists('ai_settings', 'show_bubble')) { require_once __DIR__ . '/migrate_fin3.php'; migrate_fin_ext(); } } catch (Throwable $e) { error_log('Assistant schema: ' . $e->getMessage()); }
     if (!one('SELECT id FROM ai_settings WHERE id=1')) q("INSERT INTO ai_settings (id) VALUES (1)");
 }
 function ai_settings(): array { ai_ensure(); return one('SELECT * FROM ai_settings WHERE id=1') ?: []; }
@@ -149,6 +150,7 @@ function ai_msgs(int $chat): array {
 
 ai_ensure(); $st = ai_settings(); $isAdmin = $u['role'] === 'super_admin' || !empty($u['is_root']); $configured = !empty($st['api_key_enc']);
 
+if ($sub === 'status' && $method === 'GET') out(['bubble' => (bool)($st['show_bubble'] ?? 1), 'can_admin' => $isAdmin, 'enabled' => (bool)$st['enabled'] && $configured]);   // cheap: lets every page decide whether to draw the bubble
 if ($sub === '' && $method === 'GET') {
     $cid = ai_chat_id($uid);
     out(['enabled' => (bool)$st['enabled'] && $configured, 'configured' => $configured, 'can_admin' => $isAdmin, 'web_search' => (bool)$st['web_search'], 'model' => $st['model'], 'remaining' => ai_remaining($uid, $st), 'chat_id' => $cid, 'messages' => ai_msgs($cid), 'read_only' => $u['role'] === 'founder']);
@@ -156,10 +158,11 @@ if ($sub === '' && $method === 'GET') {
 if ($sub === 'settings') {
     if (!$isAdmin) fail('Only the Super Admin can change the assistant settings', 403);
     if ($method === 'GET') { $use = one('SELECT COUNT(DISTINCT user_id) people, COALESCE(SUM(msgs),0) msgs, COALESCE(SUM(in_tokens),0) i, COALESCE(SUM(out_tokens),0) o FROM ai_usage WHERE day=CURDATE()');
-        $k = $configured ? mail_decrypt((string)$st['api_key_enc']) : ''; out(['enabled' => (bool)$st['enabled'], 'has_key' => $configured, 'key_hint' => $k !== '' ? '…' . substr($k, -4) : null, 'model' => $st['model'], 'models' => AI_MODELS, 'web_search' => (bool)$st['web_search'], 'daily_limit' => (int)$st['daily_limit'], 'instructions' => $st['instructions'], 'usage_today' => $use]); }
+        $k = $configured ? mail_decrypt((string)$st['api_key_enc']) : ''; out(['enabled' => (bool)$st['enabled'], 'has_key' => $configured, 'key_hint' => $k !== '' ? '…' . substr($k, -4) : null, 'model' => $st['model'], 'models' => AI_MODELS, 'web_search' => (bool)$st['web_search'], 'show_bubble' => (bool)($st['show_bubble'] ?? 1), 'daily_limit' => (int)$st['daily_limit'], 'instructions' => $st['instructions'], 'usage_today' => $use]); }
     if ($method === 'PUT') { $b = body(); $model = in((string)($b['model'] ?? ''), array_keys(AI_MODELS), (string)$st['model']);
         $key = trim((string)($b['api_key'] ?? '')); if ($key !== '' && !preg_match('/^[A-Za-z0-9_\-]{20,300}$/', $key)) fail('That does not look like an API key');
         q('UPDATE ai_settings SET enabled=?, model=?, web_search=?, daily_limit=?, instructions=?, updated_by=? WHERE id=1', [(int)!empty($b['enabled']), $model, (int)!empty($b['web_search']), max(1, min(500, (int)($b['daily_limit'] ?? 40))), s($b['instructions'] ?? '', 2000) ?: null, $uid]);
+        if (array_key_exists('show_bubble', $b)) q('UPDATE ai_settings SET show_bubble=? WHERE id=1', [(int)!empty($b['show_bubble'])]);
         if ($key !== '') q('UPDATE ai_settings SET api_key_enc=? WHERE id=1', [mail_encrypt($key)]); if (!empty($b['remove_key'])) q('UPDATE ai_settings SET api_key_enc=NULL, enabled=0 WHERE id=1'); log_act($uid, 'assistant_settings', 'model ' . $model); out(['ok' => true]); }
     if ($method === 'POST' && ($seg[2] ?? '') === 'test') { if (!$configured) fail('Save an API key first'); try { $j = ai_call(mail_decrypt((string)$st['api_key_enc']), ['model' => $st['model'], 'max_tokens' => 30, 'messages' => [['role' => 'user', 'content' => 'Reply with the single word: ready']]]); out(['ok' => true, 'reply' => mb_substr((string)($j['content'][0]['text'] ?? ''), 0, 60)]); } catch (RuntimeException $e) { fail($e->getMessage(), 502); } }
     fail('Not found', 404);

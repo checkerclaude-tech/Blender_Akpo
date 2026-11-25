@@ -18,11 +18,14 @@
   const when = s => { const d = new Date(String(s).replace(' ', 'T')); return d.toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); };
 
   /* ---- the bubble ---- */
-  function ensureBubble() {
-    const want = !!(S && S.user && $('#view') && !S.offline);
+  let vis = null, visT = 0;   // does the Super Admin show the bubble to staff?
+  async function visible() { if (vis && Date.now() - visT < 120000) return vis; try { vis = await api('assistant/status'); } catch { vis = vis || { bubble: true, can_admin: false }; } visT = Date.now(); return vis; }
+  async function ensureBubble() {
+    const want0 = !!(S && S.user && $('#view') && !S.offline); let want = want0, dim = false;
+    if (want0) { const v = await visible(); if (!v.bubble) { if (v.can_admin) dim = true; else want = false; } }
     if (!want) { if (bubble) { bubble.remove(); bubble = null; } if (panel) { panel.remove(); panel = null; } return; }
-    if (bubble) return;
-    bubble = document.createElement('button'); bubble.id = 'ai-bubble'; bubble.type = 'button'; bubble.className = 'noprint'; bubble.setAttribute('aria-label', 'Ask the assistant'); bubble.title = 'Ask the assistant'; bubble.innerHTML = '<span aria-hidden="true">✨</span>';
+    if (bubble) { bubble.classList.toggle('dim', dim); bubble.title = dim ? 'Hidden from staff. Only you can see this bubble (Settings: show it again).' : 'Ask the assistant'; return; }
+    bubble = document.createElement('button'); bubble.id = 'ai-bubble'; bubble.type = 'button'; bubble.className = 'noprint'; bubble.setAttribute('aria-label', 'Ask the assistant'); bubble.title = dim ? 'Hidden from staff. Only you can see this bubble (Settings: show it again).' : 'Ask the assistant'; bubble.classList.toggle('dim', dim); bubble.innerHTML = '<span aria-hidden="true">✨</span>';
     const pos = lsGet('ai-pos', null); if (pos) { bubble.style.left = Math.min(pos.x, innerWidth - 64) + 'px'; bubble.style.top = Math.min(pos.y, innerHeight - 64) + 'px'; bubble.style.right = 'auto'; bubble.style.bottom = 'auto'; }
     document.body.appendChild(bubble);
     let drag = null; bubble.addEventListener('pointerdown', e => { const r = bubble.getBoundingClientRect(); drag = { dx: e.clientX - r.left, dy: e.clientY - r.top, x: e.clientX, y: e.clientY, moved: false }; bubble.setPointerCapture(e.pointerId); });
@@ -99,13 +102,14 @@
       '<label class="small" style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="as-on" style="width:auto"' + (s.enabled ? ' checked' : '') + '> Switch the assistant on for everyone</label>' +
       '<div class="field" style="margin-top:8px"><label>Anthropic API key ' + (s.has_key ? '<span class="muted small">(saved ' + esc(s.key_hint || '') + '; leave empty to keep it)</span>' : '') + '</label><input id="as-key" type="password" autocomplete="off" placeholder="sk-ant-…"></div>' +
       '<div class="grid2"><div class="field"><label>Model</label><select id="as-model">' + Object.entries(s.models).map(([k, v]) => '<option value="' + k + '"' + (k === s.model ? ' selected' : '') + '>' + esc(v) + '</option>').join('') + '</select></div><div class="field"><label>Questions per person per day</label><input id="as-lim" type="number" min="1" max="500" value="' + s.daily_limit + '"></div></div>' +
+      '<label class="small" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="as-bub" style="width:auto"' + (s.show_bubble ? ' checked' : '') + '> Show the ✨ bubble to staff <span class="muted">(untick to hide it for everyone; you will still see a faded one to get back here)</span></label>' +
       '<label class="small" style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="as-web" style="width:auto"' + (s.web_search ? ' checked' : '') + '> Allow web search <span class="muted">(must also be enabled for your organisation in the Anthropic console)</span></label>' +
       '<div class="field" style="margin-top:8px"><label>Extra instructions (optional)</label><textarea id="as-ins" rows="3" maxlength="2000" placeholder="e.g. Always answer in British English. Our main clients are …">' + esc(s.instructions || '') + '</textarea></div>' +
       '<div class="muted small">Today: ' + (s.usage_today.people || 0) + ' people asked ' + (s.usage_today.msgs || 0) + ' questions (' + ((+s.usage_today.i || 0) + (+s.usage_today.o || 0)).toLocaleString() + ' tokens).</div><div class="err" id="er" role="alert"></div>' +
       '<div class="row" style="margin-top:10px"><button class="btn" id="as-save">Save</button><button class="btn ghost" id="as-test">Save and test</button>' + (s.has_key ? '<button class="btn ghost right" id="as-rm" style="color:var(--bad)">Remove key</button>' : '') + '</div>');
     $('#cx', m).onclick = () => m.close();
-    const save = async extra => { const d = Object.assign({ enabled: $('#as-on', m).checked, api_key: $('#as-key', m).value.trim(), model: $('#as-model', m).value, daily_limit: +$('#as-lim', m).value || 40, web_search: $('#as-web', m).checked, instructions: $('#as-ins', m).value.trim() }, extra || {}); await api('assistant/settings', { method: 'PUT', data: d }); };
-    $('#as-save', m).onclick = async () => { try { await save(); m.close(); toast('Saved'); st = await api('assistant'); if (panel) paintLog(st.messages); } catch (e) { $('#er', m).textContent = e.message; } };
+    const save = async extra => { const d = Object.assign({ enabled: $('#as-on', m).checked, api_key: $('#as-key', m).value.trim(), model: $('#as-model', m).value, daily_limit: +$('#as-lim', m).value || 40, web_search: $('#as-web', m).checked, show_bubble: $('#as-bub', m).checked, instructions: $('#as-ins', m).value.trim() }, extra || {}); await api('assistant/settings', { method: 'PUT', data: d }); };
+    $('#as-save', m).onclick = async () => { try { await save(); m.close(); toast('Saved'); st = await api('assistant'); vis = null; ensureBubble(); if (panel) paintLog(st.messages); } catch (e) { $('#er', m).textContent = e.message; } };
     $('#as-test', m).onclick = async () => { $('#er', m).textContent = ''; try { await save(); const r = await api('assistant/settings/test', { method: 'POST', data: {} }); toast('Connected ✓ The assistant answered: “' + r.reply + '”'); st = await api('assistant'); if (panel) paintLog(st.messages); } catch (e) { $('#er', m).textContent = e.message; } };
     const rm = $('#as-rm', m); if (rm) rm.onclick = async () => { if (!confirm('Remove the key and switch the assistant off?')) return; try { await save({ remove_key: true, enabled: false }); m.close(); toast('Key removed'); st = await api('assistant'); if (panel) paintLog(st.messages); } catch (e) { $('#er', m).textContent = e.message; } };
   }
