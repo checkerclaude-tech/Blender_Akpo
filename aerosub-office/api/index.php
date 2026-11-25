@@ -548,6 +548,11 @@ case 'reports':
     require __DIR__ . '/lib/reports.php';
     break;
 
+// The task horn (blow a horn at the person who has your task)
+case 'horn':
+    require __DIR__ . '/lib/horn.php';
+    break;
+
 // SEO autopilot feed (Campaigns): the office app on 'seo', the autopilot with its own token (scope 'seo') on 'seo-agent'.
 case 'seo':
 case 'seo-agent':

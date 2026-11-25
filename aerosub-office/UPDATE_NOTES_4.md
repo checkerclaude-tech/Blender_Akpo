@@ -248,3 +248,11 @@ This update does not replace `index.html`, `sw.js`, `upgrade.php` or `api/lib/mi
 - **Who sees it:** everyone, or one department (managers can add feeds for their own departments). Anyone can hide a story for themselves; managers can delete one.
 - **Safety:** only public http(s) addresses are read (never anything inside our own network), size and time are capped, and the story text is stripped of markup.
 - **Cron:** cron.php reads feeds that are due (the same cPanel cron as before). Without cron, opening News keeps them fresh. Upgrade: open /upgrade.php once (adds news_feeds and news_items; it also runs by itself on first use).
+
+## The task horn 📯
+- Open a task you gave (or any task, as a manager or admin) and press **📯 Horn**. Write a message (default "Please check this task!"), add an emoji if you like, and blow it.
+- On the screen of the person the task is assigned to, a pop-up appears at once with a trumpet call, your **message in big bold**, and the task name (a link to open it). It calls again every 25 seconds, up to six times, until they answer. Phones also get the usual push notification and a vibration.
+- They answer with one tap: **On it 💪**, **Paused ⏸️**, **😠**, **Almost done! 🏁**, or **Snooze** (5, 15, 30 minutes or 1 hour; it comes back when the time is up). You are notified of every answer, and the Horn box shows the earlier horns and replies on that task.
+- Limits: you can't horn yourself, a closed task, or the same task twice within 20 seconds, and no more than 15 horns an hour. A new horn replaces the old unanswered one.
+- The sound is made inside the browser (no sound files). Browsers keep a page silent until the person has touched it once since opening; if nobody has, the pop-up still appears and says "Tap anywhere to let the horn sound".
+- Upgrade: open /upgrade.php once (adds task_horns; it also runs by itself on first use).
