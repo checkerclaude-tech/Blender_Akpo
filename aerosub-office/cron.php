@@ -15,6 +15,8 @@ try { require_once __DIR__ . '/api/lib/campcore.php'; if (col_exists('camp_queue
 try { require_once __DIR__ . '/api/lib/prospect.php'; if (col_exists('pr_watches', 'keywords')) echo pr_cron() . "\n"; } catch (Throwable $e) { echo 'Prospecting skipped: ' . $e->getMessage() . "\n"; }
 // News feeds: read the outside RSS / Atom feeds that are due, keep what matches the keywords, drop what has expired
 try { require_once __DIR__ . '/api/lib/newsfeeds.php'; echo nf_cron() . "\n"; } catch (Throwable $e) { echo 'News feeds skipped: ' . $e->getMessage() . "\n"; }
+// RFQ tracker: read the operations@ mailbox for RFQs and purchase orders, and keep quotations matched to their RFQ
+try { require_once __DIR__ . '/api/lib/rfq.php'; echo rfq_cron() . "\n"; } catch (Throwable $e) { echo 'RFQ tracker skipped: ' . $e->getMessage() . "\n"; }
 // Inbox automation: read the info@ mailbox, add senders to the CRM, create tasks and draft replies for approval
 try { require_once __DIR__ . '/api/lib/inboxauto.php'; if (col_exists('ia_items', 'msg_key')) echo ia_cron() . "\n"; } catch (Throwable $e) { echo 'Inbox automation skipped: ' . $e->getMessage() . "\n"; }
 // Agent platform: retry approved items whose pipeline update failed earlier

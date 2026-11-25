@@ -64,11 +64,11 @@
   const prev = X.onTask;
   X.onTask = (m, t) => {
     if (prev) prev(m, t); if (!S.user) return;
-    const me = +S.user.id, isCreator = +t.creator_id === me, isAssignee = +t.assignee_id === me, boss = isCreator || ['super_admin', 'manager'].includes(S.user.role);
-    const to = isAssignee && !isCreator ? { id: t.creator_id, name: t.creator_name } : { id: t.assignee_id, name: t.assignee_name };
-    if (!(boss || isAssignee) || !to.id || +to.id === me || ['done', 'canceled'].includes(t.status)) return;
+    const me = +S.user.id, isCreator = +t.creator_id === me, isHead = t.department_id && ((S.user.head_of || []).map(Number)).includes(+t.department_id);
+    const to = { id: t.assignee_id, name: t.assignee_name };   // the horn is blown only by the person who gave the task or the head of its department, and heard by the person it is assigned to
+    if (!(isCreator || isHead) || !to.id || +to.id === me || ['done', 'canceled'].includes(t.status)) return;
     const h3 = $$('h3', m).find(x => /Comments/.test(x.textContent)); if (!h3 || $('#horn-btn', m)) return;
-    const b = document.createElement('button'); b.className = 'btn ghost sm'; b.id = 'horn-btn'; b.type = 'button'; b.innerHTML = '📯 Horn'; b.title = 'Blow a horn at ' + (to.name || 'them') + (isAssignee && !isCreator ? ' to get their attention' : ' to remind them'); b.style.margin = '6px 0';
+    const b = document.createElement('button'); b.className = 'btn ghost sm'; b.id = 'horn-btn'; b.type = 'button'; b.innerHTML = '📯 Horn'; b.title = 'Blow a horn at ' + (to.name || 'them') + ' to remind them'; b.style.margin = '6px 0';
     h3.before(b); b.onclick = () => hornForm(t, to);
   };
   const EMO = ['🔥', '⏰', '🚨', '🙏', '👀', '💪', '📣', '❗'];

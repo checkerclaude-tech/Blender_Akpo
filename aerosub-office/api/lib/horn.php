@@ -13,11 +13,11 @@ function horn_pub(array $r): array {
     return ['id' => (int)$r['id'], 'task_id' => (int)$r['task_id'], 'task' => $r['task_title'], 'from' => $r['from_name'], 'message' => $r['message'], 'created_at' => $r['created_at'], 'snoozes' => (int)$r['snoozes'], 'status' => $r['status'], 'loud' => (int)($r['task_assignee'] ?? 0) === (int)$r['to_user_id']];   // the trumpet sounds only for the person the task is assigned to
 }
 if ($method === 'POST' && $sub === '') {
-    $b = body(); $tid = (int)($b['task_id'] ?? 0); $t = $tid ? one('SELECT id,title,assignee_id,creator_id,status FROM tasks WHERE id=?', [$tid]) : null; if (!$t) fail('Task not found', 404);
-    $isCreator = (int)$t['creator_id'] === $uid; $isAssignee = (int)$t['assignee_id'] === $uid; $isBoss = $isCreator || in_array($u['role'], ['super_admin', 'manager'], true);
-    if (!$isBoss && !$isAssignee) fail('Only the person who gave the task, a manager, or the person doing it can blow the horn', 403);
-    // the person who gave the task (or a manager) blows it at whoever has the task; whoever has the task blows it back at the person who gave it
-    $to = $isAssignee && !$isCreator ? (int)$t['creator_id'] : (int)$t['assignee_id']; if (!$to) fail('Nobody has this task yet'); if ($to === $uid) fail('You are the only person on this task');
+    $b = body(); $tid = (int)($b['task_id'] ?? 0); $t = $tid ? one('SELECT id,title,assignee_id,creator_id,department_id,status FROM tasks WHERE id=?', [$tid]) : null; if (!$t) fail('Task not found', 404);
+    // only the person who gave the task, or the head of the department the task belongs to, can blow the horn; it is heard by the person the task is assigned to
+    $isCreator = (int)$t['creator_id'] === $uid; $isHead = $t['department_id'] && in_array((int)$t['department_id'], array_map('intval', $u['head_of'] ?? []), true);
+    if (!$isCreator && !$isHead) fail('Only the person who gave the task, or the head of its department, can blow the horn', 403);
+    $to = (int)$t['assignee_id']; if (!$to) fail('Nobody has this task yet'); if ($to === $uid) fail('This task is assigned to you');
     if (in_array($t['status'], ['done', 'canceled'], true)) fail('This task is already closed');
     $msg = trim(preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F]+/u', '', (string)($b['message'] ?? ''))); $msg = mb_substr($msg !== '' ? $msg : 'Please check this task!', 0, 120);
     if ((int)(one('SELECT COUNT(*) n FROM task_horns WHERE from_user_id=? AND task_id=? AND created_at > (NOW() - INTERVAL 20 SECOND)', [$uid, $tid])['n'] ?? 0)) fail('You just blew the horn on this task. Give them a moment.', 429);
@@ -31,7 +31,7 @@ if ($method === 'GET' && $sub === 'inbox') {
     out(['horns' => array_map('horn_pub', all("SELECT h.*, t.title AS task_title, t.assignee_id AS task_assignee, u.name AS from_name FROM task_horns h JOIN tasks t ON t.id=h.task_id JOIN users u ON u.id=h.from_user_id WHERE h.to_user_id=? AND t.status NOT IN ('done','canceled') AND (h.status='open' OR (h.status='snoozed' AND h.snooze_until <= NOW())) ORDER BY h.id DESC LIMIT 5", [$uid]))]);
 }
 if ($method === 'GET' && $sub === 'task') {
-    $tid = (int)($seg[2] ?? 0); $t = one('SELECT creator_id,assignee_id FROM tasks WHERE id=?', [$tid]); if (!$t) fail('Not found', 404); $boss = (int)$t['creator_id'] === $uid || in_array($u['role'], ['super_admin', 'manager'], true);
+    $tid = (int)($seg[2] ?? 0); $t = one('SELECT creator_id,assignee_id,department_id FROM tasks WHERE id=?', [$tid]); if (!$t) fail('Not found', 404); $boss = (int)$t['creator_id'] === $uid || ($t['department_id'] && in_array((int)$t['department_id'], array_map('intval', $u['head_of'] ?? []), true));
     if (!$boss && (int)$t['assignee_id'] !== $uid) fail('Not allowed', 403);
     out(['horns' => array_map(fn($r) => ['id' => (int)$r['id'], 'message' => $r['message'], 'created_at' => $r['created_at'], 'to' => $r['to_name'], 'status' => $r['status'], 'reply' => HORN_REPLIES[$r['reply']] ?? null, 'snooze_until' => $r['status'] === 'snoozed' ? $r['snooze_until'] : null],
         all('SELECT h.*, u.name AS to_name FROM task_horns h JOIN users u ON u.id=h.to_user_id WHERE h.task_id=?' . ($boss ? '' : ' AND (h.from_user_id=' . $uid . ' OR h.to_user_id=' . $uid . ')') . ' ORDER BY h.id DESC LIMIT 8', [$tid]))]);

@@ -46,7 +46,7 @@ function fx_kind(array $i): string { $k = (string)($i['kind'] ?? ''); if ($k ===
     return preg_match('/day|hour|service|survey|inspection|support|training|rental|hire|personnel|standby|mobili|management|consult|labou?r|maintenance/i', ($i['description'] ?? '') . ' ' . ($i['unit'] ?? '') . ' ' . ($i['freq'] ?? '') . ' ' . ($i['category'] ?? '')) ? 'service' : 'product'; }
 /** product | service | both, from the lines on a document. */
 function fx_scope(array $items): string { $k = array_values(array_unique(array_map('fx_kind', $items))); return count($k) > 1 ? 'both' : ($k[0] ?? 'service'); }
-function fx_ensure3(): void { static $done = false; if ($done) return; $done = true; try { if (!one("SHOW TABLES LIKE 'fin_comments'") || !one("SHOW TABLES LIKE 'vendors'") || !one("SHOW TABLES LIKE 'fin_styles'") || !one("SHOW TABLES LIKE 'fin_templates'") || !one("SHOW TABLES LIKE 'fin_letters'") || !one("SHOW TABLES LIKE 'vault_shares'") || !col_exists_fx('fin_items', 'kind')) { require_once __DIR__ . '/migrate_fin3.php'; migrate_fin_ext(); } } catch (Throwable $e) { error_log('Finance schema: ' . $e->getMessage()); fail('The finance database could not be upgraded automatically (' . mb_substr($e->getMessage(), 0, 160) . '). Open /upgrade.php once as Super Admin.', 500); } }
+function fx_ensure3(): void { static $done = false; if ($done) return; $done = true; try { if (!one("SHOW TABLES LIKE 'fin_comments'") || !one("SHOW TABLES LIKE 'vendors'") || !one("SHOW TABLES LIKE 'fin_styles'") || !one("SHOW TABLES LIKE 'fin_templates'") || !one("SHOW TABLES LIKE 'fin_memory'") || !one("SHOW TABLES LIKE 'rfqs'") || !one("SHOW TABLES LIKE 'fin_letters'") || !one("SHOW TABLES LIKE 'vault_shares'") || !col_exists_fx('fin_items', 'kind')) { require_once __DIR__ . '/migrate_fin3.php'; migrate_fin_ext(); } } catch (Throwable $e) { error_log('Finance schema: ' . $e->getMessage()); fail('The finance database could not be upgraded automatically (' . mb_substr($e->getMessage(), 0, 160) . '). Open /upgrade.php once as Super Admin.', 500); } }
 function col_exists_fx(string $t, string $c): bool { return (bool)one('SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME=?', [$t, $c]); }
 function fx_doc(int $id, bool $items = true): ?array {
     $d = one('SELECT d.*, u.name AS created_by_name, t.title AS task_title FROM fin_docs d LEFT JOIN users u ON u.id=d.created_by LEFT JOIN tasks t ON t.id=d.task_id WHERE d.id=?', [$id]); if (!$d) return null;
@@ -60,7 +60,20 @@ function fx_clean_items($raw): array {
         $price = fx_num($i['unit_price'] ?? 0); if ($price < 0 || $price > 1e10) fail('Unit price is not valid'); $out[] = ['description' => $desc, 'qty' => $qty, 'unit' => fx_s($i['unit'] ?? '', 30), 'unit_price' => $price, 'category' => fx_s($i['category'] ?? '', 120), 'freq' => fx_s($i['freq'] ?? '', 40), 'amount_note' => $note, 'kind' => in_array(($i['kind'] ?? ''), ['product', 'service'], true) ? $i['kind'] : null]; }
     return $out;
 }
-function fx_save_items(int $id, array $items): void { q('DELETE FROM fin_items WHERE doc_id=?', [$id]); foreach ($items as $n => $i) q('INSERT INTO fin_items (doc_id,position,description,qty,unit,unit_price,category,freq,amount_note,kind) VALUES (?,?,?,?,?,?,?,?,?,?)', [$id, $n, $i['description'], $i['qty'], $i['unit'], $i['unit_price'], $i['category'] ?? null, $i['freq'] ?? null, $i['amount_note'] ?? null, $i['kind'] ?? null]); }
+/** What each person typed on their saved documents is remembered for them, so the next document can suggest it. */
+const FX_MEMO_FIELDS = ['subject', 'attention', 'payment_terms', 'terms_instr', 'delivery_leadtime', 'shipping_method', 'sales_rep', 'terms', 'notes', 'intro'];
+function fx_memo_fields(int $uid, array $d): void {
+    if ($uid <= 0) return; try { foreach (FX_MEMO_FIELDS as $f) { $t = trim((string)($d[$f] ?? '')); if ($t === '' || mb_strlen($t) < 3) continue; q("INSERT INTO fin_memory (user_id,kind,text) VALUES (?,?,?) ON DUPLICATE KEY UPDATE uses=uses+1, last_used=NOW()", [$uid, 'f:' . $f, mb_substr($t, 0, 1200)]); } } catch (Throwable $e) { error_log('Finance memory: ' . $e->getMessage()); }
+}
+function fx_memo_lines(int $uid, array $items): void {
+    if ($uid <= 0) return; try {
+        foreach (array_slice($items, 0, 60) as $i) { $t = trim((string)($i['description'] ?? '')); if ($t === '' || mb_strlen($t) < 3) continue; $t = mb_substr($t, 0, 300);
+            q("INSERT INTO fin_memory (user_id,kind,text,unit,unit_price,category,freq,item_kind) VALUES (?,'line',?,?,?,?,?,?) ON DUPLICATE KEY UPDATE uses=uses+1, last_used=NOW(), unit=VALUES(unit), unit_price=VALUES(unit_price), category=VALUES(category), freq=VALUES(freq), item_kind=VALUES(item_kind)",
+              [$uid, $t, ($i['unit'] ?? '') !== '' ? mb_substr((string)$i['unit'], 0, 30) : null, isset($i['unit_price']) && (float)$i['unit_price'] > 0 ? (float)$i['unit_price'] : null, ($i['category'] ?? '') !== '' ? mb_substr((string)$i['category'], 0, 120) : null, ($i['freq'] ?? '') !== '' ? mb_substr((string)$i['freq'], 0, 60) : null, in((string)($i['kind'] ?? ''), ['product', 'service'], '') ?: null]); }
+        if (mt_rand(1, 30) === 1) q('DELETE FROM fin_memory WHERE user_id=? AND id NOT IN (SELECT id FROM (SELECT id FROM fin_memory WHERE user_id=? ORDER BY uses DESC, last_used DESC LIMIT 800) k)', [$uid, $uid]);
+    } catch (Throwable $e) { error_log('Finance memory: ' . $e->getMessage()); }
+}
+function fx_save_items(int $id, array $items): void { q('DELETE FROM fin_items WHERE doc_id=?', [$id]); foreach ($items as $n => $i) q('INSERT INTO fin_items (doc_id,position,description,qty,unit,unit_price,category,freq,amount_note,kind) VALUES (?,?,?,?,?,?,?,?,?,?)', [$id, $n, $i['description'], $i['qty'], $i['unit'], $i['unit_price'], $i['category'] ?? null, $i['freq'] ?? null, $i['amount_note'] ?? null, $i['kind'] ?? null]); fx_memo_lines((int)($GLOBALS['uid'] ?? 0), $items); }
 /** The template fields (attention, customer id, ship to, lead time, project title, days ...). Only fields present in $b change. */
 function fx_save_extra(int $id, array $b): void {
     $f = ['customer_id' => 60, 'quote_ref' => 60, 'sales_rep' => 80, 'sales_email' => 120, 'sales_tel' => 60, 'attention' => 120, 'terms_instr' => 120, 'payment_terms' => 120, 'ship_to' => 500, 'shipping_method' => 80, 'delivery_leadtime' => 120, 'subject' => 300, 'intro' => 3000];
@@ -73,7 +86,7 @@ function fx_save_extra(int $id, array $b): void {
 /** Keep what was typed: new clients become companies (with their code and address), new contacts and new products or services are stored for next time. */
 function fx_remember(int $id, int $uid): void {
     try {
-        $d = fx_doc($id); if (!$d) return; $type = (string)$d['doc_type']; $name = trim((string)$d['client_name']);
+        $d = fx_doc($id); if (!$d) return; $type = (string)$d['doc_type']; fx_memo_fields($uid, $d); $name = trim((string)$d['client_name']);
         if ($name !== '' && in_array($type, ['commercial', 'proforma', 'invoice'], true)) {
             $co = one('SELECT id,code,address FROM companies WHERE LOWER(name)=LOWER(?) LIMIT 1', [$name]); $code = trim((string)($d['customer_id'] ?? '')); if (strtoupper($code) === 'N/A') $code = '';
             if (!$co) { q("INSERT INTO companies (name,code,address,stage,priority,owner_id,notes,created_by) VALUES (?,?,?,'contact_identified','medium',?,'Added from a finance document',?)", [mb_substr($name, 0, 190), $code ?: null, trim((string)$d['client_address']) ?: null, $uid, $uid]); $co = ['id' => (int)db()->lastInsertId(), 'code' => $code, 'address' => '']; }
@@ -98,6 +111,7 @@ if ($seg[0] === 'finance') {
     $sub = $seg[1] ?? ''; fx_ensure3();
     require_once __DIR__ . '/approvals.php';
     if ($sub === 'letters' || $sub === 'letterheads') { require __DIR__ . '/letters.php'; }
+    if ($sub === 'rfqs' || $sub === 'delivery') { require __DIR__ . '/rfq.php'; }
     if ($sub === 'approvals' || $sub === 'signature') ap_global($u, $sub, $method, $b);   // my approval queue and my saved signature
     if ($sub === 'settings') {
         if (!$fin && !in_array($role, ['founder'], true)) fail('Not allowed', 403);
@@ -110,7 +124,7 @@ if ($seg[0] === 'finance') {
         out(['ok' => true]);
     }
     if ($sub === 'suggest' && $method === 'GET') {   // as-you-type suggestions for the document form: clients, contacts, products and services, earlier quotations
-        if (!$fin) fail('Not allowed', 403); $kind = in((string)($_GET['kind'] ?? ''), ['client', 'contact', 'product', 'quote'], 'client'); $qs = mb_substr(trim((string)($_GET['q'] ?? '')), 0, 60); $like = '%' . $qs . '%'; $start = $qs . '%'; $res = [];
+        if (!$fin) fail('Not allowed', 403); $kind = in((string)($_GET['kind'] ?? ''), ['client', 'contact', 'product', 'quote', 'field'], 'client'); $qs = mb_substr(trim((string)($_GET['q'] ?? '')), 0, 60); $like = '%' . $qs . '%'; $start = $qs . '%'; $res = [];
         if ($kind === 'client') {
             foreach (all('SELECT id,name,code,address FROM companies WHERE name LIKE ? OR code LIKE ? ORDER BY ' . ($qs === '' ? '(SELECT COALESCE(MAX(d.id),0) FROM fin_docs d WHERE LOWER(d.client_name)=LOWER(companies.name)) DESC, name' : '(name LIKE ?) DESC, name') . ' LIMIT 8', $qs === '' ? [$like, $like] : [$like, $like, $start]) as $c) {
                 $ld = one("SELECT client_address,client_email,attention,customer_id,payment_terms,ship_to,terms_instr,shipping_method,sales_rep,sales_email,sales_tel FROM fin_docs WHERE LOWER(client_name)=LOWER(?) AND doc_type IN ('commercial','proforma','invoice') ORDER BY id DESC LIMIT 1", [$c['name']]) ?: [];
@@ -121,7 +135,10 @@ if ($seg[0] === 'finance') {
             if ($qs !== '') foreach (all('SELECT ct.name,ct.email,c.name AS company,c.code,c.address FROM contacts ct LEFT JOIN companies c ON c.id=ct.company_id WHERE ct.name LIKE ? OR ct.email LIKE ? ORDER BY ct.name LIMIT 5', [$like, $like]) as $r) $res[] = ['source' => 'Contact', 'name' => $r['company'] ?: $r['name'], 'label' => $r['name'] . ($r['company'] ? ' · ' . $r['company'] : ''), 'attention' => $r['name'], 'email' => $r['email'] ?? '', 'code' => $r['code'], 'customer_id' => $r['code'] ?? '', 'address' => $r['address'] ?? ''];
         } elseif ($kind === 'contact') {
             foreach (all('SELECT ct.name,ct.email,c.name AS company FROM contacts ct LEFT JOIN companies c ON c.id=ct.company_id WHERE ct.name LIKE ? OR ct.email LIKE ? ORDER BY ct.name LIMIT 8', [$like, $like]) as $r) $res[] = ['source' => 'Contact', 'name' => $r['name'], 'email' => $r['email'] ?? '', 'label' => $r['name'] . ($r['company'] ? ' · ' . $r['company'] : '')];
+        } elseif ($kind === 'field') {   // something this person typed in the same box on an earlier document
+            $f = in((string)($_GET['f'] ?? ''), FX_MEMO_FIELDS, ''); if ($f !== '') foreach (all('SELECT text FROM fin_memory WHERE user_id=? AND kind=? AND text LIKE ? ORDER BY (text LIKE ?) DESC, uses DESC, last_used DESC LIMIT 6', [$uid, 'f:' . $f, $like, $start]) as $r) $res[] = ['source' => 'My earlier entry', 'name' => $r['text']];
         } elseif ($kind === 'product') {
+            try { foreach (all("SELECT text,unit,unit_price,category,freq,item_kind FROM fin_memory WHERE user_id=? AND kind='line' AND text LIKE ? ORDER BY (text LIKE ?) DESC, uses DESC, last_used DESC LIMIT 5", [$uid, $like, $start]) as $r) $res[] = ['source' => 'My saved line', 'name' => $r['text'], 'unit' => $r['unit'], 'price' => $r['unit_price'] !== null ? (float)$r['unit_price'] : null, 'category' => $r['category'], 'freq' => $r['freq'], 'item_kind' => $r['item_kind']]; } catch (Throwable $e) {}   // what this person typed before comes first
             foreach (all('SELECT p.name,p.description,p.unit,p.price,p.currency,p.kind,v.name AS vendor,v.email AS vendor_email FROM products p LEFT JOIN vendors v ON v.id=p.vendor_id WHERE p.name LIKE ? OR p.sku LIKE ? OR p.description LIKE ? OR p.category LIKE ? OR v.name LIKE ? ORDER BY (p.name LIKE ?) DESC, p.name LIMIT 10', [$like, $like, $like, $like, $like, $start]) as $r) $res[] = ['source' => $r['kind'] === 'service' ? 'Service' : 'Product', 'name' => $r['name'], 'description' => $r['description'], 'unit' => $r['unit'], 'price' => $r['price'] !== null ? (float)$r['price'] : null, 'currency' => $r['currency'], 'vendor' => $r['vendor'], 'vendor_email' => $r['vendor_email']];
         } else {
             foreach (all("SELECT id,number,doc_type,client_name FROM fin_docs WHERE doc_type IN ('proforma','commercial') AND status<>'void' AND (number LIKE ? OR client_name LIKE ?) ORDER BY id DESC LIMIT 8", [$like, $like]) as $r) $res[] = ['source' => $r['doc_type'] === 'proforma' ? 'Proforma' : 'Commercial', 'name' => $r['number'], 'label' => $r['number'] . ' · ' . $r['client_name'], 'client_name' => $r['client_name']];
