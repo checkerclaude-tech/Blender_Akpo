@@ -76,6 +76,7 @@ function rp_transfer_task(array $t, array $u, array $b, bool $full): never {
     if ($u['role'] === 'founder') fail('Founder accounts are read-only', 403);
     if (!$full) fail('Only the person who gave the task, or a department head, can transfer it', 403);
     if (in_array($t['status'], RP_CLOSED, true)) fail('This task is already ' . strtolower(rp_status_label($t['status'])) . ' and cannot be transferred');
+    require_once __DIR__ . '/transfers.php'; tr_ensure(); if ((string)(one('SELECT transfer_state FROM tasks WHERE id=?', [(int)$t['id']])['transfer_state'] ?? '') !== '') fail('This task is already waiting for an answer to a transfer', 409);
     $to = (int)($b['to_user_id'] ?? 0); $note = s($b['note'] ?? '', 300);
     $nu = $to ? one('SELECT id,name,department_id FROM users WHERE id=? AND active=1 AND role<>\'founder\'', [$to]) : null; if (!$nu) fail('Choose who the task goes to');
     if ($to === (int)$t['assignee_id']) fail('That person already has this task');
@@ -84,23 +85,23 @@ function rp_transfer_task(array $t, array $u, array $b, bool $full): never {
     if (empty($b['department_id']) && $dept && !in_array($dept, user_dept_ids($to, (int)$nu['department_id']), true)) $dept = $nu['department_id'] ? (int)$nu['department_id'] : $dept; // crossing departments: it moves with the person
     $pdo = db(); $pdo->beginTransaction();
     try {
-        q('INSERT INTO tasks (title,description,status,priority,assignee_id,creator_id,department_id,due_date,company_id,contact_id,task_type,project_id,starts_at,ends_at,transferred_from_id)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-          [$t['title'], $t['description'], 'todo', $t['priority'], $to, $t['creator_id'], $dept, $t['due_date'], $t['company_id'], $t['contact_id'], $t['task_type'], $t['project_id'], $t['starts_at'], $t['ends_at'], $t['id']]);
+        q('INSERT INTO tasks (title,description,status,priority,assignee_id,creator_id,department_id,due_date,company_id,contact_id,task_type,project_id,starts_at,ends_at,transferred_from_id,transfer_state)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+          [$t['title'], $t['description'], 'todo', $t['priority'], $to, $t['creator_id'], $dept, $t['due_date'], $t['company_id'], $t['contact_id'], $t['task_type'], $t['project_id'], $t['starts_at'], $t['ends_at'], $t['id'], 'pending']);
         $nid = (int)$pdo->lastInsertId();
-        q("UPDATE tasks SET status='transferred', transferred_to_id=?, status_reason=?, completed_at=NULL WHERE id=?", [$nid, $note ?: ('Transferred to ' . $nu['name']), $t['id']]);
+        q("UPDATE tasks SET transfer_state='offered', transferred_to_id=? WHERE id=?", [$nid, $t['id']]);   // stays with the current person until the new person accepts
         $info = json_encode(['from' => $t['assignee_name'] ?? null, 'to' => $nu['name'], 'note' => $note, 'old_task' => (int)$t['id'], 'new_task' => $nid], JSON_UNESCAPED_UNICODE);
-        q('INSERT INTO task_updates (task_id,user_id,kind,data) VALUES (?,?,?,?)', [$t['id'], $u['id'], 'transfer', $info]);
-        q('INSERT INTO task_updates (task_id,user_id,kind,data) VALUES (?,?,?,?)', [$nid, $u['id'], 'transfer', $info]);
+        q('INSERT INTO task_updates (task_id,user_id,kind,data) VALUES (?,?,?,?)', [$t['id'], $u['id'], 'transfer_offer', $info]);
+        q('INSERT INTO task_updates (task_id,user_id,kind,data) VALUES (?,?,?,?)', [$nid, $u['id'], 'transfer_offer', $info]);
         $pdo->commit();
     } catch (Throwable $e) { if ($pdo->inTransaction()) $pdo->rollBack(); throw $e; }
     foreach (array_unique(array_filter([$to, (int)$t['assignee_id'], (int)$t['creator_id']])) as $n) {
         if ((int)$n === (int)$u['id']) continue;
-        if ($n === $to) notify($n, 'task_assigned', 'Task transferred to you: ' . $t['title'], 'By ' . $u['name'] . ($note ? ' — ' . $note : ''), '#/tasks/' . $nid);
-        else notify((int)$n, 'task_transferred', $u['name'] . ' transferred "' . $t['title'] . '" to ' . $nu['name'], $note, '#/tasks/' . $nid);
+        if ($n === $to) notify($n, 'task_assigned', '📨 Task offered to you: ' . $t['title'], $u['name'] . ' wants you to take it' . ($note ? ' — ' . $note : '') . '. Accept or decline.', '#/tasks/' . $nid);
+        else notify((int)$n, 'task_transferred', $u['name'] . ' offered "' . $t['title'] . '" to ' . $nu['name'], 'Waiting for ' . $nu['name'] . ' to accept' . ($note ? ' — ' . $note : ''), '#/tasks/' . (int)$t['id']);
     }
     log_act((int)$u['id'], 'task_transferred', $t['title'] . ' → ' . $nu['name']);
-    out(['ok' => true, 'id' => $nid]);
+    out(['ok' => true, 'id' => $nid, 'pending' => true]);
 }
 
 /* ----------------------------------------------------------------------------------------------------------------- */

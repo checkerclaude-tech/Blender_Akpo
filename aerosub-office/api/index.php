@@ -349,6 +349,7 @@ case 'tasks':
         [$w, $p] = $vis($u); $t = one("$sel WHERE t.id=? AND $w", array_merge([$id], $p)); if (!$t) fail('Not found', 404);
         if (in_array($sub, ['flow', 'steps', 'step', 'subs'], true)) { require_once __DIR__ . '/lib/flows.php'; flow_route($t, $u, $method, $sub, $seg, $canEdit); }
         if (in_array($sub, ['files', 'share', 'defer', 'updates', 'report'], true)) { require __DIR__ . '/lib/taskx.php'; }
+        if ($sub === 'transfer' && $method === 'POST' && in_array($seg[3] ?? '', ['accept', 'decline', 'withdraw'], true)) { require_once __DIR__ . '/lib/transfers.php'; tr_answer($t, $u, (string)$seg[3], body()); }
         if ($sub === 'transfer' && $method === 'POST') { require_once __DIR__ . '/lib/reports.php'; rp_transfer_task($t, $u, body(), $canEdit($t)); }
         if ($sub === 'comments' && $method === 'POST') {
             $c = s(body()['body'] ?? '', 3000); if ($c === '') fail('Comment is empty');
@@ -366,6 +367,7 @@ case 'tasks':
         if ($method === 'PATCH') {
             $b = body(); $isAssignee = (int)$t['assignee_id'] === $uid; $full = $canEdit($t);
             if ($u['role'] === 'founder') fail('Founder accounts are read-only', 403);
+            if (($t['transfer_state'] ?? '') === 'pending' && $isAssignee) fail('This task was offered to you. Accept or decline it first.', 409);
             $isMember = $isAssignee || (bool)one('SELECT 1 FROM task_shares WHERE task_id=? AND user_id=?', [$id, $uid]);   // everyone added to the task can update its status
             if (!$full && !$isMember) fail('Not allowed', 403);
             $status = in((string)($b['status'] ?? $t['status']), TASK_STATUSES, $t['status']);
@@ -555,6 +557,11 @@ case 'myfiles':
 
 case 'reports':
     require __DIR__ . '/lib/reports.php';
+    break;
+
+// The floating assistant (Claude)
+case 'assistant':
+    require __DIR__ . '/lib/assistant.php';
     break;
 
 // The task horn (blow a horn at the person who has your task)

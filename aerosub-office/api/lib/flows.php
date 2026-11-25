@@ -10,7 +10,7 @@ declare(strict_types=1);
 
 function flow_ensure(): void {
     static $done = false; if ($done) return; $done = true;
-    try { require_once __DIR__ . '/migrate.php'; if (!col_exists('tasks', 'kind') || !one("SHOW TABLES LIKE 'task_subs'")) { require_once __DIR__ . '/migrate_fin3.php'; migrate_fin_ext(); } } catch (Throwable $e) { error_log('Flow schema: ' . $e->getMessage()); fail('The task flow tables could not be created automatically. Open /upgrade.php once as Super Admin.', 500); }
+    try { require_once __DIR__ . '/migrate.php'; if (!col_exists('tasks', 'kind') || !col_exists('tasks', 'transfer_state') || !one("SHOW TABLES LIKE 'task_subs'")) { require_once __DIR__ . '/migrate_fin3.php'; migrate_fin_ext(); } } catch (Throwable $e) { error_log('Flow schema: ' . $e->getMessage()); fail('The task flow tables could not be created automatically. Open /upgrade.php once as Super Admin.', 500); }
 }
 function flow_d($v): ?string { $v = is_string($v) ? trim($v) : ''; return preg_match('/^\d{4}-\d{2}-\d{2}$/', $v) && strtotime($v) ? $v : null; }
 function flow_add_days(string $d, int $n): string { return date('Y-m-d', strtotime($d . ' ' . ($n >= 0 ? '+' : '') . $n . ' day')); }

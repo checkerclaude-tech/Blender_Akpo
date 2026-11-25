@@ -64,15 +64,16 @@
   const prev = X.onTask;
   X.onTask = (m, t) => {
     if (prev) prev(m, t); if (!S.user) return;
-    const mine = +t.creator_id === +S.user.id || ['super_admin', 'manager'].includes(S.user.role);
-    if (!mine || !t.assignee_id || +t.assignee_id === +S.user.id || ['done', 'canceled'].includes(t.status)) return;
+    const me = +S.user.id, isCreator = +t.creator_id === me, isAssignee = +t.assignee_id === me, boss = isCreator || ['super_admin', 'manager'].includes(S.user.role);
+    const to = isAssignee && !isCreator ? { id: t.creator_id, name: t.creator_name } : { id: t.assignee_id, name: t.assignee_name };
+    if (!(boss || isAssignee) || !to.id || +to.id === me || ['done', 'canceled'].includes(t.status)) return;
     const h3 = $$('h3', m).find(x => /Comments/.test(x.textContent)); if (!h3 || $('#horn-btn', m)) return;
-    const b = document.createElement('button'); b.className = 'btn ghost sm'; b.id = 'horn-btn'; b.type = 'button'; b.innerHTML = '📯 Horn'; b.title = 'Blow a horn at ' + (t.assignee_name || 'them') + ' to remind them'; b.style.margin = '6px 0';
-    h3.before(b); b.onclick = () => hornForm(t);
+    const b = document.createElement('button'); b.className = 'btn ghost sm'; b.id = 'horn-btn'; b.type = 'button'; b.innerHTML = '📯 Horn'; b.title = 'Blow a horn at ' + (to.name || 'them') + (isAssignee && !isCreator ? ' to get their attention' : ' to remind them'); b.style.margin = '6px 0';
+    h3.before(b); b.onclick = () => hornForm(t, to);
   };
   const EMO = ['🔥', '⏰', '🚨', '🙏', '👀', '💪', '📣', '❗'];
-  async function hornForm(t) {
-    const m = modal('<div class="row"><h2 class="grow">📯 Blow the horn</h2><button class="btn ghost sm" id="cx">✕</button></div><div class="muted small" style="margin:4px 0 10px">It sounds a trumpet and pops up on <b>' + esc(t.assignee_name || 'their') + '</b>\'s screen with your message in bold. Task: ' + esc(t.title) + '</div>' +
+  async function hornForm(t, to) {
+    const m = modal('<div class="row"><h2 class="grow">📯 Blow the horn</h2><button class="btn ghost sm" id="cx">✕</button></div><div class="muted small" style="margin:4px 0 10px">It sounds a trumpet and pops up on <b>' + esc((to && to.name) || 'their') + '</b>\'s screen with your message in bold. Task: ' + esc(t.title) + '</div>' +
       '<div class="field"><label for="hm">Your message</label><input id="hm" maxlength="120" value="Please check this task!" autocomplete="off"></div><div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:8px">' + EMO.map(e => '<button type="button" class="btn ghost sm" data-e="' + e + '" aria-label="Add ' + e + '">' + e + '</button>').join('') + '</div>' +
       '<div class="horn-prev" aria-live="polite"><b id="hv"></b></div><div id="hh" class="small muted" style="margin-top:8px"></div><div class="err" id="er" role="alert"></div><div class="row" style="margin-top:12px"><button class="btn" id="hs">📯 Blow the horn</button></div>');
     const inp = $('#hm', m), pv = () => { $('#hv', m).textContent = inp.value || 'Please check this task!'; }; inp.oninput = pv; pv(); inp.select();
@@ -80,7 +81,7 @@
     $('#cx', m).onclick = () => m.close();
     api('horn/task/' + t.id).then(r => { if (r.horns.length) $('#hh', m).innerHTML = '<b>Earlier</b><br>' + r.horns.slice(0, 4).map(x => esc(x.to) + ': “' + esc(x.message) + '” · ' + (x.reply ? esc(x.reply) : x.status === 'snoozed' ? '😴 snoozed' : x.status === 'open' ? 'waiting for an answer' : 'answered')).join('<br>'); }).catch(() => {});
     $('#hs', m).onclick = async () => { unlock(); $('#hs', m).disabled = true; $('#er', m).textContent = '';
-      try { await api('horn', { method: 'POST', data: { task_id: t.id, message: inp.value.trim() } }); blare(1); m.close(); toast('📯 Horn blown at ' + (t.assignee_name || 'them') + '. You will be told how they answer.'); }
+      try { await api('horn', { method: 'POST', data: { task_id: t.id, message: inp.value.trim() } }); blare(1); m.close(); toast('📯 Horn blown at ' + ((to && to.name) || 'them') + '. You will be told how they answer.'); }
       catch (e) { $('#er', m).textContent = e.message; $('#hs', m).disabled = false; } };
     inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('#hs', m).click(); } });
   }
