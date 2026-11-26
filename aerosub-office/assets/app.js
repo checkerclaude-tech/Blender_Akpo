@@ -810,14 +810,14 @@ function importModal(kind) {
 
 views.pipeline = async () => {
   const v = $('#view');
-  const tabs = [['overview', 'Overview'], ['board', 'Board'], ['companies', 'Companies'], ['contacts', 'Contacts']];
+  const tabs = [['overview', 'Overview'], ['board', 'Board'], ['companies', 'Companies'], ['contacts', 'Contacts'], ['vendors', 'Vendors'], ['partners', 'Partners']];
   v.innerHTML = '<div class="top"><h1>Pipeline</h1>' + (readOnly() ? '' : '<div class="row right"><button class="btn ghost sm" id="imp">Import CSV</button><button class="btn sm" id="nc">+ Contact</button><button class="btn sm" id="nco">+ Company</button></div>') + '</div>' +
     '<div class="chips" style="margin-bottom:16px">' + tabs.map(([k, l]) => '<span class="chip ' + (PT === k ? 'on' : '') + '" data-pt="' + k + '">' + l + '</span>').join('') + '</div><div id="pb"><div class="empty">Loading…</div></div>';
   v.querySelectorAll('[data-pt]').forEach(c => c.onclick = () => { PT = c.dataset.pt; ls.set('pt', PT); render(); });
   const nco = $('#nco'); if (nco) { nco.onclick = () => companyForm(); $('#nc').onclick = () => contactForm(); $('#imp').onclick = () => { const mm = modal('<h2>Import</h2><div class="col" style="margin-top:12px"><button class="btn" id="i1">Companies (CSV)</button><button class="btn ghost" id="i2">Contacts (CSV)</button></div>'); $('#i1', mm).onclick = () => { mm.close(); importModal('companies'); }; $('#i2', mm).onclick = () => { mm.close(); importModal('contacts'); }; }; }
   await pipeViews[PT]();
 };
-const pipeViews = {};
+const pipeViews = {}; window.OfficeExt.pipeViews = pipeViews;   // assets/js/vendorcrm.js adds the Vendors and Partners tabs
 
 pipeViews.overview = async () => {
   const d = await api('pipeline'), T = d.totals, max = Math.max(1, ...Object.values(d.stages));

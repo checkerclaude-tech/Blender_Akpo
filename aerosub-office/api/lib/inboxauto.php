@@ -10,7 +10,7 @@ declare(strict_types=1);
 //   GET  /api/inbox-auto/overview[?status=]      settings + counts + items       POST /api/inbox-auto/settings
 //   POST /api/inbox-auto/scan {days,limit}       read the mailbox now            GET  /api/inbox-auto/library   files you can attach
 //   POST /api/inbox-auto/items/{id}/send|close|redraft|category
-require_once __DIR__ . '/mail.php'; require_once __DIR__ . '/accounts.php'; require_once __DIR__ . '/campcore.php';
+require_once __DIR__ . '/mail.php'; require_once __DIR__ . '/accounts.php'; require_once __DIR__ . '/campcore.php'; require_once __DIR__ . '/vendorcrm.php';
 
 const IA_STAGES = ['researching', 'contact_identified', 'outreach_sent', 'in_discussion', 'proposal_sent', 'negotiating', 'won', 'on_hold'];
 const IA_FREE = ['gmail.com', 'googlemail.com', 'yahoo.com', 'yahoo.co.uk', 'outlook.com', 'hotmail.com', 'live.com', 'icloud.com', 'me.com', 'aol.com', 'proton.me', 'protonmail.com', 'yandex.com', 'gmx.com', 'mail.com', 'zoho.com'];
@@ -33,6 +33,9 @@ function ia_default_rules(): array {
         ['key' => 'support', 'label' => 'Support / complaint', 'keywords' => ['issue', 'problem', 'fault', 'support', 'repair', 'not working', 'complain', 'damage', 'urgent', 'help'],
          'business' => 0, 'stage' => '', 'priority' => 'high', 'tasks' => ['Respond to support request'], 'attach' => [],
          'reply' => ia_reply("Thank you for letting us know. We are looking into this and will get back to you as soon as possible.")],
+        ['key' => 'supplier', 'label' => 'Supplier / vendor offer', 'keywords' => ['price list', 'catalogue', 'catalog', 'datasheet', 'data sheet', 'our quotation', 'our offer', 'your purchase order', 'order acknowledg', 'we supply', 'authorized distributor', 'authorised distributor', 'manufacturer', 'lead time', 'in stock', 'stock available', 'supply of', 'we manufacture', 'wholesale'],
+         'weight' => 1.5, 'business' => 0, 'stage' => '', 'priority' => 'medium', 'tasks' => ['Review supplier offer'], 'attach' => [],
+         'reply' => ia_reply("Thank you for your message and your offer. We have passed it to our procurement team and will come back to you if we need more information.")],
         ['key' => 'general', 'label' => 'General', 'keywords' => [], 'business' => 0, 'stage' => '', 'priority' => 'low', 'tasks' => [], 'attach' => [],
          'reply' => ia_reply("Thank you for your email. We have received it and a member of our team will respond shortly.")],
     ];
@@ -40,6 +43,7 @@ function ia_default_rules(): array {
 function ia_settings(): array {
     $r = one('SELECT * FROM ia_settings WHERE id=1'); if (!$r) { q("INSERT IGNORE INTO ia_settings (id) VALUES (1)"); $r = one('SELECT * FROM ia_settings WHERE id=1'); }
     $rules = json_decode((string)($r['rules'] ?? ''), true); if (!is_array($rules) || !$rules) $rules = ia_default_rules();
+    else { $have = array_column($rules, 'key'); foreach (ia_default_rules() as $dr) if ($dr['key'] === 'supplier' && !in_array('supplier', $have, true)) array_splice($rules, max(0, count($rules) - 1), 0, [$dr]); }   // older saved rule sets gain the supplier rule just before 'general'
     $r['rules'] = $rules; $r['skip'] = array_values(array_filter(array_map('trim', explode("\n", (string)($r['skip_list'] ?? '')))));
     if ((string)$r['ack_body'] === '') $r['ack_body'] = "Dear {name},\n\nThank you for contacting Aerosub Solutions. This is to confirm that we have received your email. A member of our team will respond to you shortly.\n\nKind regards,\nAerosub Solutions Limited";
     if ((string)$r['ack_subject'] === '') $r['ack_subject'] = 'We received your email';
@@ -95,12 +99,18 @@ function ia_handle(array $acc, array $actor, array $st, array $m): int {
     q('INSERT INTO ia_items (account_id,msg_key,folder,uid,message_id,references_h,from_email,from_name,subject,snippet,received_at,category,status,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
       [$acc['id'], $key, $m['folder'], $m['uid'], ia_str($m['message_id'], 250), ia_str($m['references'], 1000), ia_str($from, 190), ia_str($m['from_name'], 190), ia_str($m['subject'], 300), $snippet, $m['date'] ?: date('Y-m-d H:i:s'), $skip !== '' ? 'skipped' : 'general', $skip !== '' ? 'skipped' : 'new', (int)$actor['id']]);
     $id = (int)db()->lastInsertId(); if ($skip !== '') { q('UPDATE ia_items SET skip_reason=? WHERE id=?', [$skip, $id]); return $id; }
-    ia_apply($id, $acc, $actor, $st, ia_classify($m['subject'], $m['text'], $rules), true); return $id;
+    $cat = ia_classify($m['subject'], $m['text'], $rules); if (vc_vendor_for($from)) $cat = 'supplier';   // someone we already buy from is never a sales lead
+    ia_apply($id, $acc, $actor, $st, $cat, true); return $id;
 }
 /** (Re)apply a category: contact/company, funnel stage, action tasks, draft reply and the approval task. */
 function ia_apply(int $id, array $acc, array $actor, array $st, string $cat, bool $first): void {
     $it = one('SELECT * FROM ia_items WHERE id=?', [$id]); if (!$it) return; $rule = null; foreach ($st['rules'] as $r) if ($r['key'] === $cat) $rule = $r; if (!$rule) { $cat = 'general'; foreach ($st['rules'] as $r) if ($r['key'] === 'general') $rule = $r; } if (!$rule) return;
-    $biz = !empty($rule['business']); $co = ia_company_for($it['from_email'], $it['from_name'], $biz); $ct = ia_contact_for($it['from_email'], $it['from_name'], $co ? (int)$co['id'] : null, 'Emailed: ' . $it['subject']);
+    $biz = !empty($rule['business']); $vr = vc_vendor_for($it['from_email']);
+    if ($vr || $cat === 'supplier') {   // a supplier: it goes to Vendors (and its person to the vendor), never to Companies
+        $fdom = vc_domain($it['from_email']); $vname = ($fdom !== '' && !in_array($fdom, VC_FREE, true)) ? '' : ($it['from_name'] !== '' ? $it['from_name'] : explode('@', $it['from_email'])[0]);
+        if (!$vr) [$vr] = vc_make($vname, $it['from_email'], 'email', (int)$actor['id'], ['notes' => 'Added from an email: ' . ia_str($it['subject'], 200)]);
+        $co = null; $biz = false; $ct = vc_contact((int)$vr['id'], $it['from_email'], $it['from_name'], 'Emailed: ' . $it['subject']); if ($cat !== 'supplier') { $cat = 'supplier'; foreach ($st['rules'] as $r2) if ($r2['key'] === 'supplier') $rule = $r2; }
+    } else { $co = ia_company_for($it['from_email'], $it['from_name'], $biz); $ct = ia_contact_for($it['from_email'], $it['from_name'], $co ? (int)$co['id'] : null, 'Emailed: ' . $it['subject']); }
     if ($co && $biz && ($rule['stage'] ?? '') !== '') { $cur = array_search($co['stage'], IA_STAGES, true); $new = array_search($rule['stage'], IA_STAGES, true);
         if ($cur !== false && $new !== false && $new > $cur && !in_array($co['stage'], ['won', 'on_hold'], true)) q('UPDATE companies SET stage=? WHERE id=?', [$rule['stage'], $co['id']]); }
     $mk = ia_marketing_head(); $approver = (int)($st['approver_id'] ?: ($mk['head'] ?: $actor['id'])); $due = date('Y-m-d', strtotime('+2 days')); $link = '#/campaigns'; $ids = json_decode((string)$it['tasks_json'], true) ?: [];

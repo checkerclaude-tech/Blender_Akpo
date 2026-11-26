@@ -6,6 +6,7 @@ declare(strict_types=1);
 const STAGES = ['researching', 'contact_identified', 'outreach_sent', 'in_discussion', 'proposal_sent', 'negotiating', 'won', 'on_hold'];
 const PRIOS = ['high', 'medium', 'low'];
 
+require_once __DIR__ . '/vendorcrm.php'; vc_ensure();   // vendors and partners live beside companies; their people are not company contacts
 $u = need_user(); $uid = (int)$u['id']; $mgr = in_array($u['role'], ['super_admin', 'manager'], true); $ro = $u['role'] === 'founder';
 function must_write(): void { global $ro; if ($ro) fail('Founder accounts are read-only', 403); }
 /** A web address a person typed (company website, contact LinkedIn). Only http(s) is kept; "example.com" becomes https://example.com; anything else (javascript:, data:, nonsense) is dropped. */
@@ -21,7 +22,7 @@ function can_edit_owner(array $row): bool { global $mgr, $uid; return $mgr || (i
 if ($r === 'pipeline') {
     $byStage = all('SELECT stage, COUNT(*) c FROM companies GROUP BY stage');
     $stages = array_fill_keys(STAGES, 0); foreach ($byStage as $x) $stages[$x['stage']] = (int)$x['c'];
-    $tot = one("SELECT (SELECT COUNT(*) FROM companies) companies, (SELECT COUNT(*) FROM contacts) contacts,
+    $tot = one("SELECT (SELECT COUNT(*) FROM companies) companies, (SELECT COUNT(*) FROM contacts WHERE vendor_id IS NULL) contacts, (SELECT COUNT(*) FROM vendors WHERE is_partner=0) vendors, (SELECT COUNT(*) FROM vendors WHERE is_partner=1) partners,
         (SELECT COUNT(*) FROM contacts WHERE linkedin IS NOT NULL) linkedin,
         (SELECT COUNT(*) FROM companies WHERE priority='high' AND stage NOT IN ('won','on_hold')) high_live,
         (SELECT COUNT(*) FROM companies WHERE flag_note IS NOT NULL) flagged,
@@ -129,7 +130,7 @@ if ($r === 'contacts') {
     }
 
     if ($method === 'GET' && $id === null) {
-        $w = ['1=1']; $p = [];
+        $w = ['ct.vendor_id IS NULL']; $p = [];
         if (!empty($_GET['company_id'])) { $w[] = 'ct.company_id=?'; $p[] = (int)$_GET['company_id']; }
         if (!empty($_GET['has_email'])) $w[] = 'ct.email IS NOT NULL';
         if (!empty($_GET['has_linkedin'])) $w[] = 'ct.linkedin IS NOT NULL';

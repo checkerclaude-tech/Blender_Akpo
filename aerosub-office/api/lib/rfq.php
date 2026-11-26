@@ -10,11 +10,36 @@ declare(strict_types=1);
 //   GET  finance/rfqs[?status=&q=]   POST finance/rfqs (add by hand)   GET|PATCH finance/rfqs/{id}   POST finance/rfqs/scan   GET|PUT finance/rfqs/settings
 //   POST finance/rfqs/{id}/po {po_number}   POST finance/rfqs/{id}/delivery {delivery_date,delivery_address,items?}   POST finance/rfqs/{id}/payment {amount,date,reference}
 //   GET|PATCH finance/delivery/{id}   POST finance/delivery/{id}/sign   POST finance/delivery/{id}/printed
-require_once __DIR__ . '/mail.php'; require_once __DIR__ . '/inboxauto.php'; require_once __DIR__ . '/rfqread.php';
+require_once __DIR__ . '/mail.php'; require_once __DIR__ . '/inboxauto.php'; require_once __DIR__ . '/rfqread.php'; require_once __DIR__ . '/vendorcrm.php';
 
 /** Only senders on the allowed list are ever read. Entries: an address (buyer@client.com), a whole domain (@client.com or client.com). An empty list allows nobody. */
 function rfq_allow_list(?string $raw): array { $o = []; foreach (preg_split('/[\s,;]+/', strtolower((string)$raw)) as $e) { $e = trim($e, " <>\t\"'"); if ($e === '') continue; $e = preg_replace('/^\*@/', '@', $e); if (preg_match('/^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$/', $e) || preg_match('/^@?[a-z0-9\-]+(\.[a-z0-9\-]+)*\.[a-z]{2,}$/', $e)) $o[$e] = 1; } return array_slice(array_keys($o), 0, 300); }
 function rfq_allowed(string $email, ?string $raw): bool { $email = strtolower(trim($email)); $dom = substr(strrchr($email, '@') ?: '', 1); if ($email === '' || $dom === '') return false; foreach (rfq_allow_list($raw) as $e) { if ($e === $email) return true; $d = ltrim($e, '@'); if (!str_contains($e, '@') || $e[0] === '@') { if ($dom === $d || str_ends_with($dom, '.' . $d)) return true; } } return false; }
+/** Customers picked in the Pipeline (a company or a contact marked "can send us RFQs"), as allow-list lines. Vendors and partners are never added this way. */
+function rfq_designated(): array {
+    vc_ensure(); $o = [];
+    try {
+        foreach (all("SELECT LOWER(email) e FROM contacts WHERE rfq_ok=1 AND vendor_id IS NULL AND email IS NOT NULL AND email<>''") as $x) $o[$x['e']] = 1;
+        foreach (all("SELECT website FROM companies WHERE rfq_ok=1 AND website IS NOT NULL AND website<>''") as $x) { $d = strtolower(preg_replace('~^https?://(www\.)?~i', '', trim((string)$x['website']))); $d = explode('/', $d)[0]; if ($d !== '' && !in_array($d, VC_FREE, true)) $o['@' . $d] = 1; }
+        foreach (all("SELECT LOWER(ct.email) e FROM contacts ct JOIN companies c ON c.id=ct.company_id WHERE c.rfq_ok=1 AND ct.vendor_id IS NULL AND ct.email IS NOT NULL AND ct.email<>''") as $x) $o[$x['e']] = 1;   // a company with no website: its people
+    } catch (Throwable $e) { error_log('RFQ designated: ' . $e->getMessage()); }
+    return array_keys($o);
+}
+/** Who may be read: the allowed-senders list plus the designated customers. Vendors and partners are left out unless typed into the list by hand. Our own people never count. */
+function rfq_effective_allow(?string $raw): string {
+    $typed = rfq_allow_list($raw); $des = array_diff(rfq_designated(), $typed); $keep = [];
+    foreach ($des as $e) { $em = ltrim($e, '@'); if (str_contains($e, '@') && $e[0] !== '@' ? vc_vendor_for($e) : false) continue; $keep[] = $e; }   // a designated address that is really a vendor contact is dropped
+    return implode("\n", array_merge($typed, $keep));
+}
+/** Is this address one of ours (our domain, the scanned mailbox, or any staff address)? Such mail is never an RFQ. */
+function rfq_is_ours(string $email, string $mailbox): bool {
+    $email = strtolower(trim($email)); $dom = vc_domain($email); if ($email === '' || $dom === '') return false; $mb = strtolower($mailbox); if ($email === $mb || ($mb !== '' && $dom === vc_domain($mb))) return true;
+    static $ours = null; if ($ours === null) { $ours = ['mail' => [], 'dom' => []]; try { foreach (all("SELECT LOWER(email) e FROM users WHERE email IS NOT NULL AND email<>''") as $x) $ours['mail'][$x['e']] = 1; foreach (all('SELECT LOWER(email) e FROM mail_accounts') as $x) { $ours['mail'][$x['e']] = 1; $ours['dom'][vc_domain($x['e'])] = 1; }
+        $fs = one('SELECT email FROM fin_settings WHERE id=1'); if (!empty($fs['email'])) $ours['dom'][vc_domain((string)$fs['email'])] = 1; foreach (explode(',', (string)(cfg('own_domains') ?: '')) as $d) if (trim($d) !== '') $ours['dom'][strtolower(trim($d))] = 1; } catch (Throwable $e) { error_log('RFQ own addresses: ' . $e->getMessage()); }
+        foreach (array_keys($ours['mail']) as $e) { $dd = vc_domain($e); if (in_array($dd, VC_FREE, true)) continue; $ours['dom'][$dd] = 1; }   // staff on a company domain make that domain ours
+        foreach (array_keys($ours['dom']) as $dd) if (in_array($dd, VC_FREE, true)) unset($ours['dom'][$dd]); }
+    return isset($ours['mail'][$email]) || isset($ours['dom'][$dom]);
+}
 function rfq_dir(): string { $dir = (string)(cfg('storage_dir') ?: dirname(__DIR__) . '/storage') . '/rfq'; if (!is_dir($dir)) @mkdir($dir, 0775, true); $root = dirname($dir); if (!is_file($root . '/.htaccess')) { @file_put_contents($root . '/.htaccess', "Require all denied\nDeny from all\n"); @file_put_contents($root . '/index.html', ''); } return $dir; }
 function rfq_save_files(int $id, string $kind, array $files): void { foreach (array_slice($files, 0, 6) as $f) { $rel = bin2hex(random_bytes(16)); if (@file_put_contents(rfq_dir() . '/' . $rel, $f['data']) === false) continue; q('INSERT INTO rfq_files (rfq_id,kind,name,mime,size,path) VALUES (?,?,?,?,?,?)', [$id, $kind, $f['name'], mb_substr((string)$f['mime'], 0, 100), strlen($f['data']), $rel]); } }
 function rfq_store_items(int $id, array $ex): void { if (!$ex['items']) return; q('UPDATE rfqs SET items_json=?, items_source=? WHERE id=?', [json_encode($ex['items'], JSON_UNESCAPED_UNICODE), mb_substr($ex['source'], 0, 190), $id]); rfq_event($id, 'items', count($ex['items']) . ' item' . (count($ex['items']) === 1 ? '' : 's') . ' read from ' . $ex['source']); }
@@ -86,17 +111,18 @@ function rfq_handle_mail(array $acc, array $actor, array $st, array $m): string 
     q('UPDATE rfqs SET task_id=? WHERE id=?', [$tid, $id]); rfq_event($id, 'new', 'RFQ received from ' . $from . ' · code ' . $code . ($src === 'generated' ? ' (made by us)' : '')); return 'rfq';
 }
 function rfq_scan(array $acc, array $actor, int $days = 7, int $limit = 80): array {
-    rfq_ensure(); $st = rfq_settings(); $allow = (string)($st['allowed_senders'] ?? ''); $r = ['rfqs' => 0, 'pos' => 0, 'followups' => 0, 'looked_at' => 0, 'ignored' => []];
+    rfq_ensure(); $st = rfq_settings(); $allow = rfq_effective_allow((string)($st['allowed_senders'] ?? '')); $r = ['rfqs' => 0, 'pos' => 0, 'followups' => 0, 'looked_at' => 0, 'ignored' => [], 'ours' => 0];
     if (!rfq_allow_list($allow)) return $r + ['no_allowed' => true];   // nobody is allowed yet: nothing is read, nothing is kept
     $im = ia_imap($acc); $im->select('INBOX'); $since = date('d-M-Y', strtotime('-' . max(1, min(60, $days)) . ' days')); $uids = array_slice($im->search('SINCE ' . $since), -max(1, min(200, $limit))); $r['looked_at'] = count($uids);
     foreach (array_chunk(array_reverse($uids), 40) as $chunk) {
         try { $hh = $im->headers($chunk); } catch (Throwable $e) { error_log('RFQ headers: ' . $e->getMessage()); continue; }
         foreach ($chunk as $uid) {
             try { $hd = $hh[$uid] ?? null; if (!$hd || empty($hd['from'])) continue; $fe = strtolower((string)$hd['from'][0]['email']);
+                if (rfq_is_ours($fe, (string)$acc['email'])) { $r['ours']++; continue; }   // an RFQ made by us is never tracked among the companies' RFQs
                 if (!rfq_allowed($fe, $allow)) { $r['ignored'][$fe] = ($r['ignored'][$fe] ?? 0) + 1; continue; }   // not on the list: never opened, never saved
                 $key = sha1('rfq|' . $acc['id'] . '|' . ($hd['message_id'] ?: 'INBOX' . $uid)); if (one('SELECT msg_key FROM rfq_msgs WHERE msg_key=?', [$key])) continue;
                 $raw = $im->fetchRaw((int)$uid, 16000000); $x = mime_extract($raw); $h = $x['headers']; $subject = mime_decode_header($h['subject'] ?? ''); q('INSERT IGNORE INTO rfq_msgs (msg_key,kind) VALUES (?,?)', [$key, 'seen']);
-                $why = ia_skip_reason($h, $fe, $subject, (string)$acc['email'], []); if ($why !== '' && $why !== 'From our own team') continue;   // automatic mail is still skipped; a colleague on the allowed list is fine
+                $why = ia_skip_reason($h, $fe, $subject, (string)$acc['email'], []); if ($why !== '') continue;   // automatic mail, our own team and ignored senders are skipped
                 $res = rfq_handle_mail($acc, $actor, $st, ['subject' => $subject, 'text' => (string)$x['text'], 'from_email' => $fe, 'from_name' => (string)($hd['from'][0]['name'] ?? ''), 'date' => mime_date($h['date'] ?? ''), 'msg_key' => $key, 'att_names' => array_map(fn($a) => (string)$a['name'], $x['attachments'] ?? []), 'x' => $x]);
                 if ($res) { q('UPDATE rfq_msgs SET kind=? WHERE msg_key=?', [$res, $key]); $r[$res === 'rfq' ? 'rfqs' : ($res === 'po' ? 'pos' : 'followups')]++; }
             } catch (Throwable $e) { error_log('RFQ scan: ' . $e->getMessage()); }
@@ -190,7 +216,7 @@ if ($sub === 'rfqs') {
     if ($act === 'settings') {
         $st = rfq_settings();
         if ($method === 'GET') { $mine = all('SELECT id,email FROM mail_accounts WHERE user_id=? ORDER BY id', [$uid]); $sel = array_filter(array_map('intval', explode(',', (string)($st['mailbox_ids'] ?? ''))));
-            out(['enabled' => (bool)$st['enabled'], 'mailboxes' => array_map(fn($a) => ['id' => (int)$a['id'], 'email' => $a['email'], 'on' => in_array((int)$a['id'], $sel, true)], $mine), 'others' => all('SELECT id,email FROM mail_accounts WHERE id IN (' . ($sel ? implode(',', $sel) : '0') . ') AND user_id<>?', [$uid]), 'assign_user_id' => $st['assign_user_id'] ? (int)$st['assign_user_id'] : null, 'allowed_senders' => implode("\n", rfq_allow_list($st['allowed_senders'] ?? '')),
+            out(['enabled' => (bool)$st['enabled'], 'mailboxes' => array_map(fn($a) => ['id' => (int)$a['id'], 'email' => $a['email'], 'on' => in_array((int)$a['id'], $sel, true)], $mine), 'others' => all('SELECT id,email FROM mail_accounts WHERE id IN (' . ($sel ? implode(',', $sel) : '0') . ') AND user_id<>?', [$uid]), 'assign_user_id' => $st['assign_user_id'] ? (int)$st['assign_user_id'] : null, 'allowed_senders' => implode("\n", rfq_allow_list($st['allowed_senders'] ?? '')), 'designated' => ['companies' => all('SELECT id,name FROM companies WHERE rfq_ok=1 ORDER BY name LIMIT 100'), 'contacts' => all('SELECT id,name,email FROM contacts WHERE rfq_ok=1 AND vendor_id IS NULL ORDER BY name LIMIT 100')],
                 'finance_people' => all("SELECT u.id,u.name FROM users u WHERE u.active=1 AND (u.role='super_admin' OR u.department_id=(SELECT id FROM departments WHERE name='Finance' LIMIT 1)) ORDER BY u.name"), 'last_scan_at' => $st['last_scan_at']]); }
         if (!in_array($role, ['super_admin', 'manager'], true) && !can_finance($u)) fail('Not allowed', 403);
         if ($method === 'PUT') { $mine = array_map('intval', array_column(all('SELECT id FROM mail_accounts WHERE user_id=?', [$uid]), 'id')); $keep = array_filter(array_map('intval', explode(',', (string)($st['mailbox_ids'] ?? ''))), fn($i) => !in_array($i, $mine, true)); $on = array_values(array_intersect(array_map('intval', (array)($b['mailbox_ids'] ?? [])), $mine));
@@ -203,20 +229,21 @@ if ($sub === 'rfqs') {
     if ($act === 'scan' && $method === 'POST') {
         rfq_sync_quotes(); $st = rfq_settings(); $ids = array_filter(array_map('intval', explode(',', (string)($st['mailbox_ids'] ?? '')))); $acc = [];
         foreach ($ids as $i) { $a = one('SELECT * FROM mail_accounts WHERE id=?', [$i]); if ($a && (int)$a['user_id'] === $uid) $acc[] = $a; } if (!$acc) { $a = one('SELECT * FROM mail_accounts WHERE user_id=? ORDER BY id LIMIT 1', [$uid]); if ($a) $acc[] = $a; }
-        if (!$acc) fail('Connect the operations@ mailbox in the Mail tab first, then choose it in the tracker settings.', 409); $tot = ['rfqs' => 0, 'pos' => 0, 'followups' => 0, 'looked_at' => 0]; $ign = []; $none = false;
-        try { foreach ($acc as $a) { $r = rfq_scan($a, $u, (int)($b['days'] ?? 14), (int)($b['limit'] ?? 100)); foreach (['rfqs', 'pos', 'followups', 'looked_at'] as $k) $tot[$k] += $r[$k]; foreach ($r['ignored'] as $e => $n) $ign[$e] = ($ign[$e] ?? 0) + $n; if (!empty($r['no_allowed'])) $none = true; } } catch (MailError $e) { fail($e->getMessage(), 502); }
-        if ($none) fail('Nobody is allowed yet. Add the email addresses or domains that RFQs and POs may come from in ⚙ Mailbox → Allowed senders. Nothing else is read.', 409);
+        if (!$acc) fail('Connect the operations@ mailbox in the Mail tab first, then choose it in the tracker settings.', 409); $tot = ['rfqs' => 0, 'pos' => 0, 'followups' => 0, 'looked_at' => 0, 'ours' => 0]; $ign = []; $none = false;
+        try { foreach ($acc as $a) { $r = rfq_scan($a, $u, (int)($b['days'] ?? 14), (int)($b['limit'] ?? 100)); foreach (['rfqs', 'pos', 'followups', 'looked_at', 'ours'] as $k) $tot[$k] += $r[$k]; foreach ($r['ignored'] as $e => $n) $ign[$e] = ($ign[$e] ?? 0) + $n; if (!empty($r['no_allowed'])) $none = true; } } catch (MailError $e) { fail($e->getMessage(), 502); }
+        if ($none) fail('Nobody is allowed yet. Choose the customers whose RFQs and POs are tracked in ⚙ Mailbox → Who can send RFQs (or type their addresses under Allowed senders). Nothing else is read.', 409);
         arsort($ign); out(['ok' => true, 'ignored' => array_slice($ign, 0, 12, true)] + $tot);
     }
     if ($method === 'GET' && !$rid) {
         rfq_sync_quotes(); $w = '1=1'; $p = []; if (!empty($_GET['status']) && $_GET['status'] === 'open') { $w .= " AND status IN ('new','quoting','quoted','revisited','on_hold','po_received','delivered')"; } elseif (!empty($_GET['status']) && in_array($_GET['status'], ['new', 'quoting', 'quoted', 'revisited', 'on_hold', 'po_received', 'delivered', 'paid', 'lost', 'closed'], true)) { $w .= ' AND status=?'; $p[] = $_GET['status']; }
         if (!empty($_GET['q'])) { $w .= ' AND (code LIKE ? OR client_name LIKE ? OR po_number LIKE ? OR quote_number LIKE ? OR subject LIKE ?)'; $qq = '%' . fx_s($_GET['q'], 60) . '%'; array_push($p, $qq, $qq, $qq, $qq, $qq); }
         $rows = all("SELECT * FROM rfqs WHERE $w ORDER BY client_name, id LIMIT 600", $p);
+        foreach (all("SELECT id,client_email FROM rfqs WHERE status='new' AND msg_key IS NOT NULL AND quote_number IS NULL AND po_number IS NULL AND client_email IS NOT NULL LIMIT 300") as $own1) if (rfq_is_ours((string)$own1['client_email'], '')) { q('DELETE FROM rfq_files WHERE rfq_id=?', [$own1['id']]); q('DELETE FROM rfq_events WHERE rfq_id=?', [$own1['id']]); q('DELETE FROM rfqs WHERE id=?', [$own1['id']]); }   // an RFQ that was made by us is not tracked
         $cnt = array_column(all('SELECT status, COUNT(*) n FROM rfqs GROUP BY status'), 'n', 'status'); $sales = one("SELECT COUNT(*) n, COALESCE(SUM(paid_amount),0) s FROM rfqs WHERE status='paid'"); $month = one("SELECT COALESCE(SUM(paid_amount),0) s FROM rfqs WHERE status='paid' AND paid_at >= ?", [date('Y-m-01')]);
         out(['rfqs' => array_map('rfq_dto', $rows), 'counts' => $cnt, 'sales' => ['count' => (int)$sales['n'], 'total' => (float)$sales['s'], 'month' => (float)$month['s']], 'quoted_open' => (float)(one("SELECT COALESCE(SUM(quote_total),0) s FROM rfqs WHERE status IN ('quoted','po_received','delivered')")['s'] ?? 0)]);
     }
     if ($method === 'POST' && !$rid) {
-        $client = fx_s($b['client_name'] ?? '', 190); if (!$client) fail('Who is the RFQ from?'); $code = fx_s($b['code'] ?? '', 80); $src = $code ? 'manual' : 'generated'; $code = $code ?: rfq_next_code(); $due = $b['due_date'] ?? null; $due = $due && strtotime((string)$due) ? date('Y-m-d', strtotime((string)$due)) : null;
+        $client = fx_s($b['client_name'] ?? '', 190); if (!$client) fail('Who is the RFQ from?'); if (rfq_is_ours((string)fx_s($b['client_email'] ?? '', 190), '')) fail('That is one of our own addresses. The tracker is for RFQs that companies send us.'); $own = one('SELECT company_name FROM fin_settings WHERE id=1'); if ($own && trim((string)$own['company_name']) !== '' && strcasecmp(trim($client), trim((string)$own['company_name'])) === 0) fail('The RFQ must be from a client company, not from us.'); $code = fx_s($b['code'] ?? '', 80); $src = $code ? 'manual' : 'generated'; $code = $code ?: rfq_next_code(); $due = $b['due_date'] ?? null; $due = $due && strtotime((string)$due) ? date('Y-m-d', strtotime((string)$due)) : null;
         q('INSERT INTO rfqs (code,code_source,client_name,client_email,subject,received_at,due_date,notes,created_by) VALUES (?,?,?,?,?,NOW(),?,?,?)', [$code, $src, $client, fx_s($b['client_email'] ?? '', 190), fx_s($b['subject'] ?? '', 300), $due, fx_s($b['notes'] ?? '', 2000), $uid]); $id = (int)db()->lastInsertId(); $st = rfq_settings();
         $tid = rfq_task($id, 'Create proforma / quotation: ' . $client . ' (RFQ ' . $code . ')', "RFQ added by " . $u['name'] . ".\nRFQ code: " . $code . "\nOpen the RFQ tracker and press “Create quotation”.", $due, $st, $u); q('UPDATE rfqs SET task_id=? WHERE id=?', [$tid, $id]); rfq_event($id, 'new', 'Added by ' . $u['name'], $uid); out(['ok' => true, 'id' => $id], 201);
     }

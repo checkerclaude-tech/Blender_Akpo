@@ -16,11 +16,11 @@ $sub = $seg[2] ?? ($id === null ? ($seg[1] ?? null) : null);
 if ($method !== 'GET' && $method !== 'OPTIONS' && !($r === 'login' || $r === 'invite' || $r === 'agent' || $r === 'agent-personal' || $r === 'seo-agent' || $r === 'csp-report' || ($r === 'exec' && ($seg[1] ?? '') === 'ingest') || $r === 'forgot' || $r === 'reset')) { cfg(); check_csrf(); }
 
 // Sections the Root Admin can switch off per person are refused here as well as hidden in the menu.
-$GATED = ['campaigns' => 'campaigns', 'mail' => 'mail', 'learn' => 'learn', 'courses' => 'learn', 'companies' => 'pipeline', 'contacts' => 'pipeline', 'pipeline' => 'pipeline', 'competitors' => 'competition', 'trade-events' => 'events',
+$GATED = ['campaigns' => 'campaigns', 'mail' => 'mail', 'learn' => 'learn', 'courses' => 'learn', 'companies' => 'pipeline', 'contacts' => 'pipeline', 'vendors' => 'pipeline', 'pipeline' => 'pipeline', 'competitors' => 'competition', 'trade-events' => 'events',
           'snapshot' => 'team', 'documents' => 'documents', 'reports' => 'reports', 'share' => 'reports', 'inbox-auto' => 'campaigns', 'prospecting' => 'campaigns', 'mail-test' => 'campaigns', 'myfiles' => 'myfiles', 'seo' => 'campaigns', 'chat' => 'chat'];
 if (isset($GATED[$r])) { $gu = me(); if ($gu && !tab_access($gu, $GATED[$r])) fail('You do not have access to this section', 403); }
 // "Read only" (set by the Root Admin): the person may open and use the tab (look, search, print, take a course, play) but every change is refused here.
-$WRITE_TAB = ['campaigns' => 'campaigns', 'mail' => 'mail', 'learn' => 'learn', 'courses' => 'learn', 'companies' => 'pipeline', 'contacts' => 'pipeline', 'pipeline' => 'pipeline', 'competitors' => 'competition', 'trade-events' => 'events', 'events' => 'schedule',
+$WRITE_TAB = ['campaigns' => 'campaigns', 'mail' => 'mail', 'learn' => 'learn', 'courses' => 'learn', 'companies' => 'pipeline', 'contacts' => 'pipeline', 'vendors' => 'pipeline', 'pipeline' => 'pipeline', 'competitors' => 'competition', 'trade-events' => 'events', 'events' => 'schedule',
               'finance' => 'finance', 'catalog' => 'products', 'news' => 'news', 'research' => 'research', 'projects' => 'projects', 'reports' => 'reports', 'myfiles' => 'myfiles', 'games' => 'games', 'snapshot' => 'team', 'documents' => 'documents', 'exec' => 'executive', 'seo' => 'campaigns'];
 if ($method !== 'GET' && $method !== 'OPTIONS' && isset($WRITE_TAB[$r])) { $wu = me();
     if ($wu && tab_readonly($wu, $WRITE_TAB[$r])) {
@@ -661,6 +661,10 @@ case 'mail':
 
 case 'companies': case 'contacts': case 'pipeline':
     require __DIR__ . '/lib/pipeline.php';
+    break;
+
+case 'vendors':   // vendors and partners in the Pipeline
+    require __DIR__ . '/lib/vendorcrm.php';
     break;
 
 default:
