@@ -148,7 +148,7 @@ views.home = async () => {
 function taskRow(t) {
   const od = !CLOSED.includes(t.status) && t.due_date && t.due_date < today();
   return '<div class="item" data-id="' + t.id + '"><button class="check ' + (t.status === 'done' ? 'done' : '') + '" data-toggle="' + t.id + '" data-s="' + t.status + '" aria-label="Toggle done"></button>' +
-    '<div class="grow"><div class="title ' + (t.status === 'done' ? 'done' : '') + '">' + esc(t.title) + (t.transfer_state === 'pending' ? ' <span class="tag">Offered to you</span>' : t.transfer_state === 'offered' ? ' <span class="tag">Transfer waiting</span>' : '') + (t.kind === 'flow' ? ' <span class="tag">Plan</span>' : t.kind === 'step' ? ' <span class="tag">Step</span>' + (t.status === 'blocked' && /^Waiting/.test(t.status_reason || '') ? ' <span class="tag blocked">Waiting</span>' : '') : '') + '</div><div class="muted small">' +
+    '<div class="grow"><div class="title ' + (t.status === 'done' ? 'done' : '') + '">' + esc(t.title) + (t.transfer_state === 'pending' ? ' <span class="tag">Offered to you</span>' : t.transfer_state === 'offered' ? ' <span class="tag">Transfer waiting</span>' : '') + (t.carried ? ' <span class="tag warn" title="Created in an earlier week and still open: it carries over into the weekly report until it is completed or closed">↩ Carried over</span>' : '') + (t.kind === 'flow' ? ' <span class="tag">Plan</span>' : t.kind === 'step' ? ' <span class="tag">Step</span>' + (t.status === 'blocked' && /^Waiting/.test(t.status_reason || '') ? ' <span class="tag blocked">Waiting</span>' : '') : '') + '</div><div class="muted small">' +
     (t.assignee_name ? esc(t.assignee_name) : 'Unassigned') + (t.company_name ? ' · ' + esc(t.company_name) : (t.department ? ' · ' + esc(t.department) : '')) + (t.due_date ? ' · <span class="' + (od ? 'overdue' : '') + '">' + (od ? 'Overdue ' : 'Due ') + fmtDate(t.due_date) + '</span>' : '') + '</div></div>' +
     (t.task_type && t.task_type !== 'general' ? '<span class="tag">' + TTYPE[t.task_type] + '</span>' : '') + (+t.file_count ? '<span class="muted small" title="Files">📎' + t.file_count + '</span>' : '') + (+t.share_count ? '<span class="muted small" title="Shared">👥' + t.share_count + '</span>' : '') +
     (t.status !== 'done' && t.status !== 'todo' ? '<span class="tag ' + t.status + '">' + STATUS[t.status] + '</span>' : '') + '<span class="tag ' + t.priority + '">' + PRI[t.priority] + '</span>' + (readOnly() ? '' : '<button class="btn ghost sm" data-share="' + t.id + '" title="Share this task">Share</button>') + '</div>';
@@ -162,20 +162,20 @@ function bindTaskRows(root) {
   });
 }
 
-let TF = { scope: 'mine', status: '' };
+let TF = { scope: 'mine', status: '', carried: false };
 views.tasks = async () => {
   const v = $('#view'), id = (location.hash.split('/')[2]) || '';
   const wide = !['employee'].includes(S.user.role) || (S.user.head_of || []).length > 0;
   if (!wide && TF.scope === 'all') TF.scope = 'mine';
   v.innerHTML = '<div class="top"><h1>Tasks</h1>' + (readOnly() ? '' : '<button class="btn right" id="nt">+ New task</button>') + '</div>' +
     '<div class="row" style="margin-bottom:14px"><div class="chips" id="fs">' + '<span class="chip ' + (TF.scope === 'mine' ? 'on' : '') + '" data-sc="mine">Mine</span><span class="chip ' + (TF.scope === 'shared' ? 'on' : '') + '" data-sc="shared">Shared with me</span>' + '<span class="chip ' + (TF.scope === 'given' ? 'on' : '') + '" data-sc="given" title="Tasks you gave to other people">Given by me</span><span class="chip ' + (TF.scope === 'sharedby' ? 'on' : '') + '" data-sc="sharedby" title="Tasks you shared with other people">Shared by me</span>' + (wide ? '<span class="chip ' + (TF.scope === 'all' ? 'on' : '') + '" data-sc="all">Everyone</span>' : '') + '</div>' +
-    '<div class="chips right" id="fst">' + [['', 'All'], ...Object.entries(STATUS)].map(([k, l]) => '<span class="chip ' + (TF.status === k ? 'on' : '') + '" data-st="' + k + '">' + l + '</span>').join('') + '</div></div>' +
+    '<div class="chips right" id="fst"><span class="chip ' + (TF.carried ? 'on' : '') + '" id="fcar" title="Open tasks from earlier weeks">↩ Carried over</span>' + [['', 'All'], ...Object.entries(STATUS)].map(([k, l]) => '<span class="chip ' + (TF.status === k ? 'on' : '') + '" data-st="' + k + '">' + l + '</span>').join('') + '</div></div>' +
     '<div class="card"><div class="list" id="tl"><div class="empty">Loading…</div></div></div>';
-  const qs = []; if (TF.scope === 'mine') qs.push('assignee=me'); if (TF.scope === 'shared') qs.push('shared=1'); if (TF.scope === 'given') qs.push('creator=me'); if (TF.scope === 'sharedby') qs.push('shared_by=me'); if (TF.status) qs.push('status=' + TF.status);
+  const qs = []; if (TF.scope === 'mine') qs.push('assignee=me'); if (TF.scope === 'shared') qs.push('shared=1'); if (TF.scope === 'given') qs.push('creator=me'); if (TF.scope === 'sharedby') qs.push('shared_by=me'); if (TF.status) qs.push('status=' + TF.status); if (TF.carried) qs.push('carried=1');
   const rows = await api('tasks' + (qs.length ? '?' + qs.join('&') : ''));
   $('#tl').innerHTML = rows.length ? rows.map(taskRow).join('') : '<div class="empty">No tasks here yet.</div>'; bindTaskRows($('#tl'));
   v.querySelectorAll('[data-sc]').forEach(c => c.onclick = () => { TF.scope = c.dataset.sc; render(); });
-  v.querySelectorAll('[data-st]').forEach(c => c.onclick = () => { TF.status = c.dataset.st; render(); });
+  v.querySelectorAll('[data-st]').forEach(c => c.onclick = () => { TF.status = c.dataset.st; render(); }); $('#fcar').onclick = () => { TF.carried = !TF.carried; render(); };
   const nt = $('#nt'); if (nt) nt.onclick = () => taskForm();
   if (id && /^\d+$/.test(id)) taskDetail(+id);
 };

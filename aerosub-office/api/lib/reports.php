@@ -224,14 +224,16 @@ function rp_can_see_person(array $u, int $pid): bool { return rp_global($u) || $
 
 function rp_weekly_rows(int $pid, string $mon): array {
     $fri = rp_week_end($mon); $sun = date('Y-m-d', strtotime($mon . ' +6 days'));
-    $tasks = all("SELECT t.id,t.title,t.status,t.due_date,t.task_type,t.status_reason,t.updated_at,t.completed_at,co.name AS company,p.name AS project,d.name AS department
+    $tasks = all("SELECT t.id,t.title,t.status,t.due_date,t.task_type,t.status_reason,t.updated_at,t.completed_at,t.created_at,co.name AS company,p.name AS project,d.name AS department
                   FROM tasks t LEFT JOIN companies co ON co.id=t.company_id LEFT JOIN projects p ON p.id=t.project_id LEFT JOIN departments d ON d.id=t.department_id
-                  WHERE t.assignee_id=? AND (t.status IN ('in_progress','blocked') OR t.updated_at BETWEEN ? AND ? OR t.completed_at BETWEEN ? AND ? OR EXISTS (SELECT 1 FROM daily_reports r WHERE r.task_id=t.id AND r.user_id=? AND r.report_date BETWEEN ? AND ?))
-                  ORDER BY co.name IS NULL, co.name, t.id LIMIT 80", [$pid, $mon . ' 00:00:00', $sun . ' 23:59:59', $mon . ' 00:00:00', $sun . ' 23:59:59', $pid, $mon, $fri]);
+                  WHERE t.assignee_id=? AND ((t.created_at <= ? AND (t.status IN ('todo','in_progress','blocked','deferred') OR (t.status='done' AND t.completed_at > ?))) OR t.updated_at BETWEEN ? AND ? OR t.completed_at BETWEEN ? AND ? OR EXISTS (SELECT 1 FROM daily_reports r WHERE r.task_id=t.id AND r.user_id=? AND r.report_date BETWEEN ? AND ?))
+                  ORDER BY co.name IS NULL, co.name, t.id LIMIT 120", [$pid, $sun . ' 23:59:59', $sun . ' 23:59:59', $mon . ' 00:00:00', $sun . ' 23:59:59', $mon . ' 00:00:00', $sun . ' 23:59:59', $pid, $mon, $fri]);
     $reps = []; foreach (all('SELECT task_id,report_date,status,progress,summary,blockers FROM daily_reports WHERE user_id=? AND report_date BETWEEN ? AND ? ORDER BY report_date', [$pid, $mon, $fri]) as $x) $reps[(int)$x['task_id']][] = $x;
     $rows = [];
     foreach ($tasks as $i => $t) {
         $rs = $reps[(int)$t['id']] ?? []; $last = $rs ? end($rs) : null; $st = $t['status'];
+        if ($st === 'done' && $t['completed_at'] && $t['completed_at'] > $sun . ' 23:59:59') $st = 'in_progress';   // finished in a later week: it was still open during this one
+        $carried = $t['created_at'] < $mon . ' 00:00:00' && !in_array($st, ['done', 'canceled', 'transferred'], true); 
         $cls = $st === 'done' ? 'done' : ($st === 'canceled' ? 'lost' : 'view');
         $out_ = [];
         if (!in_array($st, ['done', 'canceled', 'transferred'], true)) {
@@ -241,8 +243,9 @@ function rp_weekly_rows(int $pid, string $mon): array {
             if ($st === 'deferred') $out_[] = 'deferred';
         } elseif ($st === 'transferred') $out_[] = 'Transferred' . ($t['status_reason'] ? ': ' . $t['status_reason'] : '');
         elseif ($st === 'canceled' && $t['status_reason']) $out_[] = 'Canceled: ' . $t['status_reason'];
+        if ($carried) array_unshift($out_, '↩ carried over from the week of ' . date('j M', strtotime(rp_week_start(substr((string)$t['created_at'], 0, 10)))));
         $cm = array_map(fn($x) => date('D', strtotime($x['report_date'])) . ': ' . $x['summary'], $rs);
-        $rows[] = ['sn' => $i + 1, 'task_id' => (int)$t['id'], 'changed' => (string)($t['completed_at'] ?: $t['updated_at']), 'client' => $t['company'] ?: ($t['department'] ?: ''), 'project' => (string)$t['project'], 'task' => $t['title'], 'status' => $cls,
+        $rows[] = ['sn' => $i + 1, 'task_id' => (int)$t['id'], 'changed' => (string)($t['completed_at'] ?: $t['updated_at']), 'client' => $t['company'] ?: ($t['department'] ?: ''), 'project' => (string)$t['project'], 'task' => $t['title'], 'status' => $cls, 'carried' => $carried,
                    'outstanding' => mb_substr(implode(' · ', $out_), 0, 600), 'comment' => mb_substr(implode("\n", $cm), 0, 1500), 'review' => ''];
     }
     // tasks this person gave to other people that were completed this week are part of the week too
@@ -272,7 +275,7 @@ if ($method === 'GET' && $sub === 'weekly' && !(isset($seg[2]) && ctype_digit($s
             if (is_array($c) && isset($c['rows'])) { foreach (['code', 'rev', 'employee', 'designation', 'date', 'date_text', 'rows'] as $k) if (array_key_exists($k, $c)) $Wout[$k] = $c[$k]; $Wout['restored'] = true;
                 if ($pid === $uid) {   // tasks that changed or were completed after the sheet was last saved are brought in: known rows get the new status, new ones are appended (rows the person deleted stay deleted)
                     $pos = []; foreach ($Wout['rows'] as $ix => $r0) if (!empty($r0['task_id'])) $pos[(int)$r0['task_id']] = $ix; $names = array_map(fn($r) => mb_strtolower(trim((string)($r['task'] ?? ''))), $Wout['rows']); $new = 0;
-                    foreach ($rows as $fr) { if ((string)($fr['changed'] ?? '') <= (string)$saved['updated_at']) continue; $tid = (int)$fr['task_id'];
+                    foreach ($rows as $fr) { if ((string)($fr['changed'] ?? '') <= (string)$saved['updated_at'] && empty($fr['carried'])) continue; $tid = (int)$fr['task_id'];   // an unfinished task from an earlier week always carries into the sheet
                         if (isset($pos[$tid])) { if (($Wout['rows'][$pos[$tid]]['status'] ?? '') !== $fr['status']) { $Wout['rows'][$pos[$tid]]['status'] = $fr['status']; $Wout['rows'][$pos[$tid]]['outstanding'] = $fr['outstanding']; $new++; } continue; }
                         if (in_array(mb_strtolower(trim($fr['task'])), $names, true)) continue; unset($fr['changed']); $Wout['rows'][] = $fr; $new++; }
                     if ($new) $Wout['added_from_tasks'] = $new; } } }

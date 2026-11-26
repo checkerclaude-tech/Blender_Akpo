@@ -307,8 +307,12 @@ case 'tasks':
         if (!empty($_GET['shared'])) { $where[] = 'EXISTS(SELECT 1 FROM task_shares tz WHERE tz.task_id=t.id AND tz.user_id=?)'; $p[] = $uid; }
         if (!empty($_GET['creator'])) { $where[] = 't.creator_id=? AND (t.assignee_id IS NULL OR t.assignee_id<>?)'; array_push($p, $uid, $uid); }   // tasks I gave to other people
         if (!empty($_GET['shared_by'])) { $where[] = 'EXISTS(SELECT 1 FROM task_shares tb WHERE tb.task_id=t.id AND tb.shared_by=?)'; $p[] = $uid; }   // tasks I shared with other people
+        require_once __DIR__ . '/lib/workweek.php'; $wkStart = rp_week_start(date('Y-m-d')) . ' 00:00:00';   // tasks from earlier weeks that are still open carry over
+        if (!empty($_GET['carried'])) { $where[] = "t.created_at < ? AND t.status NOT IN ('done','canceled','transferred')"; $p[] = $wkStart; }
         if (!empty($_GET['meetings'])) { $where[] = "t.task_type='meeting' AND (t.assignee_id=? OR t.creator_id=? OR EXISTS(SELECT 1 FROM task_shares tm WHERE tm.task_id=t.id AND tm.user_id=?))"; array_push($p, $uid, $uid, $uid); }
-        out(all("$sel WHERE " . implode(' AND ', $where) . " ORDER BY t.status='done', t.due_date IS NULL, t.due_date, FIELD(t.priority,'urgent','high','medium','low') LIMIT 500", $p));
+        $rowsT = all("$sel WHERE " . implode(' AND ', $where) . " ORDER BY t.status IN ('done','canceled','transferred'), t.due_date IS NULL, t.due_date, FIELD(t.priority,'urgent','high','medium','low') LIMIT 500", $p);   // open tasks first, so the limit never hides one
+        foreach ($rowsT as &$rt) $rt['carried'] = !in_array($rt['status'], ['done', 'canceled', 'transferred'], true) && (string)$rt['created_at'] < $wkStart; unset($rt);
+        out($rowsT);
     }
     if ($method === 'GET' && $id && !in_array($sub, ['files', 'share', 'defer', 'updates', 'report', 'transfer', 'ics', 'ics-links', 'flow', 'steps', 'step', 'subs'], true)) {
         [$w, $p] = $vis($u); $t = one("$sel WHERE t.id=? AND $w", array_merge([$id], $p)); if (!$t) fail('Not found', 404);

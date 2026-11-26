@@ -335,3 +335,8 @@ This update does not replace `index.html`, `sw.js`, `upgrade.php` or `api/lib/mi
 - **New tab: Regulatory bodies** (authorities we answer to: licensing, certification, standards). Add one with **+ Regulatory body**, or pick "This is a: Regulatory body" when you open any vendor (the choice is Vendor, Partner or Regulatory body). They are left out of the Finance vendor catalogue and are never listened to for RFQs.
 - **Regulatory body is also a contact type:** the contact form has "Contact type" (Customer / general, or Regulatory body contact), the Contacts tab has a **Regulatory contacts** filter, and people at a regulatory body are regulatory contacts automatically.
 - Upgrade: open /upgrade.php once (adds the regulator flag and contact type; it also runs by itself on first use).
+
+## Weekly report carries over unfinished tasks
+- **Every task that is still open (not started, ongoing, blocked or deferred) is carried into each new week's report** until it is marked completed, canceled, transferred or closed. The row's Outstanding column starts with "↩ carried over from the week of 3 Nov". If you already had a draft for the week, the carried rows are added to it the next time you open it.
+- Past weeks are reported as they were: a task that was open then (even if finished later) is listed as open for that week; a week before the task existed does not list it.
+- **Tasks page:** carried tasks show a **↩ Carried over** tag, and there is a **↩ Carried over** filter. Open tasks are always listed before closed ones, so a long list can never hide an open task.
