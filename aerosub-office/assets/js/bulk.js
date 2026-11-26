@@ -12,9 +12,9 @@
     { kind: 'tasks', row: '#rl a.item', id: href, noun: 'research item' },
     { kind: 'rfqs', row: 'table.rq tr[data-r]', id: r => r.dataset.r, noun: 'RFQ' },
     { kind: 'docs', row: '#fr tr[data-d]', id: r => r.dataset.d, noun: 'document', note: 'Only drafts and void documents can be deleted.' },
-    { kind: 'contacts', row: '#kt tr[data-k]', id: r => r.dataset.k, noun: 'contact' },
-    { kind: 'companies', row: '#ct tr[data-co]', id: r => r.dataset.co, noun: 'company', note: 'Companies are deleted with their contacts. Only managers and admins can do this.' },
-    { kind: 'vendors', row: '#vt tr[data-v]', id: r => r.dataset.v, noun: 'vendor', note: 'Only managers and admins can delete vendors.' },
+    { kind: 'contacts', row: '#kt tr[data-k]', id: r => r.dataset.k, noun: 'contact', from: 'contacts', moves: () => [['regulatory', 'Regulatory contacts'], ['customer', 'Customer contacts']] },
+    { kind: 'companies', row: '#ct tr[data-co]', id: r => r.dataset.co, noun: 'company', from: 'companies', moves: () => [['vendor', 'Vendors'], ['partner', 'Partners'], ['regulator', 'Regulatory bodies']], note: 'Companies are deleted with their contacts. Only managers and admins can do this.' },
+    { kind: 'vendors', row: '#vt tr[data-v]', id: r => r.dataset.v, noun: 'vendor', from: 'vendors', moves: r0 => [['company', 'Companies'], ['vendor', 'Vendors'], ['partner', 'Partners'], ['regulator', 'Regulatory bodies']].filter(m => !r0 || ({ vendors: 'vendor', partners: 'partner', regulators: 'regulator' })[r0.dataset.grp] !== m[0]), note: 'Only managers and admins can delete vendors.' },
     { kind: 'signals', row: '#prl [data-sg]', id: r => r.dataset.sg, noun: 'prospect' },
   ];
   let mode = false, sel = new Set(), cfg = null, bar = null, tm = null;
@@ -29,10 +29,10 @@
     if (!bar) { bar = document.createElement('div'); bar.id = 'bk-bar'; bar.className = 'noprint'; document.body.appendChild(bar); }
     cfg = mode ? cfg : active(); if (!cfg || (S.user && S.user.role === 'founder')) { bar.hidden = true; return; } bar.hidden = false;
     if (!mode) { bar.innerHTML = '<button type="button" class="btn ghost sm" id="bk-on">☑ Select to delete</button>'; $('#bk-on', bar).onclick = () => { mode = true; sel = new Set(); paint(); }; return; }
-    bar.innerHTML = '<span class="bk-n">' + sel.size + ' selected</span><button type="button" class="btn ghost sm" id="bk-all">' + (sel.size && sel.size === rows().length ? 'Clear' : 'Select all') + '</button><button type="button" class="btn sm" id="bk-del"' + (sel.size ? '' : ' disabled') + '>🗑 Delete</button><button type="button" class="btn ghost sm" id="bk-off">Done</button>';
+    bar.innerHTML = '<span class="bk-n">' + sel.size + ' selected</span><button type="button" class="btn ghost sm" id="bk-all">' + (sel.size && sel.size === rows().length ? 'Clear' : 'Select all') + '</button>' + (cfg.moves ? '<select id="bk-mv" aria-label="Move the selected to"' + (sel.size ? '' : ' disabled') + '><option value="">Move to…</option>' + cfg.moves(rows()[0]).map(([v, l]) => '<option value="' + v + '">' + l + '</option>').join('') + '</select>' : '') + '<button type="button" class="btn sm" id="bk-del"' + (sel.size ? '' : ' disabled') + '>🗑 Delete</button><button type="button" class="btn ghost sm" id="bk-off">Done</button>';
     $('#bk-all', bar).onclick = () => { if (sel.size === rows().length) sel = new Set(); else rows().forEach(r => sel.add(String(cfg.id(r)))); paint(); };
     $('#bk-off', bar).onclick = () => { mode = false; sel = new Set(); paint(); };
-    $('#bk-del', bar).onclick = remove;
+    $('#bk-del', bar).onclick = remove; const mv = $('#bk-mv', bar); if (mv) mv.onchange = () => move(mv.value, mv.options[mv.selectedIndex].text);
   };
   async function remove() {
     if (!sel.size) return; const n = sel.size, nn = cfg.noun + (n === 1 ? '' : 's'), shared = cfg.kind === 'tasks' ? '\n\nPeople a task was assigned or shared to are told and can keep a copy for themselves.' : '';
@@ -40,6 +40,12 @@
     const b = $('#bk-del', bar); b.disabled = true; b.textContent = 'Deleting…';
     try { const r = await api('bulk/del', { method: 'POST', data: { kind: cfg.kind, ids: [...sel].map(Number) } }); mode = false; sel = new Set(); toast(r.deleted + ' deleted' + (r.skipped ? ', ' + r.skipped + ' kept' : '')); if (r.errors && r.errors.length) alert('Not deleted:\n\n' + r.errors.join('\n')); X.render(); }
     catch (e) { toast(e.message); b.disabled = false; b.textContent = '🗑 Delete'; }
+  }
+  async function move(to, label) {
+    if (!to || !sel.size) return; const n = sel.size;
+    if (!confirm('Move ' + n + ' ' + cfg.noun + (n === 1 ? '' : 's') + ' to ' + label + '?' + (to === 'company' ? '\n\nA vendor moved to Companies keeps its people, but its catalogue items lose their vendor.' : cfg.from === 'companies' ? '\n\nThe company leaves Companies; its people go with it.' : ''))) { draw(); return; }
+    try { const r = await api('vendors/move', { method: 'POST', data: { from: cfg.from, ids: [...sel].map(Number), to } }); mode = false; sel = new Set(); toast(r.moved + ' moved to ' + label + (r.skipped ? ', ' + r.skipped + ' not moved' : '')); if (r.errors && r.errors.length) alert('Not moved:\n\n' + r.errors.join('\n')); X.render(); }
+    catch (e) { toast(e.message); draw(); }
   }
   // in select mode a click ticks the row instead of opening it
   document.addEventListener('click', e => {

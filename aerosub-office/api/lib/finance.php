@@ -311,7 +311,7 @@ if ($seg[0] === 'catalog') {
     $edit = $fin || in_array($role, ['super_admin', 'manager'], true); $id = isset($seg[1]) && ctype_digit($seg[1]) ? (int)$seg[1] : 0;
     if (($seg[1] ?? '') === 'vendors') {   // the suppliers behind products and services (staff who maintain the catalogue only)
         if (!$edit) fail('Only managers, Finance and admins can see vendors', 403); $vid = isset($seg[2]) && ctype_digit($seg[2]) ? (int)$seg[2] : 0;
-        if ($method === 'GET') out(['vendors' => all('SELECT v.*, (SELECT COUNT(*) FROM products p WHERE p.vendor_id=v.id) AS items FROM vendors v ORDER BY v.name LIMIT 500')]);
+        if ($method === 'GET') out(['vendors' => all('SELECT v.*, (SELECT COUNT(*) FROM products p WHERE p.vendor_id=v.id) AS items FROM vendors v WHERE COALESCE(v.is_regulator,0)=0 ORDER BY v.name LIMIT 500')]);
         $vf = function (array $b, ?array $o): array { $nm = fx_s($b['name'] ?? ($o['name'] ?? ''), 190); if (!$nm) fail('Enter the vendor name'); $em = fx_s($b['email'] ?? ($o['email'] ?? ''), 190); if ($em && !filter_var($em, FILTER_VALIDATE_EMAIL)) fail('That email address does not look right');
             return [$nm, fx_s($b['contact_name'] ?? ($o['contact_name'] ?? ''), 160), $em, fx_s($b['phone'] ?? ($o['phone'] ?? ''), 60), fx_s($b['address'] ?? ($o['address'] ?? ''), 500), fx_s($b['notes'] ?? ($o['notes'] ?? ''), 2000)]; };
         if ($method === 'POST' && !$vid) { $vals = $vf($b, null); if (one('SELECT id FROM vendors WHERE LOWER(name)=LOWER(?)', [$vals[0]])) fail('There is already a vendor with that name'); q('INSERT INTO vendors (name,contact_name,email,phone,address,notes,created_by) VALUES (?,?,?,?,?,?,?)', array_merge($vals, [$uid])); out(['id' => (int)db()->lastInsertId()], 201); }

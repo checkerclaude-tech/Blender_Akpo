@@ -772,7 +772,7 @@ function userForm(u) {
 /* ================= PIPELINE ================= */
 const SL = { researching: 'Researching', contact_identified: "Contact ID'd", outreach_sent: 'Outreach Sent', in_discussion: 'In Discussion', proposal_sent: 'Proposal Sent', negotiating: 'Negotiating', won: 'Won', on_hold: 'On Hold' };
 const PL = { high: 'High', medium: 'Medium', low: 'Low' };
-let PT = ls.get('pt', 'overview'), PF = { q: '', priority: '', stage: '' }, CF = { q: '', email: false, linkedin: false };
+let PT = ls.get('pt', 'overview'), PF = { q: '', priority: '', stage: '' }, CF = { q: '', email: false, linkedin: false, reg: false };
 
 function csvParse(text) {
   const rows = []; let row = [], cur = '', q = false;
@@ -810,7 +810,7 @@ function importModal(kind) {
 
 views.pipeline = async () => {
   const v = $('#view');
-  const tabs = [['overview', 'Overview'], ['board', 'Board'], ['companies', 'Companies'], ['contacts', 'Contacts'], ['vendors', 'Vendors'], ['partners', 'Partners']];
+  const tabs = [['overview', 'Overview'], ['board', 'Board'], ['companies', 'Companies'], ['contacts', 'Contacts'], ['vendors', 'Vendors'], ['partners', 'Partners'], ['regulators', 'Regulatory bodies']];
   v.innerHTML = '<div class="top"><h1>Pipeline</h1>' + (readOnly() ? '' : '<div class="row right"><button class="btn ghost sm" id="imp">Import CSV</button><button class="btn sm" id="nc">+ Contact</button><button class="btn sm" id="nco">+ Company</button></div>') + '</div>' +
     '<div class="chips" style="margin-bottom:16px">' + tabs.map(([k, l]) => '<span class="chip ' + (PT === k ? 'on' : '') + '" data-pt="' + k + '">' + l + '</span>').join('') + '</div><div id="pb"><div class="empty">Loading…</div></div>';
   v.querySelectorAll('[data-pt]').forEach(c => c.onclick = () => { PT = c.dataset.pt; ls.set('pt', PT); render(); });
@@ -856,15 +856,15 @@ pipeViews.companies = async () => {
 };
 
 pipeViews.contacts = async () => {
-  $('#pb').innerHTML = '<div class="row" style="margin-bottom:12px"><input id="kq" placeholder="Search contacts…" value="' + esc(CF.q) + '" style="max-width:260px"><span class="chip ' + (CF.email ? 'on' : '') + '" id="ke">With email</span><span class="chip ' + (CF.linkedin ? 'on' : '') + '" id="kl">With LinkedIn</span></div><div class="card"><div class="tablewrap" id="kt"></div></div>';
+  $('#pb').innerHTML = '<div class="row" style="margin-bottom:12px"><input id="kq" placeholder="Search contacts…" value="' + esc(CF.q) + '" style="max-width:260px"><span class="chip ' + (CF.email ? 'on' : '') + '" id="ke">With email</span><span class="chip ' + (CF.linkedin ? 'on' : '') + '" id="kl">With LinkedIn</span><span class="chip ' + (CF.reg ? 'on' : '') + '" id="kr" title="People at regulatory bodies">Regulatory contacts</span></div><div class="card"><div class="tablewrap" id="kt"></div></div>';
   const load = async () => {
-    const qs = []; if (CF.q) qs.push('q=' + encodeURIComponent(CF.q)); if (CF.email) qs.push('has_email=1'); if (CF.linkedin) qs.push('has_linkedin=1');
+    const qs = []; if (CF.q) qs.push('q=' + encodeURIComponent(CF.q)); if (CF.email) qs.push('has_email=1'); if (CF.linkedin) qs.push('has_linkedin=1'); if (CF.reg) qs.push('type=regulatory');
     const rows = await api('contacts' + (qs.length ? '?' + qs.join('&') : ''));
-    $('#kt').innerHTML = rows.length ? '<table><thead><tr><th>Name</th><th>Company</th><th>Position</th><th>Email</th><th>Phone</th><th>Follow-up</th></tr></thead><tbody>' + rows.map(c => '<tr data-k="' + c.id + '" style="cursor:pointer"><td><b>' + esc(c.name) + '</b>' + (safeUrl(c.linkedin) ? ' <a href="' + esc(safeUrl(c.linkedin)) + '" target="_blank" rel="noopener noreferrer" data-stop="1">in</a>' : '') + '</td><td>' + esc(c.company_name || '—') + '</td><td>' + esc(c.position || '') + '</td><td>' + (c.email ? '<a href="#" data-mail="' + esc(c.email) + '" title="Write an email">✉ ' + esc(c.email) + '</a>' : '') + '</td><td>' + esc(c.phone || '') + '</td><td class="' + (c.followup_date && c.followup_date < today() ? 'overdue' : '') + '">' + fmtDate(c.followup_date) + '</td></tr>').join('') + '</tbody></table>' : '<div class="empty">No contacts found.</div>';
+    $('#kt').innerHTML = rows.length ? '<table><thead><tr><th>Name</th><th>Company</th><th>Position</th><th>Email</th><th>Phone</th><th>Follow-up</th></tr></thead><tbody>' + rows.map(c => '<tr data-k="' + c.id + '" style="cursor:pointer"><td><b>' + esc(c.name) + '</b>' + (c.contact_type === 'regulatory' ? ' <span class="tag warn">Regulatory</span>' : '') + (safeUrl(c.linkedin) ? ' <a href="' + esc(safeUrl(c.linkedin)) + '" target="_blank" rel="noopener noreferrer" data-stop="1">in</a>' : '') + '</td><td>' + esc(c.company_name || c.org_name || '—') + '</td><td>' + esc(c.position || '') + '</td><td>' + (c.email ? '<a href="#" data-mail="' + esc(c.email) + '" title="Write an email">✉ ' + esc(c.email) + '</a>' : '') + '</td><td>' + esc(c.phone || '') + '</td><td class="' + (c.followup_date && c.followup_date < today() ? 'overdue' : '') + '">' + fmtDate(c.followup_date) + '</td></tr>').join('') + '</tbody></table>' : '<div class="empty">No contacts found.</div>';
     $('#kt').querySelectorAll('[data-k]').forEach(el => el.onclick = () => contactForm(rows.find(r => r.id == el.dataset.k)));
   };
   let tm; $('#kq').oninput = e => { CF.q = e.target.value; clearTimeout(tm); tm = setTimeout(load, 250); };
-  $('#ke').onclick = () => { CF.email = !CF.email; render(); }; $('#kl').onclick = () => { CF.linkedin = !CF.linkedin; render(); };
+  $('#ke').onclick = () => { CF.email = !CF.email; render(); }; $('#kl').onclick = () => { CF.linkedin = !CF.linkedin; render(); }; $('#kr').onclick = () => { CF.reg = !CF.reg; render(); };
   load();
 };
 
@@ -902,7 +902,7 @@ async function companyDetail(id) {
 function contactForm(k, companyId) {
   const m = modal('<h2>' + (k ? 'Edit contact' : 'New contact') + '</h2><form id="kf" style="margin-top:14px"><div class="field"><label>Full name</label><input name="name" required maxlength="160" value="' + esc(k?.name) + '"></div><div class="grid2"><div class="field"><label>Company</label><select name="company_id">' + opts(S.companies.map(c => [c.id, c.name]), k?.company_id ?? companyId, '— none —') + '</select></div><div class="field"><label>Position</label><input name="position" value="' + esc(k?.position) + '"></div></div>' +
     '<div class="grid2"><div class="field"><label>Email</label><input type="email" name="email" value="' + esc(k?.email) + '"></div><div class="field"><label>Phone</label><input name="phone" value="' + esc(k?.phone) + '"></div></div><div class="grid2"><div class="field"><label>LinkedIn URL</label><input name="linkedin" placeholder="https://" value="' + esc(k?.linkedin) + '"></div><div class="field"><label>Follow-up date</label><input type="date" name="followup_date" value="' + esc(k?.followup_date || '') + '"></div></div>' +
-    '<div class="field"><label>Notes</label><textarea name="notes">' + esc(k?.notes) + '</textarea></div><div class="err" id="er"></div><div class="row"><button class="btn">Save</button>' + (k && canManage() ? '<button class="btn ghost" type="button" id="rm" style="color:var(--bad)">Delete</button>' : '') + '<button class="btn ghost" type="button" id="cx">Cancel</button></div></form>');
+    '<div class="field"><label>Contact type</label><select name="contact_type"><option value="">Customer / general contact</option><option value="regulatory"' + (k?.contact_type === 'regulatory' ? ' selected' : '') + '>Regulatory body contact</option></select></div><div class="field"><label>Notes</label><textarea name="notes">' + esc(k?.notes) + '</textarea></div><div class="err" id="er"></div><div class="row"><button class="btn">Save</button>' + (k && canManage() ? '<button class="btn ghost" type="button" id="rm" style="color:var(--bad)">Delete</button>' : '') + '<button class="btn ghost" type="button" id="cx">Cancel</button></div></form>');
   $('#cx', m).onclick = () => m.close();
   const rm = $('#rm', m); if (rm) rm.onclick = async () => { if (confirm('Delete this contact?')) { await api('contacts/' + k.id, { method: 'DELETE' }); m.close(); render(); } };
   $('#kf', m).onsubmit = async e => { e.preventDefault(); const f = Object.fromEntries(new FormData(e.target)); f.company_id = f.company_id || null; try { await api(k ? 'contacts/' + k.id : 'contacts', { method: k ? 'PATCH' : 'POST', data: f }); m.close(); render(); } catch (er) { $('#er', m).textContent = er.message; } };

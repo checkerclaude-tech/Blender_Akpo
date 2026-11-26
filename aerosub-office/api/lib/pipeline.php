@@ -108,7 +108,7 @@ if ($r === 'companies') {
 
 /* ================= CONTACTS ================= */
 if ($r === 'contacts') {
-    $sel = 'SELECT ct.*, c.name AS company_name FROM contacts ct LEFT JOIN companies c ON c.id=ct.company_id';
+    $sel = 'SELECT ct.*, c.name AS company_name, vo.name AS org_name FROM contacts ct LEFT JOIN companies c ON c.id=ct.company_id LEFT JOIN vendors vo ON vo.id=ct.vendor_id';
 
     if ($method === 'POST' && $id === null && $sub === 'import') {
         must_write(); $rows = body()['rows'] ?? []; if (!is_array($rows) || !$rows) fail('No rows to import'); if (count($rows) > 500) fail('Import at most 500 rows at a time');
@@ -130,11 +130,11 @@ if ($r === 'contacts') {
     }
 
     if ($method === 'GET' && $id === null) {
-        $w = ['ct.vendor_id IS NULL']; $p = [];
+        $w = [(($_GET['type'] ?? '') === 'regulatory') ? "ct.contact_type='regulatory'" : 'ct.vendor_id IS NULL']; $p = [];
         if (!empty($_GET['company_id'])) { $w[] = 'ct.company_id=?'; $p[] = (int)$_GET['company_id']; }
         if (!empty($_GET['has_email'])) $w[] = 'ct.email IS NOT NULL';
         if (!empty($_GET['has_linkedin'])) $w[] = 'ct.linkedin IS NOT NULL';
-        if (!empty($_GET['q'])) { $w[] = '(ct.name LIKE ? OR ct.position LIKE ? OR c.name LIKE ? OR ct.email LIKE ?)'; $like = '%' . s($_GET['q'], 60) . '%'; array_push($p, $like, $like, $like, $like); }
+        if (!empty($_GET['q'])) { $w[] = '(ct.name LIKE ? OR ct.position LIKE ? OR c.name LIKE ? OR ct.email LIKE ? OR vo.name LIKE ?)'; $like = '%' . s($_GET['q'], 60) . '%'; array_push($p, $like, $like, $like, $like, $like); }
         out(all("$sel WHERE " . implode(' AND ', $w) . ' ORDER BY ct.name LIMIT 1000', $p));
     }
     if ($method === 'GET' && $id) { $c = one("$sel WHERE ct.id=?", [$id]); if (!$c) fail('Not found', 404); out($c); }
@@ -144,7 +144,7 @@ if ($r === 'contacts') {
         q('INSERT INTO contacts (company_id,name,position,email,phone,linkedin,location,followup_date,notes,owner_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
           [!empty($b['company_id']) ? (int)$b['company_id'] : null, $name, s($b['position'] ?? '', 160) ?: null, $email, s($b['phone'] ?? '', 60) ?: null, url_or_null($b['linkedin'] ?? null),
            s($b['location'] ?? '', 120) ?: null, d($b['followup_date'] ?? null), s($b['notes'] ?? '', 3000) ?: null, $uid]);
-        $nid = (int)db()->lastInsertId(); log_act($uid, 'contact_added', $name); out(['ok' => true, 'id' => $nid], 201);
+        $nid = (int)db()->lastInsertId(); if (($b['contact_type'] ?? '') === 'regulatory') q("UPDATE contacts SET contact_type='regulatory' WHERE id=?", [$nid]); log_act($uid, 'contact_added', $name); out(['ok' => true, 'id' => $nid], 201);
     }
     if ($id) {
         $c = one('SELECT * FROM contacts WHERE id=?', [$id]); if (!$c) fail('Not found', 404);
@@ -155,6 +155,7 @@ if ($r === 'contacts') {
               [($g('company_id', $c['company_id']) ?: null), s($g('name', $c['name']), 160) ?: $c['name'], s($g('position', $c['position']), 160) ?: null, $email, s($g('phone', $c['phone']), 60) ?: null,
                url_or_null($g('linkedin', $c['linkedin'])), s($g('location', $c['location']), 120) ?: null, array_key_exists('followup_date', $b) ? d($b['followup_date']) : $c['followup_date'],
                s($g('notes', $c['notes']), 3000) ?: null, $id]);
+            if (array_key_exists('contact_type', $b)) q('UPDATE contacts SET contact_type=? WHERE id=?', [$b['contact_type'] === 'regulatory' ? 'regulatory' : null, $id]);
             out(['ok' => true]);
         }
         if ($method === 'DELETE') { must_write(); if (!$mgr && (int)$c['owner_id'] !== $uid) fail('Only the owner or a manager can delete this contact', 403); q('DELETE FROM contacts WHERE id=?', [$id]); out(['ok' => true]); }
