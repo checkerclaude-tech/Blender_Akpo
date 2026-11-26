@@ -78,7 +78,8 @@ function ex_pull(array $s): string {
             if ((string)$m['list_path'] !== '') {      // one entry per organization
                 $list = ex_path($j, (string)$m['list_path']); if (!is_array($list)) { $err = $err ?: '“' . $m['label'] . '”: no list of organizations at ' . $m['list_path']; continue; }
                 $of = trim((string)$m['org_path']); $n0 = 0;
-                foreach ($list as $k => $item) { if (!is_array($item)) continue; $org = ex_org_clean($of !== '' ? ex_path($item, $of) : (is_string($k) ? $k : ''));
+                foreach ($list as $k => $item) { if (!is_array($item)) continue; if (strtolower((string)($item['org_status'] ?? '')) === 'archived') continue;   // archived organisations are not current
+                    $org = ex_org_clean($of !== '' ? ex_path($item, $of) : (is_string($k) ? $k : ''));
                     $n = ex_num(ex_path($item, (string)$m['path'])); if ($n !== null) { ex_record((int)$m['id'], $org, $n); $n0++; } }
                 if ($n0) $got++; else $err = $err ?: '“' . $m['label'] . '”: no numbers found for the organizations';
             } else {                                     // one number for the whole app

@@ -58,6 +58,19 @@ function migrate_fin_ext(): array {
     if (!col_exists('pr_signals', 'scan_no')) db()->exec('ALTER TABLE pr_signals ADD COLUMN scan_no INT UNSIGNED NOT NULL DEFAULT 0, ADD KEY (scan_no)');
     if (!col_exists('pr_settings', 'scan_no')) db()->exec('ALTER TABLE pr_settings ADD COLUMN scan_no INT UNSIGNED NOT NULL DEFAULT 0');
     db()->exec("CREATE TABLE IF NOT EXISTS task_keeps (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, user_id INT UNSIGNED NOT NULL, from_user INT UNSIGNED NULL, title VARCHAR(200) NOT NULL, snapshot MEDIUMTEXT NULL, state VARCHAR(10) NOT NULL DEFAULT 'new', new_task_id INT UNSIGNED NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, KEY (user_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    try {   // Insight: the engineer's real API (one GET with x-api-key) replaces the address and numbers we first assumed
+        $ins = [['Users', 'number', 'sum', 'up', '', 'totalUsers'], ['Portfolios', 'number', 'sum', 'up', '', 'totalPortfolios'], ['Projects', 'number', 'sum', 'up', '', 'totalProjects'],
+            ['Reports (all)', 'number', 'sum', 'up', 'reportsByOrg', 'total'], ['Reports generated', 'number', 'sum', 'up', 'reportsByOrg', 'generated'], ['Reports in draft', 'number', 'sum', 'up', 'reportsByOrg', 'draft'], ['Reports failed', 'number', 'sum', 'down', 'reportsByOrg', 'failed'],
+            ['UT plans (all)', 'number', 'sum', 'up', 'utPlansByOrg', 'total'], ['UT plans generated', 'number', 'sum', 'up', 'utPlansByOrg', 'active'], ['UT plans in draft', 'number', 'sum', 'up', 'utPlansByOrg', 'draft'],
+            ['Timelines (all)', 'number', 'sum', 'up', 'timelinesByOrg', 'total'], ['Timelines published', 'number', 'sum', 'up', 'timelinesByOrg', 'published'], ['Timelines in draft', 'number', 'sum', 'up', 'timelinesByOrg', 'draft'], ['Timelines archived', 'number', 'sum', 'up', 'timelinesByOrg', 'archived'],
+            ['Storage used (MB)', 'number', 'sum', 'up', 'storageByOrg', 'total_mb'], ['Files stored', 'number', 'sum', 'up', 'storageByOrg', 'file_count']];
+        foreach (all("SELECT id FROM exec_sources WHERE mode='pull' AND base_url LIKE '%insight.aerosub.co%'") as $src) {
+            if (!one("SELECT id FROM exec_metrics WHERE source_id=? AND endpoint='/api/exec/analytics' LIMIT 1", [$src['id']])) continue;
+            db()->prepare("DELETE FROM exec_metrics WHERE source_id=? AND endpoint='/api/exec/analytics'")->execute([$src['id']]); db()->prepare("UPDATE exec_sources SET auth_header='x-api-key', last_status=NULL WHERE id=?")->execute([$src['id']]);
+            foreach ($ins as $i => [$label, $kind, $agg, $good, $list, $path]) { $mk = trim(substr(strtolower(preg_replace('/[^a-z0-9_]+/i', '_', $label)), 0, 60), '_');
+                db()->prepare('INSERT IGNORE INTO exec_metrics (source_id,mkey,label,kind,endpoint,list_path,org_path,path,agg,good,position) VALUES (?,?,?,?,?,?,?,?,?,?,?)')->execute([$src['id'], $mk, $label, $kind, '/api/v1/integrations/analytics', $list ?: null, $list ? 'org_name' : null, $path, $agg, $good, $i]); }
+            $log[] = 'Executive: Insight source moved to the real Analytics API (' . count($ins) . ' numbers)'; }
+    } catch (Throwable $e) { error_log('Insight upgrade: ' . $e->getMessage()); }
     $log[] = 'Finance: product / service types, optional signatures and document comments ready.'; return $log;
 }
 if (!function_exists('migrate_finance3')) { function migrate_finance3(): array { return migrate_fin_ext(); } }   // (an older migrate_finance3 may already sit in migrate.php; migrate_fin_ext has its own name so it can never be shadowed)

@@ -324,3 +324,8 @@ This update does not replace `index.html`, `sw.js`, `upgrade.php` or `api/lib/mi
 - **Prospecting:** the list is collapsed to just the title (with the type, company and intent); click a title to open it. **Newest scan first**; prospects from the latest scan carry a **NEW** marker until the next scan runs. A **search box** finds prospects by title, company, website or keyword. Each prospect has Delete, and you can select several.
 - **Finance → Delivery notes:** a new button beside RFQs opens a list of every delivery note with its RFQ and PO, delivery date, who signed, and its status (not signed, signed, printed awaiting payment, paid), with filters and search. Click one to open it.
 - Upgrade: open /upgrade.php once (adds scan numbers and the deleted-task offers; it also runs by itself on first use).
+
+## Insight integration follows the engineer's guide
+- Office now calls Insight's real Analytics API: `GET https://insight.aerosub.co/api/v1/integrations/analytics` with the `x-api-key` header, one request per refresh (the limit is 100 a minute shared by all callers; Office uses 2 an hour by default).
+- The 16 numbers now match what the API returns: users, portfolios and projects (platform totals), and per organisation: reports (all, generated, draft, failed), UT plans (all, generated, draft), timelines (all, published, draft, archived), storage (MB) and files stored. Archived organisations are left out; suspended ones stay.
+- An Insight source set up earlier is moved to the new address and numbers by /upgrade.php (the saved key is kept). The key field is now called "API key". `INSIGHT_ANALYTICS_API.md` is rewritten for this.
