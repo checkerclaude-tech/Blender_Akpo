@@ -59,6 +59,7 @@ function migrate_fin_ext(): array {
     foreach (['companies', 'contacts'] as $t) if (!col_exists($t, 'rfq_ok')) db()->exec("ALTER TABLE $t ADD COLUMN rfq_ok TINYINT(1) NOT NULL DEFAULT 0");
     if (!col_exists('pr_signals', 'scan_no')) db()->exec('ALTER TABLE pr_signals ADD COLUMN scan_no INT UNSIGNED NOT NULL DEFAULT 0, ADD KEY (scan_no)');
     if (!col_exists('pr_settings', 'scan_no')) db()->exec('ALTER TABLE pr_settings ADD COLUMN scan_no INT UNSIGNED NOT NULL DEFAULT 0');
+    db()->exec("CREATE TABLE IF NOT EXISTS pr_stars (signal_id INT UNSIGNED NOT NULL, user_id INT UNSIGNED NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (signal_id,user_id), KEY (user_id), FOREIGN KEY (signal_id) REFERENCES pr_signals(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     db()->exec("CREATE TABLE IF NOT EXISTS task_keeps (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, user_id INT UNSIGNED NOT NULL, from_user INT UNSIGNED NULL, title VARCHAR(200) NOT NULL, snapshot MEDIUMTEXT NULL, state VARCHAR(10) NOT NULL DEFAULT 'new', new_task_id INT UNSIGNED NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, KEY (user_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     try {   // Insight: the engineer's real API (one GET with x-api-key) replaces the address and numbers we first assumed
         $ins = [['Users', 'number', 'sum', 'up', '', 'totalUsers'], ['Portfolios', 'number', 'sum', 'up', '', 'totalPortfolios'], ['Projects', 'number', 'sum', 'up', '', 'totalProjects'],

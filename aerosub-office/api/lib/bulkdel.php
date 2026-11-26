@@ -8,7 +8,7 @@ require_once __DIR__ . '/migrate.php';
 
 function bd_ensure(): void {
     static $d = false; if ($d) return; $d = true;
-    try { if (!col_exists('pr_signals', 'scan_no') || !one("SHOW TABLES LIKE 'task_keeps'")) { require_once __DIR__ . '/migrate_fin3.php'; migrate_fin_ext(); } } catch (Throwable $e) { error_log('Bulk delete schema: ' . $e->getMessage()); }
+    try { if (!col_exists('pr_signals', 'scan_no') || !one("SHOW TABLES LIKE 'task_keeps'") || !one("SHOW TABLES LIKE 'pr_stars'")) { require_once __DIR__ . '/migrate_fin3.php'; migrate_fin_ext(); } } catch (Throwable $e) { error_log('Bulk delete schema: ' . $e->getMessage()); }
 }
 /** Deletes a task. Everyone it was assigned or shared to hears about it and can keep a copy. */
 function bd_task_delete(array $t, array $u): void {
