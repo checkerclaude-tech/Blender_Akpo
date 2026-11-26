@@ -256,6 +256,16 @@ function rp_weekly_rows(int $pid, string $mon): array {
         $rows[] = ['sn' => count($rows) + 1, 'task_id' => (int)$t['id'], 'changed' => (string)$t['completed_at'], 'client' => $t['company'] ?: ($t['department'] ?: ''), 'project' => (string)$t['project'], 'task' => $t['title'], 'status' => 'done',
                    'outstanding' => 'Assigned to ' . $t['assignee'] . ' · delivered ' . date('j M', strtotime($t['completed_at'])), 'comment' => '', 'review' => ''];
     }
+    // rows the person left "In view" (awaiting / in review) in their latest earlier sheet come along, whether or not a task sits behind them, until they are changed to Delivered (or Lost)
+    $prev = one("SELECT data,week_start FROM weekly_reports WHERE user_id=? AND kind='personal' AND week_start<? ORDER BY week_start DESC LIMIT 1", [$pid, $mon]);
+    if ($prev) { $pc = json_decode((string)$prev['data'], true); $ids = []; $names = []; foreach ($rows as $r0) { if (!empty($r0['task_id'])) $ids[(int)$r0['task_id']] = 1; $names[mb_strtolower(trim((string)$r0['task']))] = 1; }
+        $wk = date('j M', strtotime((string)$prev['week_start']));
+        foreach ((array)($pc['rows'] ?? []) as $r) { if (!is_array($r) || ($r['status'] ?? '') !== 'view') continue; $nm = trim((string)($r['task'] ?? '')); if ($nm === '') continue; $tid = (int)($r['task_id'] ?? 0);
+            if (($tid && isset($ids[$tid])) || isset($names[mb_strtolower($nm)])) continue;
+            if ($tid) { $tk = one('SELECT status FROM tasks WHERE id=?', [$tid]); if ($tk && in_array($tk['status'], ['done', 'canceled', 'transferred'], true)) continue; if (!$tk) $tid = 0; }
+            $old = trim((string)preg_replace('/^↩ carried over from the week of [^·]*(·\s*)?/u', '', (string)($r['outstanding'] ?? '')));
+            $rows[] = ['sn' => count($rows) + 1, 'task_id' => $tid, 'changed' => $mon . ' 00:00:00', 'client' => (string)($r['client'] ?? ''), 'project' => (string)($r['project'] ?? ''), 'task' => $nm, 'status' => 'view', 'carried' => true,
+                       'outstanding' => mb_substr('↩ carried over from the week of ' . $wk . ($old !== '' ? ' · ' . $old : ''), 0, 800), 'comment' => '', 'review' => '']; $names[mb_strtolower($nm)] = 1; if ($tid) $ids[$tid] = 1; } }
     return $rows;
 }
 
