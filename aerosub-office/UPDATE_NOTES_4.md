@@ -355,3 +355,9 @@ This update does not replace `index.html`, `sw.js`, `upgrade.php` or `api/lib/mi
 - **RFQ tracker (Finance):** a scan tracks the RFQ or PO (from your designated customers only) but no longer makes a task. Open the RFQ and press **➕ Add to my tasks** (quotation task, or the delivery-note task once a PO is in); it is assigned to you. An RFQ you add by hand gives its task to you too.
 - Tasks made by earlier scans stay where they are: use **Select to delete** on the Tasks page to clear the junk.
 - Upgrade: nothing to run; the new "Discarded" status is added the first time it is needed.
+
+## Submitted weekly reports are locked: ask your head to edit
+- **Once a weekly report is submitted it is locked** for its owner. The sheet shows a 🔒 banner and **Request approval to edit**; you say what you need to change and your **department head is notified** (an administrator is told when the department has no head).
+- **The head decides on the report itself:** a banner shows who asked and why, with **Approve** (choose 4 hours, 24 hours or 3 days) or **Decline**. The employee is notified either way. While approved, the employee edits and autosaves normally and sees "You can edit until …"; when the time ends the report locks again. A declined request can be asked again. Nobody can approve their own request, and only the head of that person's department (or an administrator) can decide.
+- **Heads of department and administrators edit their own submitted reports without approval.** Heads can still add comments and the management review to their team's submitted reports as before.
+- Upgrade: open /upgrade.php once (adds the request table); it also runs by itself on first use.

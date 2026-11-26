@@ -26,6 +26,21 @@ function rp_heads_user(array $u, int $pid): bool {
     return (bool)array_intersect(user_dept_ids($pid, (int)($r['department_id'] ?? 0)), $h);
 }
 function rp_global(array $u): bool { return in_array($u['role'], ['super_admin', 'founder'], true); }
+/** A submitted weekly report is locked for its owner. Heads of department (and administrators) edit without approval; everyone else asks their head. */
+function rp_ew_ensure(): void { static $d = false; if ($d) return; $d = true; try { require_once __DIR__ . '/migrate.php'; if (!col_exists('weekly_reports', 'edit_open_until') || !one("SHOW TABLES LIKE 'weekly_edit_requests'")) { require_once __DIR__ . '/migrate_fin3.php'; migrate_fin_ext(); } } catch (Throwable $e) { error_log('Weekly edit schema: ' . $e->getMessage()); } }
+function rp_edit_exempt(array $u): bool { return rp_global($u) || (bool)rp_heads($u) || !empty($u['is_root']); }
+function rp_edit_locked(array $u, ?array $row): bool {
+    if (!$row || ($row['kind'] ?? 'personal') !== 'personal' || (int)$row['user_id'] !== (int)$u['id'] || ($row['status'] ?? '') !== 'submitted' || rp_edit_exempt($u)) return false;
+    return empty($row['edit_open_until']) || (string)$row['edit_open_until'] <= date('Y-m-d H:i:s');
+}
+function rp_edit_info(array $u, ?array $row): array {
+    rp_ew_ensure(); if (!$row || ($row['kind'] ?? 'personal') !== 'personal' || empty($row['id'])) return ['locked' => false];
+    $own = (int)$row['user_id'] === (int)$u['id']; $open = !empty($row['edit_open_until']) && (string)$row['edit_open_until'] > date('Y-m-d H:i:s');
+    $o = ['locked' => rp_edit_locked($u, $row), 'exempt' => rp_edit_exempt($u), 'open_until' => $open ? $row['edit_open_until'] : null];
+    if ($own) $o['request'] = one('SELECT r.id,r.status,r.reason,r.note,r.created_at,r.decided_at,d.name AS decided_by FROM weekly_edit_requests r LEFT JOIN users d ON d.id=r.decided_by WHERE r.weekly_id=? ORDER BY r.id DESC LIMIT 1', [$row['id']]) ?: null;
+    elseif (rp_global($u) || rp_heads_user($u, (int)$row['user_id'])) $o['pending'] = one("SELECT r.id,r.reason,r.created_at,u.name AS who FROM weekly_edit_requests r JOIN users u ON u.id=r.user_id WHERE r.weekly_id=? AND r.status='pending' ORDER BY r.id DESC LIMIT 1", [$row['id']]) ?: null;
+    return $o;
+}
 
 /** Members of the given departments (primary or additional). */
 function rp_member_sql(array $deptIds): string {
@@ -278,7 +293,7 @@ if ($method === 'GET' && $sub === 'weekly' && !(isset($seg[2]) && ctype_digit($s
          'people' => rp_global($u) ? all("SELECT id,name FROM users WHERE active=1 AND role<>'founder' ORDER BY name") : (rp_heads($u) ? all('SELECT id,name FROM users WHERE active=1 AND id IN ' . rp_member_sql(rp_heads($u)) . ' ORDER BY name') : [['id' => $uid, 'name' => $u['name']]]),
          'legend' => array_map(fn($k) => ['key' => $k, 'label' => RP_LEGEND[$k][0], 'short' => RP_LEGEND_SHORT[$k], 'color' => RP_LEGEND[$k][1]], array_keys(RP_LEGEND))]);
     // what the person already wrote for this week (auto-saved draft or submitted report) replaces the freshly built sheet; ?fresh=1 rebuilds it from the tasks
-    $saved = one("SELECT id,data,status,updated_at,submitted_at FROM weekly_reports WHERE user_id=? AND week_start=? AND kind='personal'", [$pid, $mon]); $state = null;
+    rp_ew_ensure(); $saved = one("SELECT id,user_id,kind,edit_open_until,data,status,updated_at,submitted_at FROM weekly_reports WHERE user_id=? AND week_start=? AND kind='personal'", [$pid, $mon]); $state = null;
     $mode = $ro ? 'view' : ($pid === $uid ? 'owner' : ((rp_global($u) || rp_heads_user($u, $pid)) ? 'review' : 'view'));
     if ($saved) { $state = ['id' => (int)$saved['id'], 'status' => $saved['status'], 'updated_at' => $saved['updated_at'], 'submitted_at' => $saved['submitted_at']];
         if (empty($_GET['fresh']) && ($pid === $uid || $mode === 'review')) { $c = json_decode((string)$saved['data'], true);
@@ -290,7 +305,7 @@ if ($method === 'GET' && $sub === 'weekly' && !(isset($seg[2]) && ctype_digit($s
                         if (in_array(mb_strtolower(trim($fr['task'])), $names, true)) continue; unset($fr['changed']); $Wout['rows'][] = $fr; $new++; }
                     if ($new) $Wout['added_from_tasks'] = $new; } } }
     }
-    out($Wout + ['state' => $state, 'mode' => $mode, 'owner_id' => $pid, 'can_combine' => !$ro && (rp_global($u) || (bool)rp_heads($u))]);
+    out($Wout + ['edit' => rp_edit_info($u, $saved ?: null), 'state' => $state, 'mode' => $mode, 'owner_id' => $pid, 'can_combine' => !$ro && (rp_global($u) || (bool)rp_heads($u))]);
 }
 
 function rp_weekly_clean(array $b, string $today): array {
@@ -355,7 +370,7 @@ if ($method === 'GET' && ($seg[1] ?? '') === 'weekly' && isset($seg[2]) && ctype
     $row = one('SELECT * FROM weekly_reports WHERE id=?', [(int)$seg[2]]); if (!$row || !rp_weekly_access($u, $row)) fail('Not found', 404);
     $c = json_decode((string)$row['data'], true) ?: [];
     $sh = one('SELECT s.note,s.created_at,sb.name AS shared_by FROM weekly_shares s LEFT JOIN users sb ON sb.id=s.shared_by WHERE s.weekly_id=? AND s.user_id=?', [$row['id'], $uid]);
-    out($c + ['kind' => $row['kind'], 'people' => [], 'legend' => rp_legend_out(), 'week_end' => rp_week_end($row['week_start']), 'mode' => $ro ? 'view' : ((int)$row['user_id'] === $uid ? 'owner' : ((rp_global($u) || rp_heads_user($u, (int)$row['user_id'])) ? 'review' : 'view')), 'owner_id' => (int)$row['user_id'], 'state' => ['id' => (int)$row['id'], 'status' => $row['status'], 'updated_at' => $row['updated_at'], 'submitted_at' => $row['submitted_at']],
+    out($c + ['edit' => rp_edit_info($u, $row), 'kind' => $row['kind'], 'people' => [], 'legend' => rp_legend_out(), 'week_end' => rp_week_end($row['week_start']), 'mode' => $ro ? 'view' : ((int)$row['user_id'] === $uid ? 'owner' : ((rp_global($u) || rp_heads_user($u, (int)$row['user_id'])) ? 'review' : 'view')), 'owner_id' => (int)$row['user_id'], 'state' => ['id' => (int)$row['id'], 'status' => $row['status'], 'updated_at' => $row['updated_at'], 'submitted_at' => $row['submitted_at']],
         'saved' => ['id' => (int)$row['id'], 'owner_id' => (int)$row['user_id'], 'status' => $row['status'], 'submitted_at' => $row['submitted_at'], 'updated_at' => $row['updated_at'], 'shared_by' => $sh['shared_by'] ?? null, 'note' => $sh['note'] ?? null,
         'recipients' => all('SELECT u.name FROM weekly_shares s JOIN users u ON u.id=s.user_id WHERE s.weekly_id=? ORDER BY u.name', [$row['id']])]]);
 }
@@ -415,6 +430,27 @@ function rp_weekly_sync_tasks(int $uid, array &$rows, string $week, array $emp):
     if ($created) log_act($uid, 'weekly_tasks_created', $created . ' task(s) from the weekly report of ' . $week);
     return ['created' => $created];
 }
+/* ---------- editing a submitted weekly report: ask, then the head approves ---------- */
+if ($method === 'POST' && $sub === 'weekly-edit-request') {
+    rp_ew_ensure(); $b = body(); $row = one("SELECT * FROM weekly_reports WHERE id=? AND kind='personal' AND user_id=?", [(int)($b['weekly_id'] ?? 0), $uid]); if (!$row) fail('Not found', 404);
+    if (!rp_edit_locked($u, $row)) fail($row['status'] === 'submitted' ? 'You can edit this report right now.' : 'This report has not been submitted, so you can edit it freely.', 409);
+    $ex = one("SELECT id FROM weekly_edit_requests WHERE weekly_id=? AND status='pending'", [$row['id']]); if ($ex) out(['ok' => true, 'id' => (int)$ex['id'], 'existing' => true]);
+    $reason = mb_substr(trim((string)($b['reason'] ?? '')), 0, 500); if ($reason === '') fail('Say what you need to change');
+    q('INSERT INTO weekly_edit_requests (weekly_id,user_id,reason) VALUES (?,?,?)', [$row['id'], $uid, $reason]); $rid = (int)db()->lastInsertId();
+    $emp = one('SELECT department_id FROM users WHERE id=?', [$uid]); $depts = user_dept_ids($uid, (int)($emp['department_id'] ?? 0)); $heads = $depts ? array_column(all('SELECT DISTINCT head_id FROM departments WHERE head_id IS NOT NULL AND id IN (' . implode(',', array_map('intval', $depts)) . ')'), 'head_id') : [];
+    if (!$heads) $heads = array_column(all("SELECT id FROM users WHERE role='super_admin' AND active=1 AND archived_at IS NULL LIMIT 3"), 'id');   // no head set: an administrator decides
+    $told = 0; foreach (array_unique(array_map('intval', $heads)) as $h) { if ($h === $uid) continue; notify($h, 'weekly_edit_request', $u['name'] . ' asks to edit a submitted weekly report', 'Week of ' . date('j M', strtotime($row['week_start'])) . ' · ' . mb_substr($reason, 0, 120), '#/reports/weekly/' . $row['id']); $told++; }
+    log_act($uid, 'weekly_edit_requested', $row['week_start']); out(['ok' => true, 'id' => $rid, 'notified' => $told], 201);
+}
+if ($method === 'POST' && $sub === 'weekly-edit-decide') {
+    rp_ew_ensure(); $b = body(); $rq = one("SELECT r.*, w.user_id AS owner, w.week_start FROM weekly_edit_requests r JOIN weekly_reports w ON w.id=r.weekly_id WHERE r.id=?", [(int)($b['id'] ?? 0)]); if (!$rq) fail('Not found', 404);
+    if (!(rp_global($u) || rp_heads_user($u, (int)$rq['owner']))) fail('Only the department head can decide this', 403); if ((int)$rq['owner'] === $uid && !rp_edit_exempt($u)) fail('You cannot approve your own request', 403); if ($rq['status'] !== 'pending') fail('This request was already ' . $rq['status'], 409);
+    $ok = ($b['decision'] ?? '') === 'approve'; $hours = max(1, min(168, (int)($b['hours'] ?? 24))); $note = mb_substr(trim((string)($b['note'] ?? '')), 0, 300);
+    q("UPDATE weekly_edit_requests SET status=?, decided_by=?, decided_at=NOW(), note=? WHERE id=?", [$ok ? 'approved' : 'denied', $uid, $note ?: null, $rq['id']]);
+    if ($ok) q('UPDATE weekly_reports SET edit_open_until=DATE_ADD(NOW(), INTERVAL ? HOUR) WHERE id=?', [$hours, $rq['weekly_id']]);
+    notify((int)$rq['user_id'], 'weekly_edit_decided', $ok ? 'You can edit your weekly report' : 'Your request to edit the weekly report was declined', $u['name'] . ($ok ? ' approved it: you can edit for ' . $hours . ' hour' . ($hours === 1 ? '' : 's') . '.' : ' declined it.') . ($note !== '' ? ' ' . $note : ''), '#/reports/weekly/' . $rq['weekly_id']);
+    log_act($uid, $ok ? 'weekly_edit_approved' : 'weekly_edit_denied', $rq['week_start']); out(['ok' => true, 'approved' => $ok, 'hours' => $ok ? $hours : 0]);
+}
 /** A reviewer (department head, administrator) may only write the Comment and Management review columns: everything else stays as the person wrote it. */
 function rp_weekly_review_merge(array $stored, array $incoming): array {
     $rows = $stored['rows'] ?? []; foreach ($rows as $i => $r) { $in = $incoming['rows'][$i] ?? null; if ($in) { $rows[$i]['comment'] = $in['comment'] ?? $r['comment']; $rows[$i]['review'] = $in['review'] ?? $r['review']; } }
@@ -432,7 +468,8 @@ if ($method === 'POST' && $sub === 'weekly-save') {
     }
     $pid = (int)($b['user_id'] ?? 0) ?: $uid; $emp = one('SELECT id,name,department_id FROM users WHERE id=?', [$pid]); if (!$emp) fail('Not found', 404);
     $c = rp_weekly_clean($b, $today); $week = rp_week_start((string)($c['week_start'] ?: $c['date'])); $c['week_start'] = $week; $c['user_id'] = $pid; if ($c['employee'] === '') $c['employee'] = $emp['name'];
-    $row = one("SELECT * FROM weekly_reports WHERE user_id=? AND week_start=? AND kind='personal'", [$pid, $week]); $submit = !empty($b['submit']);
+    rp_ew_ensure(); $row = one("SELECT * FROM weekly_reports WHERE user_id=? AND week_start=? AND kind='personal'", [$pid, $week]); $submit = !empty($b['submit']);
+    if ($pid === $uid && rp_edit_locked($u, $row)) out(['error' => 'This report was submitted. Ask your department head for approval to edit it.', 'locked' => true], 403);
     if ($pid !== $uid) {   // review by a department head / administrator
         if (!(rp_global($u) || rp_heads_user($u, $pid))) fail('You can only comment on reports of people in your departments', 403);
         if (!$row || $row['status'] !== 'submitted') fail($emp['name'] . ' has not submitted this report yet', 409);
