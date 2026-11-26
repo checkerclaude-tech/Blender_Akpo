@@ -6,7 +6,7 @@ declare(strict_types=1);
 //   GET  /api/prospecting/overview[?status=&type=&watch=]     POST /api/prospecting/settings {api_key?, region}
 //   POST /api/prospecting/search {keywords, region, days, signals[], watch_id?}
 //   POST|PATCH|DELETE /api/prospecting/watches[/{id}]          POST /api/prospecting/signals/{id}/lead|save|dismiss
-require_once __DIR__ . '/mail.php'; require_once __DIR__ . '/campcore.php';
+require_once __DIR__ . '/mail.php'; require_once __DIR__ . '/campcore.php'; require_once __DIR__ . '/bulkdel.php';
 
 const PR_TYPES = [
     'contracts' => ['label' => 'Contracts & tenders', 'icon' => '📄', 'weight' => 3.0, 'category' => null, 'domains' => [],
@@ -73,6 +73,7 @@ function pr_run(array $o, int $uid, ?int $watchId = null): array {
     $kwList = array_values(array_filter(array_map('trim', preg_split('/[,\n;]+/', (string)$o['keywords'])))); if (!$kwList) throw new RuntimeException('Enter at least one keyword');
     $kw = implode(' OR ', array_map(fn($k) => str_contains($k, ' ') ? '"' . $k . '"' : $k, array_slice($kwList, 0, 6))); $region = pr_str($o['region'] ?? '', 120); $days = max(7, min(365, (int)($o['days'] ?? 30)));
     $types = array_values(array_intersect(array_keys(PR_TYPES), (array)($o['signals'] ?? array_keys(PR_TYPES)))); if (!$types) $types = array_keys(PR_TYPES); $end = (string)(pr_settings()['endpoint'] ?? '');
+    bd_ensure(); q('UPDATE pr_settings SET scan_no=scan_no+1 WHERE id=1'); $scanNo = (int)(pr_settings()['scan_no'] ?? 0);   // every scan is numbered: its signals are "new" until the next scan
     $new = 0; $seen = 0; $errors = []; $ids = [];
     foreach ($types as $t) { $d = PR_TYPES[$t]; $payload = ['query' => trim(str_replace(['{kw}', '{region}'], [$kw, $region], $d['q'])), 'numResults' => (int)($o['per'] ?? 8), 'type' => 'auto', 'startPublishedDate' => gmdate('Y-m-d\TH:i:s.000\Z', time() - $days * 86400), 'contents' => ['text' => ['maxCharacters' => $t === 'contracts' ? 3000 : 900], 'summary' => ['query' => 'What company or organisation is involved and what is the business opportunity?']]];
         if ($d['category']) $payload['category'] = $d['category']; if ($d['domains']) $payload['includeDomains'] = $d['domains'];
@@ -81,7 +82,7 @@ function pr_run(array $o, int $uid, ?int $watchId = null): array {
             if (one('SELECT id FROM pr_signals WHERE url_hash=?', [$h])) { $seen++; continue; }
             $title = pr_str($r['title'] ?? $url, 300); $snip = pr_str(($r['summary'] ?? '') ?: (is_array($r['highlights'] ?? null) ? implode(' … ', $r['highlights']) : ($r['text'] ?? '')), 900); $pub = !empty($r['publishedDate']) ? date('Y-m-d H:i:s', (int)strtotime((string)$r['publishedDate'])) : null;
             $ex = pr_extract((string)($r['text'] ?? ''), (string)($r['summary'] ?? '')); $has = $ex['emails'] || $ex['phones'] || $ex['people'] || $ex['deadline'] || $ex['notes']; $sc = pr_score($r, $t, $kwList); if ($ex['deadline'] && $ex['deadline'] >= date('Y-m-d') && $ex['deadline'] <= date('Y-m-d', strtotime('+30 days'))) $sc += 2;   // an open tender closing soon is the strongest signal
-            q('INSERT INTO pr_signals (watch_id,user_id,type,title,url,url_hash,domain,published_at,snippet,score,company_guess,keywords,details,deadline) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)', [$watchId, $uid, $t, $title, mb_substr($url, 0, 600), $h, pr_domain($url), $pub, $snip, round($sc, 2), pr_company_guess($title, $url, $snip), pr_str(implode(', ', $kwList), 300), $has ? json_encode($ex, JSON_UNESCAPED_UNICODE) : null, $ex['deadline']]); $ids[] = (int)db()->lastInsertId(); $new++; } }
+            q('INSERT INTO pr_signals (watch_id,user_id,type,title,url,url_hash,domain,published_at,snippet,score,company_guess,keywords,details,deadline) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)', [$watchId, $uid, $t, $title, mb_substr($url, 0, 600), $h, pr_domain($url), $pub, $snip, round($sc, 2), pr_company_guess($title, $url, $snip), pr_str(implode(', ', $kwList), 300), $has ? json_encode($ex, JSON_UNESCAPED_UNICODE) : null, $ex['deadline']]); $ids[] = (int)db()->lastInsertId(); q('UPDATE pr_signals SET scan_no=? WHERE id=?', [$scanNo, end($ids)]); $new++; } }
     q("INSERT INTO activity_log (user_id,action,detail) VALUES (?,?,?)", [$uid, 'prospect_search', mb_substr(implode(', ', $kwList), 0, 150)]);
     return ['new' => $new, 'seen' => $seen, 'errors' => $errors, 'ids' => $ids];
 }
@@ -145,7 +146,7 @@ function pr_dig(array $sg): array {
     if (!empty($found['website'])) { $w = $found['website']; usort($found['emails'], fn($x, $y) => (int)str_ends_with($y, '@' . $w) <=> (int)str_ends_with($x, '@' . $w)); }
     q('UPDATE pr_signals SET details=?, deadline=COALESCE(?, deadline) WHERE id=?', [json_encode($found, JSON_UNESCAPED_UNICODE), $found['deadline'], $sg['id']]); return $found;
 }
-function pr_out(array $r): array { return ['id' => (int)$r['id'], 'type' => $r['type'], 'title' => $r['title'], 'url' => $r['url'], 'domain' => $r['domain'], 'published_at' => $r['published_at'], 'snippet' => $r['snippet'], 'score' => (float)$r['score'], 'company' => $r['company_guess'], 'keywords' => $r['keywords'], 'deadline' => $r['deadline'] ?? null, 'days_left' => !empty($r['deadline']) ? (int)floor((strtotime((string)$r['deadline']) - strtotime(date('Y-m-d'))) / 86400) : null, 'details' => !empty($r['details']) ? json_decode((string)$r['details'], true) : null, 'status' => $r['status'], 'company_id' => $r['company_id'] ? (int)$r['company_id'] : null, 'task_id' => $r['task_id'] ? (int)$r['task_id'] : null, 'watch' => $r['watch_name'] ?? null, 'created_at' => $r['created_at']]; }
+function pr_out(array $r): array { return ['id' => (int)$r['id'], 'scan_no' => (int)($r['scan_no'] ?? 0), 'type' => $r['type'], 'title' => $r['title'], 'url' => $r['url'], 'domain' => $r['domain'], 'published_at' => $r['published_at'], 'snippet' => $r['snippet'], 'score' => (float)$r['score'], 'company' => $r['company_guess'], 'keywords' => $r['keywords'], 'deadline' => $r['deadline'] ?? null, 'days_left' => !empty($r['deadline']) ? (int)floor((strtotime((string)$r['deadline']) - strtotime(date('Y-m-d'))) / 86400) : null, 'details' => !empty($r['details']) ? json_decode((string)$r['details'], true) : null, 'status' => $r['status'], 'company_id' => $r['company_id'] ? (int)$r['company_id'] : null, 'task_id' => $r['task_id'] ? (int)$r['task_id'] : null, 'watch' => $r['watch_name'] ?? null, 'created_at' => $r['created_at']]; }
 
 /* ---------- routes ---------- */
 if (isset($seg) && ($seg[0] ?? '') === 'prospecting') {
@@ -153,14 +154,14 @@ if (isset($seg) && ($seg[0] ?? '') === 'prospecting') {
     if ($method !== 'GET' && ($u['role'] ?? '') === 'founder') fail('Founder accounts are read-only', 403);
     $admin = ($u['role'] ?? '') === 'super_admin' || !empty($u['is_root']);
     if ($method === 'GET' && $what === 'overview') {
-        $st = pr_settings(); $w = ['1=1']; $p = [];
+        bd_ensure(); $st = pr_settings(); $w = ['1=1']; $p = []; $term = trim((string)($_GET['q'] ?? '')); if ($term !== '') { $lk = '%' . str_replace(['%', '_'], ['\\%', '\\_'], mb_substr($term, 0, 80)) . '%'; $w[] = '(s.title LIKE ? OR s.snippet LIKE ? OR s.domain LIKE ? OR s.company_guess LIKE ? OR s.keywords LIKE ?)'; array_push($p, $lk, $lk, $lk, $lk, $lk); }
         $status = in((string)($_GET['status'] ?? 'new'), ['new', 'lead', 'saved', 'dismissed', 'all'], 'new'); if ($status !== 'all') { $w[] = 's.status=?'; $p[] = $status; }
         if (!empty($_GET['type']) && isset(PR_TYPES[$_GET['type']])) { $w[] = 's.type=?'; $p[] = $_GET['type']; } if (!empty($_GET['watch'])) { $w[] = 's.watch_id=?'; $p[] = (int)$_GET['watch']; }
         $closing = !empty($_GET['closing']); if ($closing) $w[] = 's.deadline IS NOT NULL AND s.deadline >= CURDATE()';
-        $rows = all('SELECT s.*, wt.name AS watch_name FROM pr_signals s LEFT JOIN pr_watches wt ON wt.id=s.watch_id WHERE ' . implode(' AND ', $w) . ' ORDER BY ' . ($closing ? 's.deadline ASC, s.score DESC' : 's.score DESC, s.id DESC') . ' LIMIT 150', $p);
+        $rows = all('SELECT s.*, wt.name AS watch_name FROM pr_signals s LEFT JOIN pr_watches wt ON wt.id=s.watch_id WHERE ' . implode(' AND ', $w) . ' ORDER BY ' . ($closing ? 's.deadline ASC, s.score DESC' : 's.scan_no DESC, s.score DESC, s.id DESC') . ' LIMIT 200', $p);
         $soon = (int)one("SELECT COUNT(*) c FROM pr_signals WHERE status IN ('new','saved') AND deadline BETWEEN CURDATE() AND (CURDATE() + INTERVAL 14 DAY)")['c'];
         $counts = array_column(all('SELECT status, COUNT(*) n FROM pr_signals GROUP BY status'), 'n', 'status'); $used = (int)one("SELECT COUNT(*) c FROM activity_log WHERE action='prospect_search' AND created_at >= DATE_FORMAT(NOW(), '%Y-%m-01')")['c'];
-        out(['closing_soon' => $soon, 'has_key' => pr_key() !== '', 'region' => $st['region'], 'can_set_key' => $admin, 'searches_this_month' => $used, 'counts' => $counts, 'types' => array_map(fn($k, $d) => ['key' => $k, 'label' => $d['label'], 'icon' => $d['icon']], array_keys(PR_TYPES), PR_TYPES),
+        out(['scan_no' => (int)($st['scan_no'] ?? 0), 'closing_soon' => $soon, 'has_key' => pr_key() !== '', 'region' => $st['region'], 'can_set_key' => $admin, 'searches_this_month' => $used, 'counts' => $counts, 'types' => array_map(fn($k, $d) => ['key' => $k, 'label' => $d['label'], 'icon' => $d['icon']], array_keys(PR_TYPES), PR_TYPES),
             'watches' => all('SELECT id,name,keywords,region,signals,days,active,last_run_at FROM pr_watches ORDER BY id DESC LIMIT 30'), 'signals' => array_map('pr_out', $rows), 'lists' => array_map(fn($l) => ['id' => (int)$l['id'], 'name' => $l['name']], (function () { try { return all('SELECT id,name FROM camp_lists ORDER BY name LIMIT 100'); } catch (Throwable $e) { return []; } })())]);
     }
     if ($method === 'POST' && $what === 'settings') {
@@ -184,6 +185,7 @@ if (isset($seg) && ($seg[0] ?? '') === 'prospecting') {
     if ($what === 'signals' && ctype_digit($seg[2] ?? '')) {
         $sg = one('SELECT * FROM pr_signals WHERE id=?', [(int)$seg[2]]); if (!$sg) fail('Not found', 404); $act = $seg[3] ?? '';
         if ($method === 'POST' && $act === 'dig') { try { $f = pr_dig($sg); } catch (RuntimeException $e) { fail($e->getMessage(), 400); } log_act($uid, 'prospect_dig', mb_substr($sg['title'], 0, 120)); $row = one('SELECT s.*, NULL AS watch_name FROM pr_signals s WHERE s.id=?', [$sg['id']]); out(['ok' => true, 'signal' => pr_out($row), 'errors' => $f['errors'] ?? []]); }
+        if ($method === 'DELETE' && $act === '') { q('DELETE FROM pr_signals WHERE id=?', [$sg['id']]); out(['ok' => true]); }
         if ($method === 'POST' && $act === 'vendor') {   // a supplier found while prospecting becomes a vendor, ready to be tied to products and services
             try { one('SELECT 1 FROM vendors LIMIT 1'); } catch (Throwable $e) { require_once __DIR__ . '/migrate_fin3.php'; migrate_fin_ext(); }
             $nm = pr_str($b['name'] ?? ($sg['company_guess'] ?: $sg['domain']), 190); if ($nm === '') fail('Enter the vendor name'); $em = pr_str($b['email'] ?? '', 190); if ($em !== '' && !filter_var($em, FILTER_VALIDATE_EMAIL)) fail('That email address does not look right');

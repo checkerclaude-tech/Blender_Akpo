@@ -279,6 +279,14 @@ if ($sub === 'rfqs') {
     }
     fail('Not found', 404);
 }
+if ($sub === 'delivery' && !isset($seg[2]) && $method === 'GET') {   // the Delivery notes tab: every note, newest first
+    $w = ['1=1']; $p = []; $stt = (string)($_GET['status'] ?? ''); $qq = trim((string)($_GET['q'] ?? ''));
+    if ($stt === 'unsigned') $w[] = 'd.signed_at IS NULL'; elseif ($stt === 'signed') $w[] = 'd.signed_at IS NOT NULL AND d.printed_at IS NULL'; elseif ($stt === 'printed') $w[] = 'd.printed_at IS NOT NULL AND (r.status IS NULL OR r.status<>\'paid\')'; elseif ($stt === 'paid') $w[] = "r.status='paid'";
+    if ($qq !== '') { $lk = '%' . str_replace(['%', '_'], ['\\%', '\\_'], mb_substr($qq, 0, 80)) . '%'; $w[] = '(d.number LIKE ? OR d.client_name LIKE ? OR d.rfq_code LIKE ? OR d.po_number LIKE ?)'; array_push($p, $lk, $lk, $lk, $lk); }
+    $rows = all('SELECT d.*, u.name AS signed_by_name, c.name AS created_by_name, r.status AS rfq_status, r.paid_at AS rfq_paid_at, r.paid_amount AS rfq_paid_amount FROM delivery_notes d LEFT JOIN users u ON u.id=d.signed_by LEFT JOIN users c ON c.id=d.created_by LEFT JOIN rfqs r ON r.id=d.rfq_id WHERE ' . implode(' AND ', $w) . ' ORDER BY d.id DESC LIMIT 300', $p);
+    $tot = one("SELECT COUNT(*) n, COALESCE(SUM(signed_at IS NULL),0) unsigned_n, COALESCE(SUM(signed_at IS NOT NULL AND printed_at IS NULL),0) signed_n, COALESCE(SUM(printed_at IS NOT NULL),0) printed_n FROM delivery_notes") ?: [];
+    out(['notes' => array_map(function ($d) { $o = dn_dto($d); $o['items_count'] = count($o['items']); unset($o['signature']); $o['printed'] = $d['printed_at'] !== null; $o['paid'] = ($d['rfq_status'] ?? '') === 'paid'; $o['paid_at'] = $d['rfq_paid_at'] ?? null; $o['paid_amount'] = isset($d['rfq_paid_amount']) ? (float)$d['rfq_paid_amount'] : null; return $o; }, $rows), 'counts' => array_map('intval', $tot)]);
+}
 if ($sub === 'delivery') {
     $did = isset($seg[2]) && ctype_digit($seg[2]) ? (int)$seg[2] : 0; $act = $seg[3] ?? ''; $d = $did ? one('SELECT d.*, u.name AS signed_by_name, c.name AS created_by_name FROM delivery_notes d LEFT JOIN users u ON u.id=d.signed_by LEFT JOIN users c ON c.id=d.created_by WHERE d.id=?', [$did]) : null; if (!$d) fail('Not found', 404);
     if ($method === 'GET' && $act === 'docx') { require_once __DIR__ . '/docxout.php'; [$bytes, $fn] = dn_docx($d); header('Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document'); header('Content-Disposition: attachment; filename="' . $fn . '"'); header('Content-Length: ' . strlen($bytes)); header('Cache-Control: private, no-store'); echo $bytes; exit; }

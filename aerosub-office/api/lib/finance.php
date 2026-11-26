@@ -300,7 +300,7 @@ if ($seg[0] === 'finance') {
             if (abs($bal - $amt) < 0.005) q("UPDATE fin_docs SET status='paid' WHERE id=?", [$sid]); log_act($uid, 'fin_payment', $d['number'] . ' ' . $amt);
             out(['id' => $rid, 'number' => fx_doc($rid, false)['number'], 'fully_paid' => abs($bal - $amt) < 0.005], 201);
         }
-        if ($method === 'DELETE') { if ($d['status'] !== 'draft') fail('Only drafts can be deleted. Void it instead.'); if (!empty($d['approval_status'])) fail('This document has been through approval, so it cannot be deleted. Void it instead.'); if ($d['doc_type'] === 'receipt') fail('Receipts cannot be deleted'); q('DELETE FROM fin_docs WHERE id=?', [$sid]); out(['ok' => true]); }
+        if ($method === 'DELETE') { if (!in_array($d['status'], ['draft', 'void'], true)) fail('Only drafts and void documents can be deleted. Void it first.'); if ($d['status'] === 'draft' && !empty($d['approval_status'])) fail('This document has been through approval, so it cannot be deleted. Void it instead.'); if ($d['doc_type'] === 'receipt' && $d['status'] !== 'void') fail('Receipts cannot be deleted unless they are void'); q('DELETE FROM fin_docs WHERE id=?', [$sid]); out(['ok' => true]); }
     }
     fail('Not found', 404);
 }

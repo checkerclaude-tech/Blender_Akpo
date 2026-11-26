@@ -425,7 +425,7 @@ case 'tasks':
         }
         if ($method === 'DELETE') { if (!$canEdit($t)) fail('Not allowed', 403);
             if ($t['task_type'] === 'meeting' && $t['starts_at'] && !in_array($t['status'], ['canceled', 'done', 'transferred'], true) && strtotime((string)$t['starts_at']) > time() - 3600) { require_once __DIR__ . '/lib/ics.php'; $mt = ics_task($id); if ($mt) { $mt['ics_seq'] = (int)$mt['ics_seq'] + 1; ics_send($mt, ics_people($id), $u, 'cancel'); } }   // tell everyone it is off
-            q('DELETE FROM tasks WHERE id=?', [$id]); log_act($uid, 'task_deleted', $t['title']); out(['ok' => true]); }
+            require_once __DIR__ . '/lib/bulkdel.php'; bd_task_delete($t, $u); out(['ok' => true]); }   // everyone it was shared or assigned to is told and can keep a copy
     }
     fail('Bad request', 404);
 
@@ -661,6 +661,10 @@ case 'mail':
 
 case 'companies': case 'contacts': case 'pipeline':
     require __DIR__ . '/lib/pipeline.php';
+    break;
+
+case 'bulk':   // delete one or many; keep a copy of a deleted task
+    require __DIR__ . '/lib/bulkdel.php';
     break;
 
 case 'vendors':   // vendors and partners in the Pipeline
