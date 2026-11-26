@@ -16,6 +16,7 @@
     { kind: 'companies', row: '#ct tr[data-co]', id: r => r.dataset.co, noun: 'company', from: 'companies', moves: () => [['vendor', 'Vendors'], ['partner', 'Partners'], ['regulator', 'Regulatory bodies']], note: 'Companies are deleted with their contacts. Only managers and admins can do this.' },
     { kind: 'vendors', row: '#vt tr[data-v]', id: r => r.dataset.v, noun: 'vendor', from: 'vendors', moves: r0 => [['company', 'Companies'], ['vendor', 'Vendors'], ['partner', 'Partners'], ['regulator', 'Regulatory bodies']].filter(m => !r0 || ({ vendors: 'vendor', partners: 'partner', regulators: 'regulator' })[r0.dataset.grp] !== m[0]), note: 'Only managers and admins can delete vendors.' },
     { kind: 'signals', row: '#prl [data-sg]', id: r => r.dataset.sg, noun: 'prospect' },
+    { kind: 'inbox', row: '#ial .ia-item[data-ia]', id: r => r.dataset.ia, noun: 'scanned email', note: 'This only removes them from your results. Tasks already made stay.' },
   ];
   let mode = false, sel = new Set(), cfg = null, bar = null, tm = null;
   const active = () => CFG.find(c => $(c.row)) || null;

@@ -8,7 +8,7 @@ require_once __DIR__ . '/migrate.php';
 
 function bd_ensure(): void {
     static $d = false; if ($d) return; $d = true;
-    try { if (!col_exists('pr_signals', 'scan_no') || !one("SHOW TABLES LIKE 'task_keeps'") || !one("SHOW TABLES LIKE 'pr_stars'")) { require_once __DIR__ . '/migrate_fin3.php'; migrate_fin_ext(); } } catch (Throwable $e) { error_log('Bulk delete schema: ' . $e->getMessage()); }
+    try { if (!col_exists('pr_signals', 'scan_no') || !one("SHOW TABLES LIKE 'task_keeps'") || !one("SHOW TABLES LIKE 'pr_stars'") || one("SHOW INDEX FROM pr_signals WHERE Key_name='uq_url'")) { require_once __DIR__ . '/migrate_fin3.php'; migrate_fin_ext(); } } catch (Throwable $e) { error_log('Bulk delete schema: ' . $e->getMessage()); }
 }
 /** Deletes a task. Everyone it was assigned or shared to hears about it and can keep a copy. */
 function bd_task_delete(array $t, array $u): void {
@@ -49,7 +49,7 @@ if ($kind === 'keeps') {   // a deleted task offered to the person it was shared
 }
 if ($method !== 'POST') fail('Bad request', 405); if ($u['role'] === 'founder') fail('Founder accounts are read-only', 403);
 $b = body(); $kind = (string)($b['kind'] ?? ''); $ids = array_slice(array_values(array_unique(array_filter(array_map('intval', (array)($b['ids'] ?? [])), fn($i) => $i > 0))), 0, 300); if (!$ids) fail('Nothing was selected');
-$tabOf = ['contacts' => 'pipeline', 'companies' => 'pipeline', 'vendors' => 'pipeline', 'signals' => 'campaigns']; if (isset($tabOf[$kind])) { if (!tab_access($u, $tabOf[$kind])) fail('You do not have access to this section', 403); if (tab_readonly($u, $tabOf[$kind])) fail('Your access here is read-only', 403); }
+$tabOf = ['contacts' => 'pipeline', 'companies' => 'pipeline', 'vendors' => 'pipeline', 'signals' => 'campaigns', 'inbox' => 'campaigns']; if (isset($tabOf[$kind])) { if (!tab_access($u, $tabOf[$kind])) fail('You do not have access to this section', 403); if (tab_readonly($u, $tabOf[$kind])) fail('Your access here is read-only', 403); }
 if ($kind === 'docs' || $kind === 'rfqs') { if (!can_finance($u) && !$mgr) fail('Only Finance, managers and admins can delete these', 403); if (tab_readonly($u, 'finance')) fail('Your access to Finance is read-only', 403); }
 if ($kind === 'tasks' && tab_readonly($u, 'tasks')) fail('Your access to Tasks is read-only', 403);
 $done = 0; $skip = []; $mark = function (string $m) use (&$skip): void { $skip[] = $m; };
@@ -64,7 +64,8 @@ foreach ($ids as $i) {
         if ($kind === 'contacts') { $c = one('SELECT id,name,owner_id FROM contacts WHERE id=?', [$i]); if (!$c) continue; if (!$mgr && (int)$c['owner_id'] !== $uid) { $mark($c['name'] . ': only the owner or a manager can delete this contact'); continue; } q('DELETE FROM contacts WHERE id=?', [$i]); $done++; continue; }
         if ($kind === 'companies') { if (!$mgr) { $mark('Only managers and admins can delete companies'); break; } $c = one('SELECT name FROM companies WHERE id=?', [$i]); if (!$c) continue; q('DELETE FROM companies WHERE id=?', [$i]); log_act($uid, 'company_deleted', (string)$c['name']); $done++; continue; }
         if ($kind === 'vendors') { if (!$mgr) { $mark('Only managers and admins can delete vendors'); break; } $v = one('SELECT name FROM vendors WHERE id=?', [$i]); if (!$v) continue; q('UPDATE products SET vendor_id=NULL WHERE vendor_id=?', [$i]); q('UPDATE contacts SET vendor_id=NULL WHERE vendor_id=?', [$i]); q('DELETE FROM vendors WHERE id=?', [$i]); $done++; continue; }
-        if ($kind === 'signals') { require_once __DIR__ . '/prospect.php'; if (!can_campaigns($u)) { $mark('Prospecting is for the Marketing team'); break; } q('DELETE FROM pr_signals WHERE id=?', [$i]); $done++; continue; }
+        if ($kind === 'signals') { require_once __DIR__ . '/prospect.php'; if (!can_campaigns($u)) { $mark('Prospecting is for the Marketing team'); break; } $n = q('DELETE FROM pr_signals WHERE id=? AND (user_id=? OR user_id IS NULL)', [$i, $uid])->rowCount(); $done += $n; continue; }
+        if ($kind === 'inbox') { if (!can_campaigns($u)) { $mark('Inbox automation is for the Marketing team'); break; } require_once __DIR__ . '/inboxauto.php'; ia_ensure(); $n = q("UPDATE ia_items SET status='deleted' WHERE id=? AND created_by=?", [$i, $uid])->rowCount(); $done += $n; continue; }   // removed from my list; the email stays marked as seen so a scan does not bring it back
         fail('Bad request', 404);
     } catch (PDOException $e) { error_log('Bulk delete ' . $kind . ' #' . $i . ': ' . $e->getMessage()); $mark('Item ' . $i . ' could not be deleted'); }
 }

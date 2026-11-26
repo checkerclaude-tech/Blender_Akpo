@@ -50,7 +50,7 @@ function ia_settings(): array {
     return $r;
 }
 /** The review queue needs a 'discarded' status. */
-function ia_ensure(): void { static $d = false; if ($d) return; $d = true; try { $c = one("SHOW COLUMNS FROM ia_items LIKE 'status'"); if ($c && !str_contains((string)$c['Type'], 'discarded')) db()->exec("ALTER TABLE ia_items MODIFY status ENUM('new','awaiting','sent','closed','skipped','discarded') NOT NULL DEFAULT 'new'"); } catch (Throwable $e) { error_log('Inbox status: ' . $e->getMessage()); } }
+function ia_ensure(): void { static $d = false; if ($d) return; $d = true; try { $c = one("SHOW COLUMNS FROM ia_items LIKE 'status'"); if ($c && !str_contains((string)$c['Type'], 'deleted')) db()->exec("ALTER TABLE ia_items MODIFY status ENUM('new','awaiting','sent','closed','skipped','discarded','deleted') NOT NULL DEFAULT 'new'"); } catch (Throwable $e) { error_log('Inbox status: ' . $e->getMessage()); } }
 function ia_str($v, int $n): string { return mb_substr(trim((string)($v ?? '')), 0, $n); }
 function ia_fill(string $t, array $v): string { return str_replace(['{name}', '{sender}', '{company}', '{subject}'], [$v['name'] ?? '', $v['sender'] ?? '', $v['company'] ?? '', $v['subject'] ?? ''], $t); }
 
@@ -95,8 +95,8 @@ function ia_marketing_head(): array { $d = one("SELECT id,head_id FROM departmen
 /** Everything that follows one new email. Returns the item id. */
 function ia_handle(array $acc, array $actor, array $st, array $m): int {
     ia_ensure();
-    $rules = $st['rules']; $key = sha1($acc['id'] . '|' . ($m['message_id'] ?: ($m['folder'] . $m['uid'])));
-    if (one('SELECT id FROM ia_items WHERE msg_key=?', [$key])) return 0;
+    $rules = $st['rules']; $mid0 = $m['message_id'] ?: ($m['folder'] . $m['uid']); $key = sha1($acc['id'] . '|' . (int)$actor['id'] . '|' . $mid0); $old = sha1($acc['id'] . '|' . $mid0);   // everyone in Marketing scans the same mailbox; each keeps their own results
+    if (one('SELECT id FROM ia_items WHERE msg_key=? OR (msg_key=? AND created_by=?)', [$key, $old, (int)$actor['id']])) return 0;
     $from = strtolower($m['from_email']); $snippet = ia_str(preg_replace('/\s+/', ' ', $m['text']), 600);
     $skip = ia_skip_reason($m['hdr'], $from, $m['subject'], (string)$acc['email'], $st['skip']);
     q('INSERT INTO ia_items (account_id,msg_key,folder,uid,message_id,references_h,from_email,from_name,subject,snippet,received_at,category,status,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
@@ -108,25 +108,35 @@ function ia_handle(array $acc, array $actor, array $st, array $m): int {
 /** (Re)apply a category: contact/company, funnel stage, action tasks, draft reply and the approval task. */
 function ia_apply(int $id, array $acc, array $actor, array $st, string $cat, bool $first): void {
     $it = one('SELECT * FROM ia_items WHERE id=?', [$id]); if (!$it) return; $rule = null; foreach ($st['rules'] as $r) if ($r['key'] === $cat) $rule = $r; if (!$rule) { $cat = 'general'; foreach ($st['rules'] as $r) if ($r['key'] === 'general') $rule = $r; } if (!$rule) return;
-    $biz = !empty($rule['business']); $vr = vc_vendor_for($it['from_email']);
-    if ($vr || $cat === 'supplier') {   // a supplier: it goes to Vendors (and its person to the vendor), never to Companies
-        $fdom = vc_domain($it['from_email']); $vname = ($fdom !== '' && !in_array($fdom, VC_FREE, true)) ? '' : ($it['from_name'] !== '' ? $it['from_name'] : explode('@', $it['from_email'])[0]);
-        if (!$vr) [$vr] = vc_make($vname, $it['from_email'], 'email', (int)$actor['id'], ['notes' => 'Added from an email: ' . ia_str($it['subject'], 200)]);
-        $co = null; $biz = false; $ct = vc_contact((int)$vr['id'], $it['from_email'], $it['from_name'], 'Emailed: ' . $it['subject']); if ($cat !== 'supplier') { $cat = 'supplier'; foreach ($st['rules'] as $r2) if ($r2['key'] === 'supplier') $rule = $r2; }
-    } else { $co = ia_company_for($it['from_email'], $it['from_name'], $biz); $ct = ia_contact_for($it['from_email'], $it['from_name'], $co ? (int)$co['id'] : null, 'Emailed: ' . $it['subject']); }
-    if ($co && $biz && ($rule['stage'] ?? '') !== '') { $cur = array_search($co['stage'], IA_STAGES, true); $new = array_search($rule['stage'], IA_STAGES, true);
-        if ($cur !== false && $new !== false && $new > $cur && !in_array($co['stage'], ['won', 'on_hold'], true)) q('UPDATE companies SET stage=? WHERE id=?', [$rule['stage'], $co['id']]); }
+    $biz = !empty($rule['business']);
+    if (vc_vendor_for($it['from_email']) || $cat === 'supplier') { $cat = 'supplier'; $biz = false; foreach ($st['rules'] as $r2) if ($r2['key'] === 'supplier') $rule = $r2; }   // a supplier is never a sales lead
+    $co = null;   // nobody enters the Pipeline from a scan: that happens when the email is reviewed
     $vars = ['name' => explode(' ', trim($it['from_name']) ?: ucfirst(explode('@', $it['from_email'])[0]))[0], 'sender' => ia_str($acc['from_name'] ?: 'The Aerosub team', 80), 'company' => $co['name'] ?? '', 'subject' => $it['subject']];
     $draft = ia_fill((string)$rule['reply'], $vars); $subj = preg_match('/^re:/i', $it['subject']) ? $it['subject'] : 'Re: ' . $it['subject'];
-    q("UPDATE ia_items SET category=?, status='awaiting', contact_id=?, company_id=?, draft_subject=?, draft_body=? WHERE id=?", [$cat, $ct['id'], $co['id'] ?? null, ia_str($subj, 300), $draft, $id]);   // sorted and drafted only: no task until someone reviews it and adds it
+    q("UPDATE ia_items SET category=?, status='awaiting', draft_subject=?, draft_body=? WHERE id=?", [$cat, ia_str($subj, 300), $draft, $id]);
+    if (!$first && ($it['contact_id'] || $it['company_id'])) ia_link_crm($id, $actor, $st);   // already reviewed into the Pipeline: follow the new category   // sorted and drafted only: no task until someone reviews it and adds it
     if (!$first && (int)($it['task_id'] ?? 0)) ia_make_tasks($id, $actor, $st, true);   // it was already added as tasks: they follow the new category
     if ($first && !empty($st['auto_ack']) && $biz && !one("SELECT id FROM ia_items WHERE from_email=? AND acked=1 AND created_at > (NOW() - INTERVAL 1 DAY) LIMIT 1", [$it['from_email']])) {
         try { ia_send($acc, $it['from_email'], ia_fill($st['ack_subject'], $vars), ia_fill($st['ack_body'], $vars), [], (string)$it['message_id'], (string)$it['references_h'], false); q('UPDATE ia_items SET acked=1 WHERE id=?', [$id]); } catch (Throwable $e) { error_log('Inbox automation acknowledgement: ' . $e->getMessage()); } }
 }
 /** Review step: "Add as task". Creates the action tasks (and the "approve the reply" task) for the person who adds them, nobody else. They can share the tasks afterwards. */
+/** Puts the sender into the Pipeline (company and contact, or vendor and vendor contact) and moves the funnel stage. Done only once someone has reviewed the email (added it as a task, or replied). */
+function ia_link_crm(int $id, array $actor, array $st): void {
+    $it = one('SELECT * FROM ia_items WHERE id=?', [$id]); if (!$it) return; $rule = null; foreach ($st['rules'] as $r) if ($r['key'] === $it['category']) $rule = $r; if (!$rule) foreach ($st['rules'] as $r) if ($r['key'] === 'general') $rule = $r; if (!$rule) return;
+    $biz = !empty($rule['business']); $vr = vc_vendor_for($it['from_email']);
+    if ($vr || $it['category'] === 'supplier') {   // a supplier goes to Vendors (and its person to the vendor), never to Companies
+        $fdom = vc_domain($it['from_email']); $vname = ($fdom !== '' && !in_array($fdom, VC_FREE, true)) ? '' : ($it['from_name'] !== '' ? $it['from_name'] : explode('@', $it['from_email'])[0]);
+        if (!$vr) [$vr] = vc_make($vname, $it['from_email'], 'email', (int)$actor['id'], ['notes' => 'Added from an email: ' . ia_str($it['subject'], 200)]);
+        $co = null; $ct = vc_contact((int)$vr['id'], $it['from_email'], $it['from_name'], 'Emailed: ' . $it['subject']);
+    } else { $co = ia_company_for($it['from_email'], $it['from_name'], $biz); $ct = ia_contact_for($it['from_email'], $it['from_name'], $co ? (int)$co['id'] : null, 'Emailed: ' . $it['subject']); }
+    if ($co && $biz && ($rule['stage'] ?? '') !== '') { $cur = array_search($co['stage'], IA_STAGES, true); $new = array_search($rule['stage'], IA_STAGES, true);
+        if ($cur !== false && $new !== false && $new > $cur && !in_array($co['stage'], ['won', 'on_hold'], true)) q('UPDATE companies SET stage=? WHERE id=?', [$rule['stage'], $co['id']]); }
+    q('UPDATE ia_items SET contact_id=?, company_id=? WHERE id=?', [$ct['id'], $co['id'] ?? null, $id]);
+}
 function ia_make_tasks(int $id, array $actor, array $st, bool $refresh = false): array {
     $it = one('SELECT * FROM ia_items WHERE id=?', [$id]); if (!$it) return []; $rule = null; foreach ($st['rules'] as $r) if ($r['key'] === $it['category']) $rule = $r; if (!$rule) foreach ($st['rules'] as $r) if ($r['key'] === 'general') $rule = $r; if (!$rule) return [];
     if (!$refresh && (int)($it['task_id'] ?? 0)) return json_decode((string)$it['tasks_json'], true) ?: [];   // already added
+    ia_link_crm($id, $actor, $st); $it = one('SELECT * FROM ia_items WHERE id=?', [$id]);   // reviewed: now the sender enters the Pipeline
     $me = (int)$actor['id']; $ids = $refresh ? [] : []; $old = json_decode((string)$it['tasks_json'], true) ?: [];
     if ($refresh) foreach ($old as $tid) q("UPDATE tasks SET status='canceled' WHERE id=? AND status='todo' AND source='inbox'", [(int)$tid]);
     $mk = ia_marketing_head(); $due = date('Y-m-d', strtotime('+2 days')); $co = $it['company_id'] ?? null; $ct = $it['contact_id'] ?? null;
@@ -155,13 +165,13 @@ function ia_scan(array $acc, array $actor, int $days, int $limit): array {
     $uids = $im->search('SINCE ' . $since); $uids = array_slice($uids, -max(1, min(150, $limit))); $new = 0; $skipped = 0; $seen = 0;
     foreach (array_reverse($uids) as $uid) {
         try { $raw = $im->fetchRaw((int)$uid, 600000); $x = mime_extract($raw); $h = $x['headers']; $fr = mime_addr_list($h['from'] ?? ''); if (!$fr) continue; $mid = trim((string)($h['message-id'] ?? ''));
-            $key = sha1($acc['id'] . '|' . ($mid ?: 'INBOX' . $uid)); if (one('SELECT id FROM ia_items WHERE msg_key=?', [$key])) { $seen++; continue; }
+            $mid0 = $mid ?: 'INBOX' . $uid; $key = sha1($acc['id'] . '|' . (int)$actor['id'] . '|' . $mid0); $old = sha1($acc['id'] . '|' . $mid0); if (one('SELECT id FROM ia_items WHERE msg_key=? OR (msg_key=? AND created_by=?)', [$key, $old, (int)$actor['id']])) { $seen++; continue; }
             $id = ia_handle($acc, $actor, $st, ['folder' => 'INBOX', 'uid' => (int)$uid, 'message_id' => $mid, 'references' => trim((string)($h['references'] ?? '')), 'from_email' => (string)$fr[0]['email'], 'from_name' => (string)($fr[0]['name'] ?? ''),
                 'subject' => mime_decode_header($h['subject'] ?? ''), 'date' => mime_date($h['date'] ?? ''), 'text' => (string)$x['text'], 'hdr' => $h]);
             if ($id) { $row = one('SELECT status FROM ia_items WHERE id=?', [$id]); if ($row && $row['status'] === 'skipped') $skipped++; else $new++; }
         } catch (Throwable $e) { error_log('Inbox automation scan: ' . $e->getMessage()); }
     }
-    q('UPDATE ia_settings SET last_scan_at=NOW(), mailbox_id=? WHERE id=1', [$acc['id']]);
+    q('UPDATE ia_settings SET last_scan_at=NOW(), mailbox_id=COALESCE(mailbox_id,?) WHERE id=1', [$acc['id']]);
     return ['new' => $new, 'skipped' => $skipped, 'already_seen' => $seen, 'looked_at' => count($uids)];
 }
 /** For cron.php: scan the connected info@ mailbox on a schedule. */
@@ -201,10 +211,10 @@ if (isset($seg) && ($seg[0] ?? '') === 'inbox-auto') {
     ia_ensure();
     if ($method === 'GET' && $what === 'overview') {
         $st = ia_settings(); $status = in((string)($_GET['status'] ?? ''), ['new', 'awaiting', 'sent', 'closed', 'skipped', 'discarded'], '');
-        $rows = all('SELECT i.*, c.name AS company_name, c.stage AS company_stage, hu.name AS handler FROM ia_items i LEFT JOIN companies c ON c.id=i.company_id LEFT JOIN users hu ON hu.id=i.handled_by' . ($status ? ' WHERE i.status=?' : '') . ' ORDER BY i.received_at DESC, i.id DESC LIMIT 120', $status ? [$status] : []);
+        $rows = all('SELECT i.*, c.name AS company_name, c.stage AS company_stage, hu.name AS handler FROM ia_items i LEFT JOIN companies c ON c.id=i.company_id LEFT JOIN users hu ON hu.id=i.handled_by' . ' WHERE i.created_by=?' . ($status ? ' AND i.status=?' : " AND i.status<>'deleted'") . ' ORDER BY i.received_at DESC, i.id DESC LIMIT 120', $status ? [$uid, $status] : [$uid]);   // my results only
         foreach ($rows as &$r) { $ids = json_decode((string)$r['tasks_json'], true) ?: []; $r['task_list'] = $ids ? array_map(fn($t) => ['id' => (int)$t['id'], 'title' => $t['title'], 'status' => $t['status']], all('SELECT id,title,status FROM tasks WHERE id IN (' . implode(',', array_map('intval', $ids)) . ')')) : []; } unset($r);
-        $counts = array_column(all('SELECT status, COUNT(*) n FROM ia_items GROUP BY status'), 'n', 'status'); $accs = array_map(fn($a) => ['id' => (int)$a['id'], 'email' => $a['email']], all('SELECT id,email FROM mail_accounts WHERE user_id=? ORDER BY id', [$uid]));
-        $set = ['enabled' => (int)$st['enabled'], 'auto_ack' => (int)$st['auto_ack'], 'ack_subject' => $st['ack_subject'], 'ack_body' => $st['ack_body'], 'rules' => $st['rules'], 'skip_list' => implode("\n", $st['skip']), 'approver_id' => $st['approver_id'] ? (int)$st['approver_id'] : null, 'mailbox_id' => $st['mailbox_id'] ? (int)$st['mailbox_id'] : null, 'last_scan_at' => $st['last_scan_at']];
+        $counts = array_column(all("SELECT status, COUNT(*) n FROM ia_items WHERE created_by=? AND status<>'deleted' GROUP BY status", [$uid]), 'n', 'status'); $accs = array_map(fn($a) => ['id' => (int)$a['id'], 'email' => $a['email']], all('SELECT id,email FROM mail_accounts WHERE user_id=? ORDER BY id', [$uid]));
+        $set = ['enabled' => (int)$st['enabled'], 'auto_ack' => (int)$st['auto_ack'], 'ack_subject' => $st['ack_subject'], 'ack_body' => $st['ack_body'], 'mailbox_email' => !empty($st['mailbox_id']) ? (one('SELECT email FROM mail_accounts WHERE id=?', [$st['mailbox_id']])['email'] ?? null) : null, 'rules' => $st['rules'], 'skip_list' => implode("\n", $st['skip']), 'approver_id' => $st['approver_id'] ? (int)$st['approver_id'] : null, 'mailbox_id' => $st['mailbox_id'] ? (int)$st['mailbox_id'] : null, 'last_scan_at' => $st['last_scan_at']];
         out(['settings' => $set, 'counts' => $counts, 'items' => array_map('ia_item_out', $rows), 'accounts' => $accs, 'stages' => IA_STAGES, 'marketing' => array_map(fn($x) => ['id' => (int)$x['id'], 'name' => $x['name']], all("SELECT u.id,u.name FROM users u WHERE u.active=1 AND u.archived_at IS NULL ORDER BY u.name"))]);
     }
     if ($method === 'GET' && $what === 'library') out(['files' => ia_library($u)]);
@@ -214,16 +224,19 @@ if (isset($seg) && ($seg[0] ?? '') === 'inbox-auto') {
             $rules[] = ['key' => $key, 'label' => ia_str($r['label'] ?? $key, 80) ?: $key, 'keywords' => array_slice($kw, 0, 60), 'weight' => max(0.5, min(5.0, (float)($r['weight'] ?? 1))), 'business' => !empty($r['business']) ? 1 : 0, 'stage' => in((string)($r['stage'] ?? ''), IA_STAGES, ''), 'priority' => in((string)($r['priority'] ?? 'medium'), ['low', 'medium', 'high', 'urgent'], 'medium'), 'tasks' => array_slice($tasks, 0, 8), 'attach' => array_slice($att, 0, 8), 'reply' => ia_str($r['reply'] ?? '', 4000)]; }
         if (!$rules) fail('Keep at least one category'); if (!array_filter($rules, fn($r) => $r['key'] === 'general')) $rules[] = ia_default_rules()[count(ia_default_rules()) - 1];
         $ap = (int)($b['approver_id'] ?? 0); if ($ap && !one('SELECT id FROM users WHERE id=? AND active=1', [$ap])) $ap = 0;
-        q('UPDATE ia_settings SET enabled=?, auto_ack=?, ack_subject=?, ack_body=?, rules=?, skip_list=?, approver_id=?, mailbox_id=COALESCE(?, mailbox_id) WHERE id=1', [!empty($b['enabled']) ? 1 : 0, !empty($b['auto_ack']) ? 1 : 0, ia_str($b['ack_subject'] ?? '', 200), ia_str($b['ack_body'] ?? '', 3000), json_encode($rules, JSON_UNESCAPED_UNICODE), ia_str($b['skip_list'] ?? '', 3000), $ap ?: null, !empty($b['mailbox_id']) ? (int)$b['mailbox_id'] : null]);
+        q('UPDATE ia_settings SET enabled=?, auto_ack=?, ack_subject=?, ack_body=?, rules=?, skip_list=?, approver_id=?, mailbox_id=COALESCE(?, mailbox_id) WHERE id=1', [!empty($b['enabled']) ? 1 : 0, !empty($b['auto_ack']) ? 1 : 0, ia_str($b['ack_subject'] ?? '', 200), ia_str($b['ack_body'] ?? '', 3000), json_encode($rules, JSON_UNESCAPED_UNICODE), ia_str($b['skip_list'] ?? '', 3000), $ap ?: null, (!empty($b['mailbox_id']) && one('SELECT id FROM mail_accounts WHERE id=? AND user_id=?', [(int)$b['mailbox_id'], $uid])) ? (int)$b['mailbox_id'] : null]);   // only the person who connected a mailbox can make it the primary one
         log_act($uid, 'inbox_auto_settings', ''); out(['ok' => true]);
     }
     if ($method === 'POST' && $what === 'scan') {
-        $acc = one('SELECT * FROM mail_accounts WHERE user_id=? AND id=?', [$uid, (int)($b['acc'] ?? 0)]) ?: one('SELECT * FROM mail_accounts WHERE user_id=? ORDER BY id LIMIT 1', [$uid]); if (!$acc) fail('Connect the info@ mailbox in Mail first.', 409);
+        $stp = ia_settings(); $acc = !empty($stp['mailbox_id']) ? one('SELECT * FROM mail_accounts WHERE id=?', [(int)$stp['mailbox_id']]) : null;   // everyone in Marketing scans the one primary mailbox (info@): only that mailbox can feed tasks
+        if (!$acc && empty($stp['mailbox_id'])) $acc = one('SELECT * FROM mail_accounts WHERE user_id=? AND id=?', [$uid, (int)($b['acc'] ?? 0)]) ?: one('SELECT * FROM mail_accounts WHERE user_id=? ORDER BY id LIMIT 1', [$uid]);
+        if (!$acc) fail(empty($stp['mailbox_id']) ? 'Connect the info@ mailbox in Mail first, then set it as the primary mailbox in Settings & rules.' : 'The primary mailbox was removed. Ask the person who connected it to set it again in Settings & rules.', 409);
         try { out(['ok' => true] + ia_scan($acc, $u, (int)($b['days'] ?? 14), (int)($b['limit'] ?? 60))); } catch (MailError $e) { fail($e->getMessage(), 502); }
     }
     if ($what === 'items' && ctype_digit($seg[2] ?? '')) {
-        $it = one('SELECT * FROM ia_items WHERE id=?', [(int)$seg[2]]); if (!$it) fail('Not found', 404); $act = $seg[3] ?? ''; $acc = one('SELECT * FROM mail_accounts WHERE id=?', [$it['account_id']]);
+        $it = one("SELECT * FROM ia_items WHERE id=? AND created_by=? AND status<>'deleted'", [(int)$seg[2], $uid]); if (!$it) fail('Not found', 404); $act = $seg[3] ?? ''; $acc = one('SELECT * FROM mail_accounts WHERE id=?', [$it['account_id']]);
         $close = function (string $why) use ($it, $uid) { q("UPDATE ia_items SET status=?, handled_by=?, sent_at=IF(?='sent',NOW(),sent_at) WHERE id=?", [$why, $uid, $why, $it['id']]); if ($it['task_id']) q("UPDATE tasks SET status='done', completed_at=NOW() WHERE id=? AND status<>'done'", [$it['task_id']]); };
+        if (($method === 'POST' && $act === 'delete') || ($method === 'DELETE' && $act === '')) { q("UPDATE ia_items SET status='deleted' WHERE id=?", [$it['id']]); out(['ok' => true]); }   // gone from my list (the email stays marked as seen)
         if ($method === 'POST' && $act === 'close') { $close('closed'); out(['ok' => true]); }
         if ($method === 'POST' && $act === 'task') { if (in_array($it['status'], ['skipped', 'discarded'], true)) fail('This email was skipped or discarded'); $st = ia_settings(); $ids = ia_make_tasks((int)$it['id'], $u, $st); log_act($uid, 'inbox_auto_task', $it['from_email']); out(['ok' => true, 'tasks' => count($ids) + 1]); }   // the task is the reviewer's own
         if ($method === 'POST' && $act === 'discard') { q("UPDATE ia_items SET status='discarded', handled_by=? WHERE id=? AND status IN ('new','awaiting')", [$uid, $it['id']]); if ($it['task_id']) q("UPDATE tasks SET status='canceled' WHERE id=? AND status='todo' AND source='inbox'", [$it['task_id']]); foreach (json_decode((string)$it['tasks_json'], true) ?: [] as $tid) q("UPDATE tasks SET status='canceled' WHERE id=? AND status='todo' AND source='inbox'", [(int)$tid]); out(['ok' => true]); }
@@ -236,7 +249,7 @@ if (isset($seg) && ($seg[0] ?? '') === 'inbox-auto') {
                 if (preg_match('/\.(php|phtml|exe|bat|cmd|com|scr|js|vbs|sh|msi|jar|html?|svg)$/i', (string)($f['name'] ?? ''))) fail('That kind of file cannot be attached'); $atts[] = ['name' => ia_str($f['name'] ?? 'file', 150), 'type' => ia_str($f['type'] ?? 'application/octet-stream', 100), 'data' => $d]; }
             try { ia_send($acc, $to, $subject, $text, $atts, (string)$it['message_id'], trim((string)$it['references_h'] . ' ' . (string)$it['message_id'])); } catch (Throwable $e) { fail('The reply could not be sent: ' . $e->getMessage(), 502); }
             try { $im = ia_imap($acc); $im->select($it['folder']); $im->flag((int)$it['uid'], '\\Answered', true); } catch (Throwable $e) {}
-            $close('sent'); log_act($uid, 'inbox_auto_reply', $it['from_email']); out(['ok' => true, 'attached' => count($atts)]);
+            ia_link_crm((int)$it['id'], $u, ia_settings()); $close('sent'); log_act($uid, 'inbox_auto_reply', $it['from_email']); out(['ok' => true, 'attached' => count($atts)]);
         }
         fail('Bad request', 404);
     }
