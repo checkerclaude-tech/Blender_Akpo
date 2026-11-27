@@ -391,3 +391,6 @@ This update does not replace `index.html`, `sw.js`, `upgrade.php` or `api/lib/mi
 - Upgrade: open /upgrade.php once (adds the bin table); it also runs by itself on first use. Items deleted before this update have no copy and cannot be restored.
 
 - **Edit requests made sturdier:** the request table and lock column are now created directly on first use (separately from the big upgrade, and without a database link that could fail on an older table), and a problem there can no longer break the report page. Open /upgrade.php once after installing.
+
+## This zip is the whole app
+- The earlier patch zips listed only some of the changed files and left out several front-end files (for example the weekly report page and its style, so the report lock, "Request approval to edit", the comment highlight and the scrolling fix never reached the browser even though the server side did). **This zip contains every file of the app** (except `api/config.php`, `.htaccess` and the installer), so installing it brings everything up to date in one go. Extract into public_html/office, overwrite, open /upgrade.php once, then close and reopen the app (Ctrl+Shift+R once in a browser).
