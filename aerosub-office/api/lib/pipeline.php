@@ -101,7 +101,7 @@ if ($r === 'companies') {
             }
             out(['ok' => true]);
         }
-        if ($method === 'DELETE') { if (!$mgr) fail('Only managers and admins can delete companies', 403); q('DELETE FROM companies WHERE id=?', [$id]); log_act($uid, 'company_deleted', $c['name']); out(['ok' => true]); }
+        if ($method === 'DELETE') { if (!$mgr) fail('Only managers and admins can delete companies', 403); require_once __DIR__ . '/bulkdel.php'; bd_company_delete((int)$id, $u); out(['ok' => true]); }
     }
     fail('Bad request', 404);
 }
@@ -158,7 +158,7 @@ if ($r === 'contacts') {
             if (array_key_exists('contact_type', $b)) q('UPDATE contacts SET contact_type=? WHERE id=?', [$b['contact_type'] === 'regulatory' ? 'regulatory' : null, $id]);
             out(['ok' => true]);
         }
-        if ($method === 'DELETE') { must_write(); if (!$mgr && (int)$c['owner_id'] !== $uid) fail('Only the owner or a manager can delete this contact', 403); q('DELETE FROM contacts WHERE id=?', [$id]); out(['ok' => true]); }
+        if ($method === 'DELETE') { must_write(); if (!$mgr && (int)$c['owner_id'] !== $uid) fail('Only the owner or a manager can delete this contact', 403); require_once __DIR__ . '/bulkdel.php'; bd_contact_delete((int)$id, $u); out(['ok' => true]); }
     }
     fail('Bad request', 404);
 }

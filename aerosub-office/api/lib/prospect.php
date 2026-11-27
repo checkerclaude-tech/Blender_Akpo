@@ -192,7 +192,7 @@ if (isset($seg) && ($seg[0] ?? '') === 'prospecting') {
         $sg = one('SELECT * FROM pr_signals WHERE id=? AND (user_id=? OR user_id IS NULL)', [(int)$seg[2], $uid]); if (!$sg) fail('Not found', 404); $act = $seg[3] ?? '';
         if ($method === 'POST' && $act === 'dig') { try { $f = pr_dig($sg); } catch (RuntimeException $e) { fail($e->getMessage(), 400); } log_act($uid, 'prospect_dig', mb_substr($sg['title'], 0, 120)); $row = one('SELECT s.*, NULL AS watch_name FROM pr_signals s WHERE s.id=?', [$sg['id']]); out(['ok' => true, 'signal' => pr_out($row), 'errors' => $f['errors'] ?? []]); }
         if ($method === 'POST' && $act === 'star') { if (!empty($b['on'])) q('INSERT IGNORE INTO pr_stars (signal_id,user_id) VALUES (?,?)', [$sg['id'], $uid]); else q('DELETE FROM pr_stars WHERE signal_id=? AND user_id=?', [$sg['id'], $uid]); out(['ok' => true]); }
-        if ($method === 'DELETE' && $act === '') { q('DELETE FROM pr_signals WHERE id=?', [$sg['id']]); out(['ok' => true]); }
+        if ($method === 'DELETE' && $act === '') { bd_signal_delete((int)$sg['id'], $u); out(['ok' => true]); }
         if ($method === 'POST' && $act === 'vendor') {   // a supplier found while prospecting becomes a vendor, ready to be tied to products and services
             try { one('SELECT 1 FROM vendors LIMIT 1'); } catch (Throwable $e) { require_once __DIR__ . '/migrate_fin3.php'; migrate_fin_ext(); }
             $nm = pr_str($b['name'] ?? ($sg['company_guess'] ?: $sg['domain']), 190); if ($nm === '') fail('Enter the vendor name'); $em = pr_str($b['email'] ?? '', 190); if ($em !== '' && !filter_var($em, FILTER_VALIDATE_EMAIL)) fail('That email address does not look right');

@@ -162,7 +162,7 @@ if (ctype_digit((string)$s2)) {
             $d['products'] = all('SELECT id,name,kind,price,currency FROM products WHERE vendor_id=? ORDER BY name LIMIT 100', [$vid]); out(['vendor' => $d]);
         }
         if ($method === 'PATCH') { $apply($vid, $b, $v); log_act($uid, 'vendor_updated', $v['name']); out(['ok' => true]); }
-        if ($method === 'DELETE') { if (!$mgr) fail('Only managers and admins can delete vendors', 403); q('UPDATE products SET vendor_id=NULL WHERE vendor_id=?', [$vid]); q('UPDATE contacts SET vendor_id=NULL WHERE vendor_id=?', [$vid]); q('DELETE FROM vendors WHERE id=?', [$vid]); log_act($uid, 'vendor_deleted', $v['name']); out(['ok' => true]); }
+        if ($method === 'DELETE') { if (!$mgr) fail('Only managers and admins can delete vendors', 403); require_once __DIR__ . '/bulkdel.php'; bd_vendor_delete($vid, $u); out(['ok' => true]); }
     }
 }
 fail('Bad request', 404);

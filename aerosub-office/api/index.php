@@ -516,7 +516,10 @@ case 'activity': // the logs belong to the Root Admin
     if ($d1 = d($_GET['from'] ?? null)) { $w[] = 'l.created_at >= ?'; $p[] = $d1 . ' 00:00:00'; }
     if ($d2 = d($_GET['to'] ?? null)) { $w[] = 'l.created_at <= ?'; $p[] = $d2 . ' 23:59:59'; }
     $lim = max(1, min(1000, (int)($_GET['limit'] ?? 200)));
-    out(all('SELECT l.id,l.user_id,l.action,l.detail,l.created_at,u.name FROM activity_log l LEFT JOIN users u ON u.id=l.user_id WHERE ' . implode(' AND ', $w) . ' ORDER BY l.id DESC LIMIT ' . $lim, $p));
+    $logs = all('SELECT l.id,l.user_id,l.action,l.detail,l.created_at,u.name FROM activity_log l LEFT JOIN users u ON u.id=l.user_id WHERE ' . implode(' AND ', $w) . ' ORDER BY l.id DESC LIMIT ' . $lim, $p);
+    require_once __DIR__ . '/lib/recycle.php'; bin_ensure();   // a deletion in the log points at its copy in the recycle bin, so it can be restored from there
+    try { $bins = all('SELECT id,kind,title,deleted_at,restored_at FROM recycle_bin WHERE deleted_at > (NOW() - INTERVAL ' . BIN_DAYS . ' DAY) ORDER BY id DESC LIMIT 1500'); foreach ($logs as &$lg) { $k = BIN_ACTION[$lg['action']] ?? null; if (!$k) continue; foreach ($bins as $bn) { if ($bn['kind'] === $k && mb_substr($bn['title'], 0, 200) === mb_substr((string)$lg['detail'], 0, 200) && abs(strtotime($bn['deleted_at']) - strtotime($lg['created_at'])) <= 10) { $lg['bin_id'] = (int)$bn['id']; $lg['restored'] = $bn['restored_at'] !== null; break; } } } unset($lg); } catch (Throwable $e) {}
+    out($logs);
 
 // Who may open which tab: Root Admin only.   GET access  ·  GET access/{userId}  ·  PATCH access/{userId} {tabs:{performance:true,finance:false,mail:null}}
 case 'access':
@@ -665,6 +668,10 @@ case 'mail':
 
 case 'companies': case 'contacts': case 'pipeline':
     require __DIR__ . '/lib/pipeline.php';
+    break;
+
+case 'recycle':   // deleted items an administrator can bring back
+    require __DIR__ . '/lib/recycle.php';
     break;
 
 case 'preview':   // Word / Excel / PowerPoint as readable text
