@@ -27,7 +27,13 @@ function rp_heads_user(array $u, int $pid): bool {
 }
 function rp_global(array $u): bool { return in_array($u['role'], ['super_admin', 'founder'], true); }
 /** A submitted weekly report is locked for its owner. Heads of department (and administrators) edit without approval; everyone else asks their head. */
-function rp_ew_ensure(): void { static $d = false; if ($d) return; $d = true; try { require_once __DIR__ . '/migrate.php'; if (!col_exists('weekly_reports', 'edit_open_until') || !one("SHOW TABLES LIKE 'weekly_edit_requests'")) { require_once __DIR__ . '/migrate_fin3.php'; migrate_fin_ext(); } } catch (Throwable $e) { error_log('Weekly edit schema: ' . $e->getMessage()); } }
+function rp_ew_ensure(): void {
+    static $d = false; if ($d) return; $d = true;
+    try { require_once __DIR__ . '/migrate.php';   // made directly (not through the big upgrade) so nothing else can hold it back; no foreign key, so it cannot fail on an older table
+        if (!col_exists('weekly_reports', 'edit_open_until')) db()->exec('ALTER TABLE weekly_reports ADD COLUMN edit_open_until DATETIME NULL');
+        if (!one("SHOW TABLES LIKE 'weekly_edit_requests'")) db()->exec("CREATE TABLE IF NOT EXISTS weekly_edit_requests (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, weekly_id INT UNSIGNED NOT NULL, user_id INT UNSIGNED NOT NULL, reason VARCHAR(500) NULL, status ENUM('pending','approved','denied') NOT NULL DEFAULT 'pending', decided_by INT UNSIGNED NULL, decided_at DATETIME NULL, note VARCHAR(300) NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, KEY (weekly_id,status), KEY (user_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    } catch (Throwable $e) { error_log('Weekly edit schema: ' . $e->getMessage()); }
+}
 /** A department head (or administrator) a combined report was shared with: they may write the Comment and Management review columns, and share it on. The rows stay the author's. */
 function rp_combined_reviewer(array $u, array $row): bool {
     if (($row['kind'] ?? '') !== 'combined' || (int)$row['user_id'] === (int)$u['id']) return false;
@@ -39,7 +45,8 @@ function rp_edit_locked(array $u, ?array $row): bool {
     if (!$row || ($row['kind'] ?? 'personal') !== 'personal' || (int)$row['user_id'] !== (int)$u['id'] || ($row['status'] ?? '') !== 'submitted' || rp_edit_exempt($u)) return false;
     return empty($row['edit_open_until']) || (string)$row['edit_open_until'] <= date('Y-m-d H:i:s');
 }
-function rp_edit_info(array $u, ?array $row): array {
+function rp_edit_info(array $u, ?array $row): array { try { return rp_edit_info0($u, $row); } catch (Throwable $e) { error_log('Weekly edit info: ' . $e->getMessage()); return ['locked' => rp_edit_locked($u, $row), 'exempt' => rp_edit_exempt($u), 'open_until' => null]; } }
+function rp_edit_info0(array $u, ?array $row): array {
     rp_ew_ensure(); if (!$row || ($row['kind'] ?? 'personal') !== 'personal' || empty($row['id'])) return ['locked' => false];
     $own = (int)$row['user_id'] === (int)$u['id']; $open = !empty($row['edit_open_until']) && (string)$row['edit_open_until'] > date('Y-m-d H:i:s');
     $o = ['locked' => rp_edit_locked($u, $row), 'exempt' => rp_edit_exempt($u), 'open_until' => $open ? $row['edit_open_until'] : null];

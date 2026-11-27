@@ -389,3 +389,5 @@ This update does not replace `index.html`, `sw.js`, `upgrade.php` or `api/lib/mi
 - **How long:** copies are kept for **90 days**, then discarded for good. Deleting (one at a time or with Select to delete) now also writes a log line for every item, with its name.
 - Archived **users** are still restored from Admin (60-day archive), as before.
 - Upgrade: open /upgrade.php once (adds the bin table); it also runs by itself on first use. Items deleted before this update have no copy and cannot be restored.
+
+- **Edit requests made sturdier:** the request table and lock column are now created directly on first use (separately from the big upgrade, and without a database link that could fail on an older table), and a problem there can no longer break the report page. Open /upgrade.php once after installing.
