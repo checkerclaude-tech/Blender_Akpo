@@ -28,6 +28,12 @@ function rp_heads_user(array $u, int $pid): bool {
 function rp_global(array $u): bool { return in_array($u['role'], ['super_admin', 'founder'], true); }
 /** A submitted weekly report is locked for its owner. Heads of department (and administrators) edit without approval; everyone else asks their head. */
 function rp_ew_ensure(): void { static $d = false; if ($d) return; $d = true; try { require_once __DIR__ . '/migrate.php'; if (!col_exists('weekly_reports', 'edit_open_until') || !one("SHOW TABLES LIKE 'weekly_edit_requests'")) { require_once __DIR__ . '/migrate_fin3.php'; migrate_fin_ext(); } } catch (Throwable $e) { error_log('Weekly edit schema: ' . $e->getMessage()); } }
+/** A department head (or administrator) a combined report was shared with: they may write the Comment and Management review columns, and share it on. The rows stay the author's. */
+function rp_combined_reviewer(array $u, array $row): bool {
+    if (($row['kind'] ?? '') !== 'combined' || (int)$row['user_id'] === (int)$u['id']) return false;
+    if (!(rp_global($u) || rp_heads($u))) return false;
+    return (bool)one('SELECT 1 FROM weekly_shares WHERE weekly_id=? AND user_id=?', [$row['id'], $u['id']]);
+}
 function rp_edit_exempt(array $u): bool { return rp_global($u) || (bool)rp_heads($u) || !empty($u['is_root']); }
 function rp_edit_locked(array $u, ?array $row): bool {
     if (!$row || ($row['kind'] ?? 'personal') !== 'personal' || (int)$row['user_id'] !== (int)$u['id'] || ($row['status'] ?? '') !== 'submitted' || rp_edit_exempt($u)) return false;
@@ -370,7 +376,7 @@ if ($method === 'GET' && ($seg[1] ?? '') === 'weekly' && isset($seg[2]) && ctype
     $row = one('SELECT * FROM weekly_reports WHERE id=?', [(int)$seg[2]]); if (!$row || !rp_weekly_access($u, $row)) fail('Not found', 404);
     $c = json_decode((string)$row['data'], true) ?: [];
     $sh = one('SELECT s.note,s.created_at,sb.name AS shared_by FROM weekly_shares s LEFT JOIN users sb ON sb.id=s.shared_by WHERE s.weekly_id=? AND s.user_id=?', [$row['id'], $uid]);
-    out($c + ['edit' => rp_edit_info($u, $row), 'kind' => $row['kind'], 'people' => [], 'legend' => rp_legend_out(), 'week_end' => rp_week_end($row['week_start']), 'mode' => $ro ? 'view' : ((int)$row['user_id'] === $uid ? 'owner' : ((($row['kind'] ?? 'personal') === 'personal' && (rp_global($u) || rp_heads_user($u, (int)$row['user_id']))) ? 'review' : 'view')),   // a combined report is only ever edited by its author; everyone it was shared with reads it 'owner_id' => (int)$row['user_id'], 'state' => ['id' => (int)$row['id'], 'status' => $row['status'], 'updated_at' => $row['updated_at'], 'submitted_at' => $row['submitted_at']],
+    out($c + ['edit' => rp_edit_info($u, $row), 'kind' => $row['kind'], 'people' => [], 'legend' => rp_legend_out(), 'week_end' => rp_week_end($row['week_start']), 'mode' => $ro ? 'view' : ((int)$row['user_id'] === $uid ? 'owner' : ((($row['kind'] ?? 'personal') === 'combined' ? rp_combined_reviewer($u, $row) : (rp_global($u) || rp_heads_user($u, (int)$row['user_id']))) ? 'review' : 'view')), /* the head a combined report was shared with comments on it; the author alone changes its rows */ 'owner_id' => (int)$row['user_id'], 'state' => ['id' => (int)$row['id'], 'status' => $row['status'], 'updated_at' => $row['updated_at'], 'submitted_at' => $row['submitted_at']],
         'saved' => ['id' => (int)$row['id'], 'owner_id' => (int)$row['user_id'], 'status' => $row['status'], 'submitted_at' => $row['submitted_at'], 'updated_at' => $row['updated_at'], 'shared_by' => $sh['shared_by'] ?? null, 'note' => $sh['note'] ?? null,
         'recipients' => all('SELECT u.name FROM weekly_shares s JOIN users u ON u.id=s.user_id WHERE s.weekly_id=? ORDER BY u.name', [$row['id']])]]);
 }
@@ -461,7 +467,14 @@ if ($method === 'POST' && $sub === 'weekly-save') {
     if ($ro) fail('Founder accounts are read-only', 403);
     $b = body();
     if (!empty($b['id'])) {   // a combined team report: only its author edits it
-        $row = one("SELECT * FROM weekly_reports WHERE id=? AND kind='combined' AND user_id=?", [(int)$b['id'], $uid]); if (!$row) fail('Not found', 404);
+        $row = one("SELECT * FROM weekly_reports WHERE id=? AND kind='combined' AND user_id=?", [(int)$b['id'], $uid]);
+        if (!$row) {   // not the author: a head it was shared with may only add comments and the management review
+            $row = one("SELECT * FROM weekly_reports WHERE id=? AND kind='combined'", [(int)$b['id']]); if (!$row || !rp_combined_reviewer($u, $row)) fail('Not found', 404);
+            $c = rp_weekly_clean($b, $today); $stored = json_decode((string)$row['data'], true) ?: []; $old = json_encode($stored['rows'] ?? []); $new = rp_weekly_review_merge($stored, $c); $new['reviewed_by'] = $u['name']; $new['reviewed_at'] = date('c');
+            if (json_encode($new['rows']) !== $old) { q('UPDATE weekly_reports SET data=?, updated_at=NOW() WHERE id=?', [json_encode($new, JSON_UNESCAPED_UNICODE), $row['id']]);
+                $t = $u['name'] . ' commented on your combined weekly report'; if (!one("SELECT id FROM notifications WHERE user_id=? AND type='weekly_reviewed' AND title=? AND created_at > (NOW() - INTERVAL 2 HOUR)", [(int)$row['user_id'], $t])) notify((int)$row['user_id'], 'weekly_reviewed', $t, 'Week of ' . date('j M', strtotime($row['week_start'])), '#/reports/weekly/' . $row['id']); log_act($uid, 'weekly_reviewed', 'combined ' . $row['week_start']); }
+            out(['ok' => true, 'state' => one('SELECT id,status,updated_at,submitted_at FROM weekly_reports WHERE id=?', [$row['id']])]);
+        }
         $c = rp_weekly_clean($b, $today); $old = json_decode((string)$row['data'], true) ?: []; $c['week_start'] = $row['week_start']; $c['user_id'] = $uid; $c['kind'] = 'combined'; foreach (['members', 'member_ids'] as $k) if (isset($old[$k])) $c[$k] = $old[$k];
         q('UPDATE weekly_reports SET data=?, updated_at=NOW() WHERE id=?', [json_encode($c, JSON_UNESCAPED_UNICODE), $row['id']]);
         out(['ok' => true, 'state' => one('SELECT id,status,updated_at,submitted_at FROM weekly_reports WHERE id=?', [$row['id']]), 'notified' => 0]);
@@ -502,12 +515,14 @@ if ($method === 'POST' && $sub === 'weekly-save') {
 if ($method === 'POST' && $sub === 'weekly-share') {
     if ($ro) fail('Founder accounts are read-only', 403);
     $b = body(); $pid = (int)($b['user_id'] ?? 0) ?: $uid;
-    if ($pid !== $uid && !($u['role'] === 'super_admin' || rp_heads_user($u, $pid))) fail('You can only share your own weekly report', 403);
+    if ($pid !== $uid && empty($b['id']) && !($u['role'] === 'super_admin' || rp_heads_user($u, $pid))) fail('You can only share your own weekly report', 403);   // (a shared combined report is checked below)
     $emp = one('SELECT id,name FROM users WHERE id=?', [$pid]); if (!$emp) fail('Not found', 404);
     $c = rp_weekly_clean($b, $today); $week = rp_week_start((string)($c['week_start'] ?: $c['date'])); $c['week_start'] = $week; $c['user_id'] = $pid; if ($c['employee'] === '') $c['employee'] = $emp['name'];
     if (!$c['rows']) fail('There is nothing in the report yet');
     $ids = array_values(array_unique(array_filter(array_map('intval', (array)($b['user_ids'] ?? [])))));  $ids = array_values(array_diff($ids, [$uid, $pid])); if (!$ids) fail('Choose at least one person to share it with');
-    $combinedId = 0; if (!empty($b['id'])) { $crow = one("SELECT id,data FROM weekly_reports WHERE id=? AND kind='combined' AND user_id=?", [(int)$b['id'], $uid]); if (!$crow) fail('Not found', 404); $combinedId = (int)$crow['id']; $old = json_decode((string)$crow['data'], true) ?: []; foreach (['members', 'member_ids'] as $k) if (isset($old[$k])) $c[$k] = $old[$k]; $c['kind'] = 'combined'; }
+    $combinedId = 0; if (!empty($b['id'])) { $crow = one("SELECT id,user_id,kind,week_start,data FROM weekly_reports WHERE id=? AND kind='combined'", [(int)$b['id']]); $isAuthor = $crow && (int)$crow['user_id'] === $uid; if (!$crow || (!$isAuthor && !rp_combined_reviewer($u, $crow))) fail('Not found', 404); $combinedId = (int)$crow['id']; $old = json_decode((string)$crow['data'], true) ?: []; $pid = (int)$crow['user_id'];
+        if (!$isAuthor) { $c = rp_weekly_review_merge($old, $c); $c['reviewed_by'] = $u['name']; $c['reviewed_at'] = date('c'); $c['week_start'] = $old['week_start'] ?? $crow['week_start']; $c['user_id'] = $pid; }   // a head sharing it on changes only the comment columns
+        foreach (['members', 'member_ids'] as $k) if (isset($old[$k])) $c[$k] = $old[$k]; $c['kind'] = 'combined'; $emp = one('SELECT id,name FROM users WHERE id=?', [$pid]) ?: $emp; }
     if ($pid !== $uid && !$combinedId) { $st0 = one("SELECT data,status FROM weekly_reports WHERE user_id=? AND week_start=? AND kind='personal'", [$pid, $week]); if (!$st0 || $st0['status'] !== 'submitted') fail($emp['name'] . ' has not submitted this report yet. Wait until it is submitted, or use "Combine team reports" to build one from tasks.', 409); if ($st0) $c = rp_weekly_review_merge(json_decode((string)$st0['data'], true) ?: [], $c) + ['user_id' => $pid]; }
     if (!$combinedId && $pid === $uid) rp_weekly_sync_tasks($uid, $c['rows'], $week, $emp);
     if ($combinedId) { q('UPDATE weekly_reports SET data=?, updated_at=NOW() WHERE id=?', [json_encode($c, JSON_UNESCAPED_UNICODE), $combinedId]); $wid = $combinedId; }
