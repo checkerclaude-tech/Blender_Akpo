@@ -29,7 +29,7 @@ if ($method !== 'GET' && $method !== 'OPTIONS' && isset($WRITE_TAB[$r])) { $wu =
 try {
 switch ($r) {
 
-case 'health': out(['ok' => true, 'time' => date('c')]);
+case 'health': out(['ok' => true, 'time' => date('c'), 'build' => '20261127-3']);   // the page compares its own build with this one and refreshes itself when they differ
 
 // The browser posts here when the Content Security Policy would block something (see .htaccess). No login or request token is
 // possible for a browser-sent report, so it only writes a short log line, capped so a flood cannot fill the log.

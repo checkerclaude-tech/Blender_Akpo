@@ -394,3 +394,7 @@ This update does not replace `index.html`, `sw.js`, `upgrade.php` or `api/lib/mi
 
 ## This zip is the whole app
 - The earlier patch zips listed only some of the changed files and left out several front-end files (for example the weekly report page and its style, so the report lock, "Request approval to edit", the comment highlight and the scrolling fix never reached the browser even though the server side did). **This zip contains every file of the app** (except `api/config.php`, `.htaccess` and the installer), so installing it brings everything up to date in one go. Extract into public_html/office, overwrite, open /upgrade.php once, then close and reopen the app (Ctrl+Shift+R once in a browser).
+
+## The app updates itself (no more stale pages)
+- Pages and scripts are now loaded from the server first (the saved copy is used only when offline), and the app compares its own build number with the server's. If an old copy was kept, it clears the saved files and reloads by itself (at most twice). A new version also takes over by itself and reloads the open page once.
+- **App version page:** open `…/index.html#/version` to see the build of this page against the server's, with a **Refresh the app now** button. They should match (this build: 20261127-3).

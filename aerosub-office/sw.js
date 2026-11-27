@@ -1,6 +1,6 @@
 // Aerosub Office service worker: makes the app shell load offline. API calls are never cached here
 // (the app keeps its own per-user offline cache in the browser).
-const V = 'aero-office-v56';
+const V = 'aero-office-v57';
 const SHELL = ['./', 'index.html', 'assets/app.css?v=25', 'assets/app.js?v=35', 'assets/icon.svg', 'assets/icon-192.png', 'manifest.webmanifest'];
 
 self.addEventListener('install', e => { e.waitUntil(caches.open(V).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
@@ -12,14 +12,11 @@ self.addEventListener('fetch', e => {
   if (r.method !== 'GET' || u.pathname.includes('/api/') || /\/(install|cron)\.php$/.test(u.pathname)) return;
   if (u.origin !== location.origin && !/fonts\.(googleapis|gstatic)\.com$/.test(u.hostname)) return;
   if (r.mode === 'navigate' || u.pathname.endsWith('/index.html')) { // pages: network first so updates show immediately, cache only when offline
-    e.respondWith(fetch(r).then(res => { if (res.ok) { const copy = res.clone(); caches.open(V).then(c => c.put('index.html', copy)); } return res; }).catch(() => caches.match('index.html')));
+    e.respondWith(fetch(r, { cache: 'no-store' }).then(res => { if (res.ok) { const copy = res.clone(); caches.open(V).then(c => c.put('index.html', copy)); } return res; }).catch(() => caches.match('index.html')));
     return;
   }
-  e.respondWith(
-    caches.match(r, { ignoreSearch: false }).then(hit => {
-      const net = fetch(r).then(res => { if (res.ok) { const copy = res.clone(); caches.open(V).then(c => c.put(r, copy)); } return res; }).catch(() => hit || (r.mode === 'navigate' ? caches.match('index.html') : undefined));
-      return hit || net;
-    })
+  e.respondWith(   // scripts, styles and images: the network first (an update shows at once), the saved copy only when offline
+    fetch(r, { cache: 'no-cache' }).then(res => { if (res.ok) { const copy = res.clone(); caches.open(V).then(c => c.put(r, copy)); } return res; }).catch(() => caches.match(r, { ignoreSearch: false }).then(hit => hit || (r.mode === 'navigate' ? caches.match('index.html') : undefined)))
   );
 });
 self.addEventListener('push', e => { // a message from the server, even while the app is closed

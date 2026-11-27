@@ -1437,5 +1437,13 @@ document.body.insertAdjacentHTML('afterbegin', '<div id="root"></div>');
 boot(false);
 setInterval(poll, 60000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+if ('serviceWorker' in navigator) { const had = !!navigator.serviceWorker.controller; navigator.serviceWorker.register('sw.js').catch(() => {}); navigator.serviceWorker.addEventListener('controllerchange', () => { if (had && !window.__swReload) { window.__swReload = 1; location.reload(); } }); }   // a new version of the app takes over: reload once to use it
+/** Is this page the same build as the server? If not (an old copy was kept), clear what was saved and reload once. */
+async function wipeAndReload() { try { const rs = await navigator.serviceWorker?.getRegistrations(); if (rs) await Promise.all(rs.map(r => r.unregister())); } catch {} try { const ks = await caches.keys(); await Promise.all(ks.map(k => caches.delete(k))); } catch {} location.reload(); }
+(async () => { try { const h = await (await fetch('api/health', { cache: 'no-store' })).json(), mine = document.documentElement.dataset.build || ''; if (h.build && h.build !== mine) { let n = 0; try { n = +(sessionStorage.getItem('aero_fix') || 0); sessionStorage.setItem('aero_fix', String(n + 1)); } catch {} if (n < 2) wipeAndReload(); } else { try { sessionStorage.removeItem('aero_fix'); } catch {} } } catch {} })();
+views.version = async () => {
+  const mine = document.documentElement.dataset.build || '(old)'; let theirs = '?'; try { theirs = (await (await fetch('api/health', { cache: 'no-store' })).json()).build || '(old server files)'; } catch {}
+  const same = mine === theirs; $('#view').innerHTML = '<div class="top"><h1>App version</h1></div><div class="card" style="max-width:560px"><p>This page: <b>' + esc(mine) + '</b><br>The server: <b>' + esc(theirs) + '</b></p><p>' + (same ? '✅ They match: you are running the latest files on this server.' : '⚠️ They differ. Press the button to clear what this device saved and load the latest.') + '</p><button class="btn" id="vfix">Refresh the app now</button></div>';
+  $('#vfix').onclick = wipeAndReload;
+};
 })();
