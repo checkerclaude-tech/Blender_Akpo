@@ -54,7 +54,7 @@ input[type=range]{padding:0;height:28px;accent-color:var(--cyan)}
 @media print{.rp-filters,.rp-cards,.rp-note,.rp-trend,.rp-legend,#rptasks{display:none!important}.rp-item{break-inside:avoid}.rp-sum{-webkit-line-clamp:unset}}
 
 /* weekly report sheet */
-.wr-sheet{background:#fff;color:#111;border:1px solid var(--line);border-radius:6px;padding:0;font-size:12.5px;overflow-x:auto}
+.wr-sheet{background:#fff;color:#111;border:1px solid var(--line);border-radius:6px;padding:0;font-size:12.5px;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain}
 .wr-band{background:#BFBFBF;display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #000}.wr-band img{height:40px}
 .wr-code{display:flex;gap:18px;font-size:12px}.wr-code b{font-weight:700}
 .wr-head{display:grid;grid-template-columns:1fr minmax(260px,32%);border-bottom:1px solid #000}

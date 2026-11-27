@@ -354,7 +354,8 @@
       catch (er) { stat('Not saved: ' + er.message, true); throw er; }
     }
     function schedule() { if (!canSave()) return; last = collect(); dirty = true; stat('Unsaved changes…'); clearTimeout(timer); timer = setTimeout(() => save(false).catch(() => {}), 1500); }
-    const sheet = $('.wr-sheet'); if (sheet && canSave()) { sheet.addEventListener('input', schedule); sheet.addEventListener('change', schedule); }
+    const sheet = $('.wr-sheet'); if (sheet) sheet.addEventListener('wheel', e => { if (e.ctrlKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return; const m = document.scrollingElement || document.documentElement, k = e.deltaMode === 1 ? 32 : e.deltaMode === 2 ? innerHeight : 1, b0 = m.scrollTop; m.scrollTop = b0 + e.deltaY * k; if (m.scrollTop !== b0) e.preventDefault(); }, { passive: false });   // the wide sheet is its own scroll box: hand the up-and-down wheel to the page so the report scrolls with the mouse or trackpad
+    if (sheet && canSave()) { sheet.addEventListener('input', schedule); sheet.addEventListener('change', schedule); }
     const bye = () => { if (dirty && canSave() && last) { try { fetch('api/reports/weekly-save', { method: 'POST', keepalive: true, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': S.csrf }, body: JSON.stringify(payload(false)) }); dirty = false; } catch {} } };
     const vis = () => { if (document.hidden) bye(); };
     if (WK.off) WK.off(); window.addEventListener('pagehide', bye); window.addEventListener('hashchange', bye, { once: true }); document.addEventListener('visibilitychange', vis);

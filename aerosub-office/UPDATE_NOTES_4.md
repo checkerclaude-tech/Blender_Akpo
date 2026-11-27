@@ -368,3 +368,7 @@ This update does not replace `index.html`, `sw.js`, `upgrade.php` or `api/lib/mi
 - **Nothing is added anywhere by a scan:** no task, no weekly-report row and no Pipeline entry. The sender enters the Pipeline (company and contact, or vendor) only when you add that email as a task or reply to it, and the task goes to you.
 - **Delete from your results:** every scanned email has **🗑 Delete**, and **☑ Select to delete** works on the list. It only removes it from your list; tasks already made stay, and the email is not brought back by the next scan. Prospects can be deleted the same way.
 - Upgrade: open /upgrade.php once (a prospect link can now sit in two people's results); it also runs by itself on first use.
+
+## Fix: shared combined report errors, and scrolling a report
+- **"Not saved: Not found"** on a combined report that was shared with a head: a combined report belongs to its author, but a head of department (or administrator) opening a shared copy was treated as a reviewer and the page tried to save to it. Shared combined reports now open **read-only** for everyone except the person who combined them, so nothing tries to save and the message is gone.
+- **Scrolling a report:** the wide report sheet is its own scroll box, which on some browsers and trackpads swallowed the up-and-down wheel so only the page's side scroll bar worked. The wheel now passes straight to the page (sideways scrolling inside the sheet still works with Shift or a horizontal swipe).
