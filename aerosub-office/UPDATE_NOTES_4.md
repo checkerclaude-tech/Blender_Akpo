@@ -398,3 +398,5 @@ This update does not replace `index.html`, `sw.js`, `upgrade.php` or `api/lib/mi
 ## The app updates itself (no more stale pages)
 - Pages and scripts are now loaded from the server first (the saved copy is used only when offline), and the app compares its own build number with the server's. If an old copy was kept, it clears the saved files and reloads by itself (at most twice). A new version also takes over by itself and reloads the open page once.
 - **App version page:** open `…/index.html#/version` to see the build of this page against the server's, with a **Refresh the app now** button. They should match (this build: 20261127-3).
+
+- **Install check:** open `/check.php` on the site to see, in plain words, whether the newest files and database tables are in place (marks anything missing or old in red). It shows no passwords or data.
