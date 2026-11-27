@@ -303,7 +303,7 @@ if ($method === 'GET' && $sub === 'weekly' && !(isset($seg[2]) && ctype_digit($s
     $mode = $ro ? 'view' : ($pid === $uid ? 'owner' : ((rp_global($u) || rp_heads_user($u, $pid)) ? 'review' : 'view'));
     if ($saved) { $state = ['id' => (int)$saved['id'], 'status' => $saved['status'], 'updated_at' => $saved['updated_at'], 'submitted_at' => $saved['submitted_at']];
         if (empty($_GET['fresh']) && ($pid === $uid || $mode === 'review')) { $c = json_decode((string)$saved['data'], true);
-            if (is_array($c) && isset($c['rows'])) { foreach (['code', 'rev', 'employee', 'designation', 'date', 'date_text', 'rows'] as $k) if (array_key_exists($k, $c)) $Wout[$k] = $c[$k]; $Wout['restored'] = true;
+            if (is_array($c) && isset($c['rows'])) { foreach (['code', 'rev', 'employee', 'designation', 'date', 'date_text', 'rows', 'reviewed_by', 'reviewed_at'] as $k) if (array_key_exists($k, $c)) $Wout[$k] = $c[$k]; $Wout['restored'] = true;
                 if ($pid === $uid) {   // tasks that changed or were completed after the sheet was last saved are brought in: known rows get the new status, new ones are appended (rows the person deleted stay deleted)
                     $pos = []; foreach ($Wout['rows'] as $ix => $r0) if (!empty($r0['task_id'])) $pos[(int)$r0['task_id']] = $ix; $names = array_map(fn($r) => mb_strtolower(trim((string)($r['task'] ?? ''))), $Wout['rows']); $new = 0;
                     foreach ($rows as $fr) { if ((string)($fr['changed'] ?? '') <= (string)$saved['updated_at'] && empty($fr['carried'])) continue; $tid = (int)$fr['task_id'];   // an unfinished task from an earlier week always carries into the sheet
@@ -437,6 +437,12 @@ function rp_weekly_sync_tasks(int $uid, array &$rows, string $week, array $emp):
     return ['created' => $created];
 }
 /* ---------- editing a submitted weekly report: ask, then the head approves ---------- */
+if ($method === 'GET' && $sub === 'weekly-edit-requests') {   // the Weekly page: requests waiting for me (heads), and my own
+    rp_ew_ensure(); $mine = all("SELECT r.id,r.status,r.reason,r.note,r.created_at,r.decided_at,w.id AS weekly_id,w.week_start,w.edit_open_until,d.name AS decided_by FROM weekly_edit_requests r JOIN weekly_reports w ON w.id=r.weekly_id LEFT JOIN users d ON d.id=r.decided_by WHERE r.user_id=? ORDER BY r.id DESC LIMIT 12", [$uid]);
+    $wait = []; if (rp_global($u) || rp_heads($u)) { $wait = all("SELECT r.id,r.reason,r.created_at,w.id AS weekly_id,w.week_start,w.user_id,u.name AS who FROM weekly_edit_requests r JOIN weekly_reports w ON w.id=r.weekly_id JOIN users u ON u.id=r.user_id WHERE r.status='pending' AND w.kind='personal' ORDER BY r.id DESC LIMIT 60");
+        $wait = array_values(array_filter($wait, fn($x) => (int)$x['user_id'] !== $uid && (rp_global($u) || rp_heads_user($u, (int)$x['user_id'])))); }
+    out(['waiting' => $wait, 'mine' => $mine, 'now' => date('Y-m-d H:i:s')]);
+}
 if ($method === 'POST' && $sub === 'weekly-edit-request') {
     rp_ew_ensure(); $b = body(); $row = one("SELECT * FROM weekly_reports WHERE id=? AND kind='personal' AND user_id=?", [(int)($b['weekly_id'] ?? 0), $uid]); if (!$row) fail('Not found', 404);
     if (!rp_edit_locked($u, $row)) fail($row['status'] === 'submitted' ? 'You can edit this report right now.' : 'This report has not been submitted, so you can edit it freely.', 409);
@@ -472,7 +478,7 @@ if ($method === 'POST' && $sub === 'weekly-save') {
             $row = one("SELECT * FROM weekly_reports WHERE id=? AND kind='combined'", [(int)$b['id']]); if (!$row || !rp_combined_reviewer($u, $row)) fail('Not found', 404);
             $c = rp_weekly_clean($b, $today); $stored = json_decode((string)$row['data'], true) ?: []; $old = json_encode($stored['rows'] ?? []); $new = rp_weekly_review_merge($stored, $c); $new['reviewed_by'] = $u['name']; $new['reviewed_at'] = date('c');
             if (json_encode($new['rows']) !== $old) { q('UPDATE weekly_reports SET data=?, updated_at=NOW() WHERE id=?', [json_encode($new, JSON_UNESCAPED_UNICODE), $row['id']]);
-                $t = $u['name'] . ' commented on your combined weekly report'; if (!one("SELECT id FROM notifications WHERE user_id=? AND type='weekly_reviewed' AND title=? AND created_at > (NOW() - INTERVAL 2 HOUR)", [(int)$row['user_id'], $t])) notify((int)$row['user_id'], 'weekly_reviewed', $t, 'Week of ' . date('j M', strtotime($row['week_start'])), '#/reports/weekly/' . $row['id']); log_act($uid, 'weekly_reviewed', 'combined ' . $row['week_start']); }
+                $t = $u['name'] . ' commented on your combined weekly report'; if (!one("SELECT id FROM notifications WHERE user_id=? AND type='weekly_reviewed' AND title=? AND created_at > (NOW() - INTERVAL 10 MINUTE)", [(int)$row['user_id'], $t])) notify((int)$row['user_id'], 'weekly_reviewed', $t, 'Week of ' . date('j M', strtotime($row['week_start'])), '#/reports/weekly/' . $row['id']); log_act($uid, 'weekly_reviewed', 'combined ' . $row['week_start']); }
             out(['ok' => true, 'state' => one('SELECT id,status,updated_at,submitted_at FROM weekly_reports WHERE id=?', [$row['id']])]);
         }
         $c = rp_weekly_clean($b, $today); $old = json_decode((string)$row['data'], true) ?: []; $c['week_start'] = $row['week_start']; $c['user_id'] = $uid; $c['kind'] = 'combined'; foreach (['members', 'member_ids'] as $k) if (isset($old[$k])) $c[$k] = $old[$k];
@@ -490,7 +496,8 @@ if ($method === 'POST' && $sub === 'weekly-save') {
         $new['reviewed_by'] = $u['name']; $new['reviewed_at'] = date('c');
         if (json_encode($new['rows']) !== $old) {
             q('UPDATE weekly_reports SET data=?, updated_at=NOW() WHERE id=?', [json_encode($new, JSON_UNESCAPED_UNICODE), $row['id']]);
-            $t = $u['name'] . ' commented on your weekly report'; if (!one("SELECT id FROM notifications WHERE user_id=? AND type='weekly_reviewed' AND title=? AND created_at > (NOW() - INTERVAL 2 HOUR)", [$pid, $t])) notify($pid, 'weekly_reviewed', $t, 'Week of ' . date('j M', strtotime($week)), '#/reports/weekly/' . $row['id']);
+            $t = $u['name'] . ' commented on your weekly report'; $chg = 0; foreach ($new['rows'] as $ix => $nr) { $or = ($stored['rows'][$ix] ?? []); if (($nr['comment'] ?? '') !== ($or['comment'] ?? '') || ($nr['review'] ?? '') !== ($or['review'] ?? '')) $chg++; }
+            if (!one("SELECT id FROM notifications WHERE user_id=? AND type='weekly_reviewed' AND title=? AND created_at > (NOW() - INTERVAL 10 MINUTE)", [$pid, $t])) notify($pid, 'weekly_reviewed', $t, 'Week of ' . date('j M', strtotime($week)) . ' · ' . $chg . ' row' . ($chg === 1 ? '' : 's') . ' with a comment or review. Open it to see them.', '#/reports/weekly/' . $row['id']);
             log_act($uid, 'weekly_reviewed', $emp['name'] . ' ' . $week); }
         $r2 = one('SELECT id,status,updated_at,submitted_at FROM weekly_reports WHERE id=?', [$row['id']]); out(['ok' => true, 'state' => $r2]);
     }
@@ -519,7 +526,7 @@ if ($method === 'POST' && $sub === 'weekly-share') {
     $emp = one('SELECT id,name FROM users WHERE id=?', [$pid]); if (!$emp) fail('Not found', 404);
     $c = rp_weekly_clean($b, $today); $week = rp_week_start((string)($c['week_start'] ?: $c['date'])); $c['week_start'] = $week; $c['user_id'] = $pid; if ($c['employee'] === '') $c['employee'] = $emp['name'];
     if (!$c['rows']) fail('There is nothing in the report yet');
-    $ids = array_values(array_unique(array_filter(array_map('intval', (array)($b['user_ids'] ?? [])))));  $ids = array_values(array_diff($ids, [$uid, $pid])); if (!$ids) fail('Choose at least one person to share it with');
+    $ids = array_values(array_unique(array_filter(array_map('intval', (array)($b['user_ids'] ?? [])))));  $ids = array_values(array_diff($ids, [$uid])); if (!$ids) fail('Choose at least one person to share it with');   // the person the report is about may be a recipient (a head shares a commented report back with them)
     $combinedId = 0; if (!empty($b['id'])) { $crow = one("SELECT id,user_id,kind,week_start,data FROM weekly_reports WHERE id=? AND kind='combined'", [(int)$b['id']]); $isAuthor = $crow && (int)$crow['user_id'] === $uid; if (!$crow || (!$isAuthor && !rp_combined_reviewer($u, $crow))) fail('Not found', 404); $combinedId = (int)$crow['id']; $old = json_decode((string)$crow['data'], true) ?: []; $pid = (int)$crow['user_id'];
         if (!$isAuthor) { $c = rp_weekly_review_merge($old, $c); $c['reviewed_by'] = $u['name']; $c['reviewed_at'] = date('c'); $c['week_start'] = $old['week_start'] ?? $crow['week_start']; $c['user_id'] = $pid; }   // a head sharing it on changes only the comment columns
         foreach (['members', 'member_ids'] as $k) if (isset($old[$k])) $c[$k] = $old[$k]; $c['kind'] = 'combined'; $emp = one('SELECT id,name FROM users WHERE id=?', [$pid]) ?: $emp; }

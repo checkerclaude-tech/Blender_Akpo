@@ -667,6 +667,10 @@ case 'companies': case 'contacts': case 'pipeline':
     require __DIR__ . '/lib/pipeline.php';
     break;
 
+case 'preview':   // Word / Excel / PowerPoint as readable text
+    require __DIR__ . '/lib/preview.php';
+    break;
+
 case 'bulk':   // delete one or many; keep a copy of a deleted task
     require __DIR__ . '/lib/bulkdel.php';
     break;

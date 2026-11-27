@@ -91,3 +91,4 @@ input[type=range]{padding:0;height:28px;accent-color:var(--cyan)}
 /* a longer range: one compact row of bars, the day numbers only at the ends */
 .rp-trend.dense{gap:2px}.rp-trend.dense .rp-day{padding:4px 0;gap:2px}.rp-trend.dense .rp-day .small{display:none}.rp-trend.dense .rp-cols{gap:1px}.rp-trend.dense .rp-cols i{width:44%;max-width:none}
 .rp-trend-ends{display:flex;justify-content:space-between;margin-top:4px}
+.wr-sheet td.wr-new{background:#fff4c2;box-shadow:inset 3px 0 0 #00A3DE}

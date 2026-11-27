@@ -100,7 +100,7 @@
     $$('[data-edit]', v).forEach(b => b.onclick = () => itemForm(items[b.dataset.edit], items[b.dataset.edit].kind));
     $$('[data-del]', v).forEach(b => b.onclick = async () => { if (!confirm('Delete “' + items[b.dataset.del].title + '”? This cannot be undone.')) return; try { await api('myfiles/' + b.dataset.del, { method: 'DELETE' }); X.render(); } catch (er) { toast(er.message); } });
     $$('[data-open]', v).forEach(b => b.onclick = () => { const it = items[b.dataset.open];
-      if (it.kind === 'file') { if (it.image) { const m = modal('<div class="row"><h2 class="grow">' + esc(it.title) + '</h2><button class="btn ghost sm" id="cx">Close</button></div><img src="api/myfiles/' + it.id + '/file?view=1" alt="" style="max-width:100%;border-radius:10px;margin-top:10px">'); $('#cx', m).onclick = () => m.close(); } else window.open('api/myfiles/' + it.id + '/file', '_blank', 'noopener'); }
+      if (it.kind === 'file') { if (X.preview) X.preview('api/myfiles/' + it.id + '/file', it.title || it.name); else window.open('api/myfiles/' + it.id + '/file', '_blank', 'noopener'); }
       else if (it.kind === 'link') window.open(it.body, '_blank', 'noopener,noreferrer');
       else { const m = modal('<div class="row"><h2 class="grow">' + esc(it.title) + '</h2><button class="btn ghost sm" id="cx">Close</button></div><p style="white-space:pre-wrap;margin-top:10px">' + esc(it.body) + '</p>'); $('#cx', m).onclick = () => m.close(); } });
     function itemForm(it, kind) {
